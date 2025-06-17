@@ -11,16 +11,17 @@ pub enum SymbolicVar<'ctx> {
     LargeInt(Vec<BV<'ctx>>),
     Float(Float<'ctx>),
     Bool(Bool<'ctx>),
-    Slice(SliceSymbolic<'ctx>), // Represents a slice of a symbolic variable
+    Slice(SliceSymbolic<'ctx>),          // ptr-len-cap
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SliceSymbolic<'ctx> {
     pub name: String,
-    pub pointer: BV<'ctx>,         // symbolic base pointer
-    pub length: BV<'ctx>,          // symbolic length
-    pub element_type: TypeDesc,    // e.g. Int, Byte, String, etc.
-    pub elements: Vec<SymbolicVar<'ctx>>, // symbolic elements (optional, can be empty)
+    pub pointer:  BV<'ctx>,              // base pointer
+    pub length:   BV<'ctx>,              // len
+    pub capacity: BV<'ctx>,              // cap   ← NEW
+    pub element_type: TypeDesc,
+    pub elements: Vec<SymbolicVar<'ctx>>, // optional materialised elems
 }
 
 impl<'ctx> SymbolicVar<'ctx> {
@@ -129,25 +130,22 @@ impl<'ctx> SymbolicVar<'ctx> {
     pub fn make_symbolic_slice(ctx: &'ctx Context, name: &str, element_type: &TypeDesc, default_len: usize) -> SymbolicVar<'ctx> {
         println!("DEBUG: make_symbolic_slice called for '{}' with element_type: {:?}, default_len: {}", name, element_type, default_len);
         
-        let pointer = BV::fresh_const(ctx, &format!("{name}_ptr"), 64);
-        let length  = BV::fresh_const(ctx, &format!("{name}_len"), 64);
+        let pointer  = BV::fresh_const(ctx, &format!("{name}_ptr"), 64);
+        let length   = BV::fresh_const(ctx, &format!("{name}_len"), 64);
+        let capacity = BV::fresh_const(ctx, &format!("{name}_cap"), 64);
 
         let mut elements = Vec::with_capacity(default_len);
         for i in 0..default_len {
-            let elem_name = format!("{name}[{i}]");
-            println!("DEBUG: Creating element {} with type: {:?}", elem_name, element_type);
-            elements.push(
-                SymbolicVar::make_symbolic_value(ctx, &elem_name, element_type)
-            );
+            let elem = SymbolicVar::make_symbolic_value(ctx, &format!("{name}[{i}]"), element_type);
+            elements.push(elem);
         }
 
-        println!("DEBUG: Created slice with {} elements", elements.len());
-
         SymbolicVar::Slice(SliceSymbolic {
-            name:           name.to_string(),
+            name: name.to_string(),
             pointer,
             length,
-            element_type:   element_type.clone(),
+            capacity,
+            element_type: element_type.clone(),
             elements,
         })
     }
@@ -227,36 +225,29 @@ impl<'ctx> SymbolicVar<'ctx> {
     // Method to extract a sub-bitvector from a symbolic integer variable
     pub fn extract(&self, high: u32, low: u32) -> Result<SymbolicVar<'ctx>, &'static str> {
         match self {
-            SymbolicVar::Int(bv) => {
-                        let extracted_bv = bv.extract(high, low);
-                        Ok(SymbolicVar::Int(extracted_bv))
-                    },
-            SymbolicVar::LargeInt(vec) => {
-                        let extracted_vec = vec.iter().map(|bv| bv.extract(high, low)).collect();
-                        Ok(SymbolicVar::LargeInt(extracted_vec))
-                    },
-            SymbolicVar::Float(_) => Err("Extract operation not supported on floating-point symbolic variables"),
-            SymbolicVar::Bool(_) => Err("Extract operation not supported on boolean symbolic variables"),
-            SymbolicVar::Slice(slice_symbolic) => {
-                // For slices, we can only extract if the element type is an integer
-                if let TypeDesc::Primitive(s) = &slice_symbolic.element_type {
-                    if s == "int" || s == "byte" {
-                        let extracted_elements = slice_symbolic.elements.iter()
-                            .map(|elem| elem.extract(high, low))
-                            .collect::<Result<Vec<_>, _>>()?;
-                        Ok(SymbolicVar::Slice(SliceSymbolic {
-                            name: slice_symbolic.name.clone(),
-                            pointer: slice_symbolic.pointer.clone(),
-                            length: slice_symbolic.length.clone(),
-                            element_type: slice_symbolic.element_type.clone(),
-                            elements: extracted_elements,
-                        }))
-                    } else {
-                        Err("Extract operation not supported for non-integer slice elements")
-                    }
-                } else {
-                    Err("Extract operation not supported for non-integer slice elements")
+            SymbolicVar::Int(bv) => Ok(SymbolicVar::Int(bv.extract(high, low))),
+            SymbolicVar::LargeInt(vec) => Ok(SymbolicVar::LargeInt(
+                vec.iter().map(|bv| bv.extract(high, low)).collect(),
+            )),
+            SymbolicVar::Float(_) => Err("Extract on float"),
+            SymbolicVar::Bool(_)  => Err("Extract on bool"),
+            SymbolicVar::Slice(s) => match &s.element_type {
+                TypeDesc::Primitive(t) if t == "int" || t == "byte" => {
+                    let elems = s
+                        .elements
+                        .iter()
+                        .map(|e| e.extract(high, low))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(SymbolicVar::Slice(SliceSymbolic {
+                        name: s.name.clone(),
+                        pointer: s.pointer.clone(),
+                        length: s.length.clone(),
+                        capacity: s.capacity.clone(),
+                        element_type: s.element_type.clone(),
+                        elements: elems,
+                    }))
                 }
+                _ => Err("Extract only for int/byte slices"),
             },
         }
     }
@@ -264,24 +255,18 @@ impl<'ctx> SymbolicVar<'ctx> {
     // Simplifies the symbolic variable, returning a new simplified symbolic value
     pub fn simplify(&self) -> SymbolicVar<'ctx> {
         match self {
-            SymbolicVar::Int(bv) => SymbolicVar::Int(bv.simplify()),
-            SymbolicVar::LargeInt(vec) => {
-                SymbolicVar::LargeInt(vec.iter().map(|bv| bv.simplify()).collect())
-            }
-            SymbolicVar::Float(flt) => SymbolicVar::Float(flt.simplify()),
-            SymbolicVar::Bool(b) => SymbolicVar::Bool(b.simplify()),
-            SymbolicVar::Slice(slice_symbolic) => {
-                let simplified_elements = slice_symbolic.elements.iter()
-                    .map(|elem| elem.simplify())
-                    .collect();
-                SymbolicVar::Slice(SliceSymbolic {
-                    name: slice_symbolic.name.clone(),
-                    pointer: slice_symbolic.pointer.clone(),
-                    length: slice_symbolic.length.clone(),
-                    element_type: slice_symbolic.element_type.clone(),
-                    elements: simplified_elements,
-                })
-            }
+            SymbolicVar::Int(bv)       => SymbolicVar::Int(bv.simplify()),
+            SymbolicVar::LargeInt(vec) => SymbolicVar::LargeInt(vec.iter().map(|bv| bv.simplify()).collect()),
+            SymbolicVar::Float(f)      => SymbolicVar::Float(f.simplify()),
+            SymbolicVar::Bool(b)       => SymbolicVar::Bool(b.simplify()),
+            SymbolicVar::Slice(s)      => SymbolicVar::Slice(SliceSymbolic {
+                name: s.name.clone(),
+                pointer:  s.pointer.clone(),
+                length:   s.length.clone(),
+                capacity: s.capacity.clone(),
+                element_type: s.element_type.clone(),
+                elements: s.elements.iter().map(|e| e.simplify()).collect(),
+            }),
         }
     }
 

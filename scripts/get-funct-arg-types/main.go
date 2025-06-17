@@ -13,9 +13,10 @@ import (
 )
 
 type Function struct {
-	Name      string     `json:"name"`
-	Address   string     `json:"address"`
-	Arguments []Argument `json:"arguments"`
+	Name         string     `json:"name"`
+	Address      string     `json:"address"`
+	Arguments    []Argument `json:"arguments"`
+	HasReturnPtr bool       `json:"has_return_ptr,omitempty"` // For debugging
 }
 
 type Argument struct {
@@ -25,7 +26,7 @@ type Argument struct {
 	Location  string   `json:"location,omitempty"` // For debugging location info
 }
 
-// Standard x86-64 DWARF register mapping (uppercase as requested)
+// Standard x86-64 DWARF register mapping 
 var correctDwarfRegNames = map[int]string{
 	0:  "RAX",
 	1:  "RDX",
@@ -104,6 +105,8 @@ func main() {
 
 			funcName := ""
 			var funcAddr uint64
+			var returnType dwarf.Offset
+			hasReturnType := false
 
 			for _, field := range entry.Field {
 				if field.Attr == dwarf.AttrName {
@@ -117,13 +120,24 @@ func main() {
 						funcAddr = uint64(val)
 					}
 				}
+				if field.Attr == dwarf.AttrType {
+					returnType = field.Val.(dwarf.Offset)
+					hasReturnType = true
+				}
 			}
 
 			if funcName != "" {
+				// Check if the return type requires a pointer (RDI)
+				hasReturnPtr := false
+				if hasReturnType {
+					hasReturnPtr = checkIfReturnTypeNeedsPointer(dwarfData, returnType)
+				}
+
 				currentFunc = &Function{
-					Name:      funcName,
-					Address:   fmt.Sprintf("0x%x", funcAddr),
-					Arguments: []Argument{},
+					Name:         funcName,
+					Address:      fmt.Sprintf("0x%x", funcAddr),
+					Arguments:    []Argument{},
+					HasReturnPtr: hasReturnPtr,
 				}
 			} else {
 				currentFunc = nil
@@ -168,7 +182,7 @@ func main() {
 			// Apply specific knowledge for known functions
 			registers := locInfo.Registers
 			if len(registers) == 0 {
-				registers = getRegistersForKnownFunction(currentFunc.Name, argName, argType, len(currentFunc.Arguments))
+				registers = getRegistersByGoABI(argType, currentFunc, currentFunc.HasReturnPtr)
 			}
 			
 			arg := Argument{
@@ -202,6 +216,101 @@ func main() {
 	}
 
 	fmt.Fprintf(os.Stderr, "Successfully wrote JSON data to %s (%d bytes)\n", outputPath, len(jsonData))
+}
+
+// Check if the return type needs a pointer in RDI
+func checkIfReturnTypeNeedsPointer(d *dwarf.Data, offset dwarf.Offset) bool {
+	r := d.Reader()
+	r.Seek(offset)
+	entry, err := r.Next()
+	if err != nil || entry == nil {
+		return false
+	}
+
+	// First check if we can get the type name directly
+	var typeName string
+	for _, f := range entry.Field {
+		if f.Attr == dwarf.AttrName {
+			typeName = f.Val.(string)
+			break
+		}
+	}
+
+	// If we have a type name, check if it's a complex Go type
+	if typeName != "" {
+		if isComplexGoType(typeName) {
+			return true
+		}
+	}
+
+	// Check the type tag to determine if it needs a return pointer
+	switch entry.Tag {
+	case dwarf.TagStructType:
+		// Structs typically need return pointers
+		return true
+	case dwarf.TagArrayType:
+		// Arrays typically need return pointers
+		return true
+	case dwarf.TagStringType:
+		// Go strings need return pointers
+		return true
+	case dwarf.TagInterfaceType:
+		// Go interfaces need return pointers
+		return true
+	case dwarf.TagPointerType:
+		// Simple pointers usually don't need return pointer (they fit in a register)
+		return false
+	case dwarf.TagBaseType:
+		// Check the size of the base type
+		var byteSize int64 = 0
+		for _, f := range entry.Field {
+			if f.Attr == dwarf.AttrByteSize {
+				switch size := f.Val.(type) {
+				case int64:
+					byteSize = size
+				case uint64:
+					byteSize = int64(size)
+				}
+				break
+			}
+		}
+		// If the type is larger than 8 bytes (register size), it needs a return pointer
+		return byteSize > 8
+	case dwarf.TagTypedef:
+		// For typedefs, we need to check the underlying type
+		for _, f := range entry.Field {
+			if f.Attr == dwarf.AttrType {
+				underlyingType := f.Val.(dwarf.Offset)
+				return checkIfReturnTypeNeedsPointer(d, underlyingType)
+			}
+		}
+		return false
+	default:
+		// For unknown types, be conservative and assume they might need a return pointer
+		// This is safer than assuming they don't
+		return true
+	}
+}
+
+// Check if a Go type name indicates a complex type that needs a return pointer
+func isComplexGoType(typeName string) bool {
+	// Go types that typically need return pointers
+	if strings.Contains(typeName, "[]") { // slices
+		return true
+	}
+	if strings.HasPrefix(typeName, "map[") { // maps
+		return true
+	}
+	if strings.Contains(typeName, "interface") || strings.Contains(typeName, "any") { // interfaces
+		return true
+	}
+	if strings.HasPrefix(typeName, "[") && strings.Contains(typeName, "]") && !strings.Contains(typeName, "byte") {
+		// Large arrays (but not byte arrays which might be small)
+		return true
+	}
+	// Struct types usually need return pointers unless they're very simple
+	// This is a heuristic - you might need to adjust based on your specific use case
+	return false
 }
 
 func parseLocationInfo(d *dwarf.Data, locationAttr interface{}) LocationInfo {
@@ -283,54 +392,65 @@ func parseLocationExpression(expr []byte) LocationInfo {
 	return info
 }
 
-// Get registers for known function patterns based on Go ABI
-func getRegistersForKnownFunction(funcName, argName, argType string, argIndex int) []string {
-	// Based on Go ABI and your DWARF analysis for GetMultiProof
-	if strings.Contains(funcName, "GetMultiProof") {
-		switch argIndex {
-		case 0: // First argument: tree [][32]byte (slice)
-			if argName == "tree" && argType == "[][32]byte" {
-				return []string{"RSI", "RDX", "RCX"}  // ptr, len, cap
-			}
-		case 1: // Second argument: indices []int (slice)
-			if argName == "indices" && argType == "[]int" {
-				return []string{"R8", "R9", "STACK+0x8"}  // ptr, len, cap (cap on stack)
-			}
-		}
-	}
-	
-	// Fallback to heuristic assignment based on Go ABI
-	return getRegistersByGoABI(argType, argIndex)
-}
-
-// Go ABI register assignment (more accurate than the previous heuristic)
-func getRegistersByGoABI(argType string, argIndex int) []string {
+// Go ABI register assignment with return pointer consideration
+func getRegistersByGoABI(argType string, currentFunc *Function, hasReturnPtr bool) []string {
 	// Go ABI register order for integer arguments
 	intRegs := []string{"RDI", "RSI", "RDX", "RCX", "R8", "R9"}
 	
-	// Calculate register usage based on type and argument position
+	// If function has a return pointer, RDI is reserved, so arguments start from RSI
+	if hasReturnPtr {
+		intRegs = []string{"RSI", "RDX", "RCX", "R8", "R9"}
+	}
+	
+	// Calculate register usage for current argument
 	regUsage := calculateRegisterUsage(argType)
 	
-	// Calculate starting register position based on previous arguments
-	startReg := argIndex * regUsage  // Simplified calculation
+	// Calculate starting register position based on actual previous arguments
+	startReg := calculateStartingRegisterAccurate(currentFunc.Arguments)
 	
 	if startReg >= len(intRegs) {
-		return []string{"STACK"}
+		// All arguments go to stack
+		stackOffsets := make([]string, regUsage)
+		for i := 0; i < regUsage; i++ {
+			// Stack starts at 0x8 due to return address, then each register slot is 8 bytes
+			offset := 8 + (startReg - len(intRegs) + i) * 8
+			stackOffsets[i] = fmt.Sprintf("STACK+0x%x", offset)
+		}
+		return stackOffsets
 	}
 	
 	endReg := startReg + regUsage
 	if endReg > len(intRegs) {
 		// Partially on stack
 		regsUsed := len(intRegs) - startReg
-		result := make([]string, regsUsed+1)
+		result := make([]string, regUsage)
 		copy(result, intRegs[startReg:])
-		result[len(result)-1] = "STACK"
+		
+		// Add stack locations for remaining registers
+		for i := regsUsed; i < regUsage; i++ {
+			// Stack starts at 0x8 due to return address
+			stackOffset := 8 + (i - regsUsed) * 8
+			result[i] = fmt.Sprintf("STACK+0x%x", stackOffset)
+		}
 		return result
 	}
 	
 	result := make([]string, regUsage)
 	copy(result, intRegs[startReg:endReg])
 	return result
+}
+
+// Calculate the starting register for an argument based on actual previous arguments
+func calculateStartingRegisterAccurate(previousArgs []Argument) int {
+	totalRegsUsed := 0
+	
+	// Sum up the register usage of all previous arguments
+	for _, arg := range previousArgs {
+		regUsage := calculateRegisterUsage(arg.Type)
+		totalRegsUsed += regUsage
+	}
+	
+	return totalRegsUsed
 }
 
 func calculateRegisterUsage(typ string) int {

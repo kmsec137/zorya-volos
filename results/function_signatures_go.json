@@ -205,7 +205,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x10"
         ]
       }
     ]
@@ -362,14 +362,14 @@
         "name": "",
         "type": "char",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       },
       {
         "name": "",
         "type": "pointer",
         "registers": [
-          "STACK"
+          "STACK+0x10"
         ]
       }
     ]
@@ -500,7 +500,7 @@
         "name": "a6",
         "type": "long",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       }
     ]
@@ -562,21 +562,21 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x10"
         ]
       },
       {
         "name": "",
         "type": "pointer",
         "registers": [
-          "STACK"
+          "STACK+0x18"
         ]
       }
     ]
@@ -710,28 +710,28 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x10"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x18"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x20"
         ],
         "location": "location_attr: [145 8 159] (type: []uint8)"
       },
@@ -739,14 +739,14 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x28"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x30"
         ]
       }
     ]
@@ -959,7 +959,7 @@
         "name": "a6",
         "type": "long",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       }
     ]
@@ -1020,7 +1020,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       },
       {
@@ -1322,7 +1322,7 @@
         "name": "",
         "type": "pointer",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       }
     ]
@@ -1605,35 +1605,35 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x10"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x18"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x20"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x28"
         ]
       },
       {
@@ -1664,7 +1664,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x48"
         ]
       }
     ]
@@ -2068,7 +2068,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x18"
         ],
         "location": "location_attr: 7792 (type: int64)"
       },
@@ -2092,14 +2092,14 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x30"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x38"
         ]
       },
       {
@@ -2114,7 +2114,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x48"
         ]
       },
       {
@@ -2129,14 +2129,14 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x58"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x60"
         ]
       },
       {
@@ -2151,7 +2151,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x70"
         ]
       },
       {
@@ -2166,7 +2166,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x80"
         ]
       },
       {
@@ -2181,7 +2181,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x90"
         ],
         "location": "location_attr: 7864 (type: int64)"
       },
@@ -2310,7 +2310,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       },
       {
@@ -2325,49 +2325,49 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x18"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x20"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x28"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x30"
         ]
       },
       {
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x38"
         ]
       },
       {
         "name": "",
         "type": "clockid_t",
         "registers": [
-          "STACK"
+          "STACK+0x40"
         ]
       },
       {
         "name": "",
         "type": "timespec",
         "registers": [
-          "STACK"
+          "STACK+0x48"
         ]
       }
     ]
@@ -2453,7 +2453,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       }
     ]
@@ -2869,7 +2869,7 @@
         "name": "",
         "type": "syscall_arg_t",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       }
     ]
@@ -2924,7 +2924,7 @@
         "name": "a6",
         "type": "long",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       }
     ]
@@ -2985,7 +2985,7 @@
         "name": "z",
         "type": "syscall_arg_t",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ],
         "location": "location_attr: [145 8] (type: []uint8)"
       },
@@ -2993,7 +2993,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x10"
         ],
         "location": "location_attr: 11313 (type: int64)"
       },
@@ -3001,7 +3001,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x18"
         ],
         "location": "location_attr: 11383 (type: int64)"
       },
@@ -3009,7 +3009,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x20"
         ],
         "location": "location_attr: 11453 (type: int64)"
       },
@@ -3025,7 +3025,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x30"
         ],
         "location": "location_attr: 11523 (type: int64)"
       },
@@ -3041,7 +3041,7 @@
         "name": "",
         "type": "",
         "registers": [
-          "STACK"
+          "STACK+0x40"
         ],
         "location": "location_attr: [145 8] (type: []uint8)"
       }
@@ -3103,7 +3103,7 @@
         "name": "z",
         "type": "syscall_arg_t",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ],
         "location": "location_attr: [145 8] (type: []uint8)"
       }
@@ -3189,7 +3189,7 @@
         "name": "",
         "type": "syscall_arg_t",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       }
     ]
@@ -3445,13 +3445,14 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 14126 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "unicode/utf8.DecodeRuneInString",
@@ -3461,12 +3462,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 14980 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "unicode/utf8.RuneLen",
@@ -3490,9 +3492,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 15804 (type: int64)"
       },
@@ -3500,11 +3502,12 @@
         "name": "r",
         "type": "rune",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 15938 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "unicode/utf8.AppendRune",
@@ -3514,9 +3517,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 16239 (type: int64)"
       },
@@ -3524,11 +3527,12 @@
         "name": "r",
         "type": "rune",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 16406 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "unicode/utf8.appendRuneNonASCII",
@@ -3538,9 +3542,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 16517 (type: int64)"
       },
@@ -3548,11 +3552,12 @@
         "name": "r",
         "type": "rune",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 16675 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "unicode/utf8.RuneCount",
@@ -3562,13 +3567,14 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 16916 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "unicode/utf8.RuneCountInString",
@@ -3578,12 +3584,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 17493 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "unicode/utf8.ValidRune",
@@ -3607,12 +3614,13 @@
         "name": "i",
         "type": "runtime._interface",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 18046 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(*reflect.rawType).Kind",
@@ -3904,13 +3912,14 @@
         "name": "buf",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 22572 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "reflect.readStringZ",
@@ -3966,7 +3975,8 @@
         "name": "name",
         "type": "string",
         "registers": [
-          "STACK"
+          "R8",
+          "R9"
         ],
         "location": "location_attr: 23585 (type: int64)"
       },
@@ -3974,7 +3984,7 @@
         "name": "offset",
         "type": "uint32",
         "registers": [
-          "R9"
+          "STACK+0x8"
         ],
         "location": "location_attr: 23792 (type: int64)"
       }
@@ -4002,12 +4012,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 24220 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "reflect.appendEscapedRune",
@@ -4017,9 +4028,9 @@
         "name": "buf",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 24942 (type: int64)"
       },
@@ -4027,11 +4038,12 @@
         "name": "r",
         "type": "rune",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 25627 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "reflect.isPrint",
@@ -4055,11 +4067,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 25989 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).pointer",
@@ -4069,11 +4082,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 26048 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Kind",
@@ -4083,11 +4097,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 26148 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Len",
@@ -4097,11 +4112,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 26260 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Index",
@@ -4111,7 +4127,7 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 26402 (type: int64)"
       },
@@ -4119,11 +4135,12 @@
         "name": "i",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 26581 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).IsNil",
@@ -4133,11 +4150,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 27459 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).UnsafePointer",
@@ -4147,11 +4165,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 27721 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Elem",
@@ -4161,11 +4180,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 28002 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).NumField",
@@ -4175,11 +4195,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 28426 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Field",
@@ -4189,7 +4210,7 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 28538 (type: int64)"
       },
@@ -4197,11 +4218,12 @@
         "name": "i",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 28698 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "reflect.valueInterfaceUnsafe",
@@ -4211,11 +4233,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 29359 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).isIndirect",
@@ -4225,11 +4248,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 29623 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "reflect.New",
@@ -4239,11 +4263,12 @@
         "name": "typ",
         "type": "reflect.Type",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 29682 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Interface",
@@ -4253,11 +4278,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 29828 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).isExported",
@@ -4267,11 +4293,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 30027 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "reflect.pointerTo",
@@ -4314,12 +4341,13 @@
         "name": "i",
         "type": "runtime._interface",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 30441 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "reflect.loadValue",
@@ -4395,15 +4423,17 @@
         "name": "arg0",
         "type": "reflect.badSyntax",
         "registers": [
-          "RDI"
+          "RSI"
         ]
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.badSyntax).Error$invoke",
     "address": "0x2113e0",
-    "arguments": []
+    "arguments": [],
+    "has_return_ptr": true
   },
   {
     "name": "reflect.Swapper",
@@ -4413,12 +4443,13 @@
         "name": "slice",
         "type": "runtime._interface",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 31193 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "reflect.Swapper$1",
@@ -4472,11 +4503,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 32193 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Bool",
@@ -4486,11 +4518,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 32252 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Bytes",
@@ -4500,11 +4533,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 32412 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).checkAddressable",
@@ -4514,11 +4548,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 32651 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).CanInterface",
@@ -4528,11 +4563,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 32751 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).isRO",
@@ -4542,11 +4578,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 32902 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Type",
@@ -4556,11 +4593,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 32961 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Complex",
@@ -4570,11 +4608,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 33071 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Float",
@@ -4584,11 +4623,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 33316 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Uint",
@@ -4598,11 +4638,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 33580 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Int",
@@ -4612,11 +4653,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 33863 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).MapRange",
@@ -4626,11 +4668,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 34146 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).Pointer",
@@ -4640,11 +4683,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 34573 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).RawType",
@@ -4654,11 +4698,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 34673 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(reflect.Value).String",
@@ -4668,11 +4713,12 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 34732 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(*reflect.MapIter).Key",
@@ -4738,12 +4784,13 @@
         "name": "text",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 35706 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(*errors.joinError).Error",
@@ -5204,8 +5251,8 @@
         "name": "x",
         "type": "runtime._interface",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 42360 (type: int64)"
       }
@@ -5219,25 +5266,27 @@
         "name": "arg0",
         "type": "io.discard",
         "registers": [
-          "RDI"
+          "RSI"
         ]
       },
       {
         "name": "p",
         "type": "[]byte",
         "registers": [
+          "RDX",
           "RCX",
-          "R8",
-          "R9"
+          "R8"
         ],
         "location": "location_attr: 42520 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(io.discard).Write$invoke",
     "address": "0x213200",
-    "arguments": []
+    "arguments": [],
+    "has_return_ptr": true
   },
   {
     "name": "(*io.multiWriter).Write",
@@ -5255,9 +5304,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 42693 (type: int64)"
       }
@@ -5271,9 +5320,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 43143 (type: int64)"
       },
@@ -5281,11 +5330,12 @@
         "name": "c",
         "type": "byte",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 43243 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "internal/bytealg.IndexByteString",
@@ -5295,8 +5345,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 43386 (type: int64)"
       },
@@ -5304,11 +5354,12 @@
         "name": "c",
         "type": "byte",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 43442 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.syntaxError",
@@ -5318,8 +5369,8 @@
         "name": "fn",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 43888 (type: int64)"
       },
@@ -5327,12 +5378,13 @@
         "name": "str",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RCX",
+          "R8"
         ],
         "location": "location_attr: 44056 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(*strconv.NumError).Error",
@@ -5356,12 +5408,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 44363 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.quoteWith",
@@ -5371,8 +5424,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 44460 (type: int64)"
       },
@@ -5380,7 +5433,7 @@
         "name": "quote",
         "type": "byte",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 44621 (type: int64)"
       },
@@ -5388,7 +5441,7 @@
         "name": "ASCIIonly",
         "type": "bool",
         "registers": [
-          "RDX"
+          "R8"
         ],
         "location": "location_attr: 44751 (type: int64)"
       },
@@ -5396,11 +5449,12 @@
         "name": "graphicOnly",
         "type": "bool",
         "registers": [
-          "RCX"
+          "R9"
         ],
         "location": "location_attr: 44881 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.appendQuotedWith",
@@ -5410,9 +5464,9 @@
         "name": "buf",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 45011 (type: int64)"
       },
@@ -5420,8 +5474,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "R8",
+          "R9"
         ],
         "location": "location_attr: 45457 (type: int64)"
       },
@@ -5429,7 +5483,7 @@
         "name": "quote",
         "type": "byte",
         "registers": [
-          "RDX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 45728 (type: int64)"
       },
@@ -5437,17 +5491,18 @@
         "name": "ASCIIonly",
         "type": "bool",
         "registers": [
-          "RCX"
+          "STACK+0x10"
         ]
       },
       {
         "name": "graphicOnly",
         "type": "bool",
         "registers": [
-          "R8"
+          "STACK+0x18"
         ]
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.appendEscapedRune",
@@ -5457,9 +5512,9 @@
         "name": "buf",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 46129 (type: int64)"
       },
@@ -5467,7 +5522,7 @@
         "name": "r",
         "type": "rune",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 46733 (type: int64)"
       },
@@ -5475,7 +5530,7 @@
         "name": "quote",
         "type": "byte",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 46923 (type: int64)"
       },
@@ -5483,7 +5538,7 @@
         "name": "ASCIIonly",
         "type": "bool",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 47031 (type: int64)"
       },
@@ -5491,10 +5546,11 @@
         "name": "graphicOnly",
         "type": "bool",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ]
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.IsPrint",
@@ -5532,9 +5588,9 @@
         "name": "s",
         "type": "[]uint16",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 48369 (type: int64)"
       },
@@ -5542,11 +5598,12 @@
         "name": "v",
         "type": "uint16",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 48519 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.bsearch[[]uint32 uint32]",
@@ -5556,9 +5613,9 @@
         "name": "s",
         "type": "[]uint32",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 48899 (type: int64)"
       },
@@ -5566,11 +5623,12 @@
         "name": "v",
         "type": "uint32",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 49049 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.rangeError",
@@ -5580,8 +5638,8 @@
         "name": "fn",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 49473 (type: int64)"
       },
@@ -5589,12 +5647,13 @@
         "name": "str",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RCX",
+          "R8"
         ],
         "location": "location_attr: 49641 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(*strconv.decimal).Shift",
@@ -5706,9 +5765,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 52880 (type: int64)"
       },
@@ -5716,12 +5775,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "R8",
+          "R9"
         ],
         "location": "location_attr: 52963 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.lower",
@@ -5745,12 +5805,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 53268 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.baseError",
@@ -5760,8 +5821,8 @@
         "name": "fn",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 53881 (type: int64)"
       },
@@ -5769,8 +5830,8 @@
         "name": "str",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RCX",
+          "R8"
         ],
         "location": "location_attr: 54049 (type: int64)"
       },
@@ -5778,11 +5839,12 @@
         "name": "base",
         "type": "int",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 54170 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.Itoa",
@@ -5842,9 +5904,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 54763 (type: int64)"
       },
@@ -5852,7 +5914,7 @@
         "name": "u",
         "type": "uint64",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 55022 (type: int64)"
       },
@@ -5860,7 +5922,7 @@
         "name": "base",
         "type": "int",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 55228 (type: int64)"
       },
@@ -5868,7 +5930,7 @@
         "name": "neg",
         "type": "bool",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 55377 (type: int64)"
       },
@@ -5876,10 +5938,11 @@
         "name": "append_",
         "type": "bool",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ]
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.isPowerOfTwo",
@@ -5903,8 +5966,8 @@
         "name": "fn",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 56266 (type: int64)"
       },
@@ -5912,8 +5975,8 @@
         "name": "str",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RCX",
+          "R8"
         ],
         "location": "location_attr: 56434 (type: int64)"
       },
@@ -5921,11 +5984,12 @@
         "name": "bitSize",
         "type": "int",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 56555 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.ParseUint",
@@ -5935,8 +5999,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 56666 (type: int64)"
       },
@@ -5944,7 +6008,7 @@
         "name": "base",
         "type": "int",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 57076 (type: int64)"
       },
@@ -5952,11 +6016,12 @@
         "name": "bitSize",
         "type": "int",
         "registers": [
-          "RDX"
+          "R8"
         ],
         "location": "location_attr: 57471 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.ParseInt",
@@ -5966,8 +6031,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 59149 (type: int64)"
       },
@@ -5975,7 +6040,7 @@
         "name": "base",
         "type": "int",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 59406 (type: int64)"
       },
@@ -5983,11 +6048,12 @@
         "name": "bitSize",
         "type": "int",
         "registers": [
-          "RDX"
+          "R8"
         ],
         "location": "location_attr: 59558 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.Atoi",
@@ -5997,12 +6063,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 60576 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.genericFtoa",
@@ -6012,9 +6079,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 61526 (type: int64)"
       },
@@ -6022,7 +6089,7 @@
         "name": "val",
         "type": "float64",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 61781 (type: int64)"
       },
@@ -6030,7 +6097,7 @@
         "name": "fmt",
         "type": "byte",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 61936 (type: int64)"
       },
@@ -6038,7 +6105,7 @@
         "name": "prec",
         "type": "int",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 62063 (type: int64)"
       },
@@ -6046,11 +6113,12 @@
         "name": "bitSize",
         "type": "int",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ],
         "location": "location_attr: 62398 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.fmtB",
@@ -6060,9 +6128,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 63938 (type: int64)"
       },
@@ -6070,7 +6138,7 @@
         "name": "neg",
         "type": "bool",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 64366 (type: int64)"
       },
@@ -6078,7 +6146,7 @@
         "name": "mant",
         "type": "uint64",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 64477 (type: int64)"
       },
@@ -6086,7 +6154,7 @@
         "name": "exp",
         "type": "int",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 64591 (type: int64)"
       },
@@ -6094,11 +6162,12 @@
         "name": "flt",
         "type": "strconv.floatInfo",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ],
         "location": "location_attr: 64680 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.fmtX",
@@ -6108,9 +6177,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 64771 (type: int64)"
       },
@@ -6118,7 +6187,7 @@
         "name": "prec",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 65658 (type: int64)"
       },
@@ -6126,7 +6195,7 @@
         "name": "fmt",
         "type": "byte",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 65889 (type: int64)"
       },
@@ -6134,7 +6203,7 @@
         "name": "neg",
         "type": "bool",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 66006 (type: int64)"
       },
@@ -6142,7 +6211,7 @@
         "name": "mant",
         "type": "uint64",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ],
         "location": "location_attr: 66139 (type: int64)"
       },
@@ -6150,7 +6219,7 @@
         "name": "exp",
         "type": "int",
         "registers": [
-          "R9"
+          "STACK+0x18"
         ],
         "location": "location_attr: 66306 (type: int64)"
       },
@@ -6158,11 +6227,12 @@
         "name": "flt",
         "type": "strconv.floatInfo",
         "registers": [
-          "STACK"
+          "STACK+0x20"
         ],
         "location": "location_attr: 66516 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.ryuFtoaShortest",
@@ -6210,9 +6280,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 70470 (type: int64)"
       },
@@ -6220,7 +6290,7 @@
         "name": "shortest",
         "type": "bool",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 70691 (type: int64)"
       },
@@ -6228,7 +6298,7 @@
         "name": "neg",
         "type": "bool",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 70906 (type: int64)"
       },
@@ -6236,7 +6306,7 @@
         "name": "digs",
         "type": "strconv.decimalSlice",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 71360 (type: int64)"
       },
@@ -6244,7 +6314,7 @@
         "name": "prec",
         "type": "int",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ],
         "location": "location_attr: 71077 (type: int64)"
       },
@@ -6252,11 +6322,12 @@
         "name": "fmt",
         "type": "byte",
         "registers": [
-          "R9"
+          "STACK+0x18"
         ],
         "location": "location_attr: 71250 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.bigFtoa",
@@ -6266,9 +6337,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 71804 (type: int64)"
       },
@@ -6276,7 +6347,7 @@
         "name": "prec",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 71956 (type: int64)"
       },
@@ -6284,7 +6355,7 @@
         "name": "fmt",
         "type": "byte",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 72197 (type: int64)"
       },
@@ -6292,7 +6363,7 @@
         "name": "neg",
         "type": "bool",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 72365 (type: int64)"
       },
@@ -6300,7 +6371,7 @@
         "name": "mant",
         "type": "uint64",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ],
         "location": "location_attr: 72485 (type: int64)"
       },
@@ -6308,7 +6379,7 @@
         "name": "exp",
         "type": "int",
         "registers": [
-          "R9"
+          "STACK+0x18"
         ],
         "location": "location_attr: 72576 (type: int64)"
       },
@@ -6316,11 +6387,12 @@
         "name": "flt",
         "type": "strconv.floatInfo",
         "registers": [
-          "STACK"
+          "STACK+0x20"
         ],
         "location": "location_attr: 72667 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.ryuFtoaFixed32",
@@ -6688,9 +6760,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 83182 (type: int64)"
       },
@@ -6698,7 +6770,7 @@
         "name": "neg",
         "type": "bool",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 83728 (type: int64)"
       },
@@ -6706,7 +6778,7 @@
         "name": "d",
         "type": "strconv.decimalSlice",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 84082 (type: int64)"
       },
@@ -6714,7 +6786,7 @@
         "name": "prec",
         "type": "int",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 83820 (type: int64)"
       },
@@ -6722,11 +6794,12 @@
         "name": "fmt",
         "type": "byte",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ],
         "location": "location_attr: 83989 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.fmtF",
@@ -6736,9 +6809,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 84696 (type: int64)"
       },
@@ -6746,7 +6819,7 @@
         "name": "neg",
         "type": "bool",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 85329 (type: int64)"
       },
@@ -6754,7 +6827,7 @@
         "name": "d",
         "type": "strconv.decimalSlice",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 85516 (type: int64)"
       },
@@ -6762,11 +6835,12 @@
         "name": "prec",
         "type": "int",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 85421 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.ryuDigits",
@@ -6922,7 +6996,7 @@
         "name": "endindex",
         "type": "int",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ],
         "location": "location_attr: 89288 (type: int64)"
       }
@@ -6936,9 +7010,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 90364 (type: int64)"
       },
@@ -6946,7 +7020,7 @@
         "name": "f",
         "type": "float64",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 90464 (type: int64)"
       },
@@ -6954,7 +7028,7 @@
         "name": "fmt",
         "type": "byte",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 90537 (type: int64)"
       },
@@ -6962,7 +7036,7 @@
         "name": "prec",
         "type": "int",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 90610 (type: int64)"
       },
@@ -6970,11 +7044,12 @@
         "name": "bitSize",
         "type": "int",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ],
         "location": "location_attr: 90683 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.appendQuotedRuneWith",
@@ -6984,9 +7059,9 @@
         "name": "buf",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 90756 (type: int64)"
       },
@@ -6994,7 +7069,7 @@
         "name": "r",
         "type": "rune",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 90990 (type: int64)"
       },
@@ -7002,7 +7077,7 @@
         "name": "quote",
         "type": "byte",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 91102 (type: int64)"
       },
@@ -7010,7 +7085,7 @@
         "name": "ASCIIonly",
         "type": "bool",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 91194 (type: int64)"
       },
@@ -7018,10 +7093,11 @@
         "name": "graphicOnly",
         "type": "bool",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ]
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.AppendQuote",
@@ -7031,9 +7107,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 91305 (type: int64)"
       },
@@ -7041,12 +7117,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "R8",
+          "R9"
         ],
         "location": "location_attr: 91405 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.AppendQuoteToASCII",
@@ -7056,9 +7133,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 91502 (type: int64)"
       },
@@ -7066,12 +7143,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "R8",
+          "R9"
         ],
         "location": "location_attr: 91602 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.AppendQuoteRune",
@@ -7081,9 +7159,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 91699 (type: int64)"
       },
@@ -7091,11 +7169,12 @@
         "name": "r",
         "type": "rune",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 91799 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.AppendQuoteRuneToASCII",
@@ -7105,9 +7184,9 @@
         "name": "dst",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 91872 (type: int64)"
       },
@@ -7115,11 +7194,12 @@
         "name": "r",
         "type": "rune",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 91972 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "strconv.CanBackquote",
@@ -7129,12 +7209,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 92045 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sync/atomic.StorePointer",
@@ -7210,8 +7291,8 @@
         "name": "msg",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 93552 (type: int64)"
       }
@@ -7263,12 +7344,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 94119 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.printspace",
@@ -7360,12 +7442,13 @@
         "name": "msg",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 94977 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.putchar",
@@ -7493,11 +7576,12 @@
         "name": "found",
         "type": "struct",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 96823 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.finishMark",
@@ -7670,14 +7754,14 @@
         "name": "scanner",
         "type": "runtime.gcObjectScanner",
         "registers": [
-          "RDI"
+          "RSI"
         ]
       },
       {
         "name": "ptr",
         "type": "uintptr",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 99317 (type: int64)"
       },
@@ -7685,7 +7769,7 @@
         "name": "parent",
         "type": "uintptr",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 99171 (type: int64)"
       },
@@ -7693,11 +7777,12 @@
         "name": "addrOfWord",
         "type": "uintptr",
         "registers": [
-          "RCX"
+          "R8"
         ],
         "location": "location_attr: 99244 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.lookupPanic",
@@ -7795,12 +7880,13 @@
         "name": "message",
         "type": "runtime._interface",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 99957 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.printitf",
@@ -7810,12 +7896,13 @@
         "name": "msg",
         "type": "runtime._interface",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 100242 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.printbool",
@@ -7965,11 +8052,12 @@
         "name": "c",
         "type": "complex128",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 103479 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.printuintptr",
@@ -8007,8 +8095,8 @@
         "name": "x",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 103780 (type: int64)"
       },
@@ -8016,12 +8104,13 @@
         "name": "y",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RCX",
+          "R8"
         ],
         "location": "location_attr: 103874 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.sliceCopy",
@@ -8342,8 +8431,8 @@
         "name": "x",
         "type": "runtime._interface",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 106495 (type: int64)"
       },
@@ -8351,12 +8440,13 @@
         "name": "y",
         "type": "runtime._interface",
         "registers": [
-          "RDX",
-          "RCX"
+          "RCX",
+          "R8"
         ],
         "location": "location_attr: 106592 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.reflectValueEqual",
@@ -8366,7 +8456,7 @@
         "name": "x",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 106713 (type: int64)"
       },
@@ -8374,11 +8464,12 @@
         "name": "y",
         "type": "reflect.Value",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 107112 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.hashmapStringPtrHash",
@@ -8448,8 +8539,8 @@
         "name": "itf",
         "type": "runtime._interface",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 108056 (type: int64)"
       },
@@ -8457,11 +8548,12 @@
         "name": "seed",
         "type": "uintptr",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 108201 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.hashmapFloat32Hash",
@@ -8515,8 +8607,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 109634 (type: int64)"
       },
@@ -8524,11 +8616,12 @@
         "name": "seed",
         "type": "uintptr",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 109783 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.hashmapBucketSize",
@@ -8865,8 +8958,8 @@
         "name": "key",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 116582 (type: int64)"
       },
@@ -8874,7 +8967,7 @@
         "name": "value",
         "type": "unsafe.Pointer",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 116705 (type: int64)"
       }
@@ -8896,8 +8989,8 @@
         "name": "key",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 116978 (type: int64)"
       },
@@ -8905,7 +8998,7 @@
         "name": "value",
         "type": "unsafe.Pointer",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 117125 (type: int64)"
       },
@@ -8913,7 +9006,7 @@
         "name": "valueSize",
         "type": "uintptr",
         "registers": [
-          "RCX"
+          "R8"
         ],
         "location": "location_attr: 117236 (type: int64)"
       }
@@ -8949,12 +9042,13 @@
         "name": "i",
         "type": "runtime._interface",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 117500 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.interfaceTypeAssert",
@@ -9190,12 +9284,13 @@
         "name": "msg",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 120700 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.scheduleLogTask",
@@ -9205,8 +9300,8 @@
         "name": "msg",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 120756 (type: int64)"
       },
@@ -9218,7 +9313,8 @@
         ],
         "location": "location_attr: [81] (type: []uint8)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(*runtime.timerNode).whenTicks",
@@ -9417,8 +9513,8 @@
         "name": "x",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 123810 (type: int64)"
       },
@@ -9426,12 +9522,13 @@
         "name": "y",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RCX",
+          "R8"
         ],
         "location": "location_attr: 123885 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.stringConcat",
@@ -9441,7 +9538,7 @@
         "name": "x",
         "type": "runtime._string",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 124138 (type: int64)"
       },
@@ -9449,11 +9546,12 @@
         "name": "y",
         "type": "runtime._string",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 124260 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.stringFromBytes",
@@ -9463,11 +9561,12 @@
         "name": "x",
         "type": "struct",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 124504 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.stringToBytes",
@@ -9477,11 +9576,12 @@
         "name": "x",
         "type": "runtime._string",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 124682 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.encodeUTF8",
@@ -9505,8 +9605,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 125617 (type: int64)"
       },
@@ -9514,11 +9614,12 @@
         "name": "it",
         "type": "runtime.stringIterator",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 125716 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.decodeUTF8",
@@ -9528,8 +9629,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 126031 (type: int64)"
       },
@@ -9537,11 +9638,12 @@
         "name": "index",
         "type": "uintptr",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 126270 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime.isContinuation",
@@ -9584,13 +9686,14 @@
         "name": "arg0",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 127382 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(*crypto/sha256.digest).Reset",
@@ -9622,9 +9725,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 127778 (type: int64)"
       }
@@ -9660,9 +9763,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 128797 (type: int64)"
       }
@@ -9684,9 +9787,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 129010 (type: int64)"
       }
@@ -9700,13 +9803,14 @@
         "name": "data",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 131696 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "internal/fmtsort.Sort",
@@ -9716,11 +9820,12 @@
         "name": "mapValue",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 131889 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "internal/fmtsort.Sort$1",
@@ -9730,7 +9835,7 @@
         "name": "a",
         "type": "internal/fmtsort.KeyValue",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 132545 (type: int64)"
       },
@@ -9738,10 +9843,11 @@
         "name": "b",
         "type": "internal/fmtsort.KeyValue",
         "registers": [
-          "RSI"
+          "RDX"
         ]
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "slices.SortStableFunc[internal/fmtsort.SortedMap internal/fmtsort.KeyValue]",
@@ -9751,7 +9857,7 @@
         "name": "x",
         "type": "internal/fmtsort.SortedMap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 132659 (type: int64)"
       },
@@ -9759,11 +9865,12 @@
         "name": "cmp",
         "type": "struct",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 132759 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "slices.stableCmpFunc[internal/fmtsort.KeyValue]",
@@ -9773,9 +9880,9 @@
         "name": "data",
         "type": "[]internal/fmtsort.KeyValue",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 132877 (type: int64)"
       },
@@ -9783,7 +9890,7 @@
         "name": "n",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 133224 (type: int64)"
       },
@@ -9791,11 +9898,12 @@
         "name": "cmp",
         "type": "struct",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 133316 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "slices.insertionSortCmpFunc[internal/fmtsort.KeyValue]",
@@ -9805,9 +9913,9 @@
         "name": "data",
         "type": "[]internal/fmtsort.KeyValue",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 133861 (type: int64)"
       },
@@ -9815,7 +9923,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 133968 (type: int64)"
       },
@@ -9823,7 +9931,7 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 134059 (type: int64)"
       },
@@ -9831,11 +9939,12 @@
         "name": "cmp",
         "type": "struct",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 134150 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "slices.symMergeCmpFunc[internal/fmtsort.KeyValue]",
@@ -9845,9 +9954,9 @@
         "name": "data",
         "type": "[]internal/fmtsort.KeyValue",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 134653 (type: int64)"
       },
@@ -9855,7 +9964,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 135301 (type: int64)"
       },
@@ -9863,7 +9972,7 @@
         "name": "m",
         "type": "int",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 135450 (type: int64)"
       },
@@ -9871,7 +9980,7 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 135703 (type: int64)"
       },
@@ -9879,11 +9988,12 @@
         "name": "cmp",
         "type": "struct",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ],
         "location": "location_attr: 135912 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "slices.rotateCmpFunc[internal/fmtsort.KeyValue]",
@@ -9893,9 +10003,9 @@
         "name": "data",
         "type": "[]internal/fmtsort.KeyValue",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 137741 (type: int64)"
       },
@@ -9903,7 +10013,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 138005 (type: int64)"
       },
@@ -9911,7 +10021,7 @@
         "name": "m",
         "type": "int",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 138078 (type: int64)"
       },
@@ -9919,7 +10029,7 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 138228 (type: int64)"
       },
@@ -9927,11 +10037,12 @@
         "name": "cmp",
         "type": "struct",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ],
         "location": "location_attr: 138339 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "slices.swapRangeCmpFunc[internal/fmtsort.KeyValue]",
@@ -9941,9 +10052,9 @@
         "name": "data",
         "type": "[]internal/fmtsort.KeyValue",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 138563 (type: int64)"
       },
@@ -9951,7 +10062,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 138646 (type: int64)"
       },
@@ -9959,7 +10070,7 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 138717 (type: int64)"
       },
@@ -9967,7 +10078,7 @@
         "name": "n",
         "type": "int",
         "registers": [
-          "RCX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 138788 (type: int64)"
       },
@@ -9975,11 +10086,12 @@
         "name": "cmp",
         "type": "struct",
         "registers": [
-          "R8"
+          "STACK+0x10"
         ],
         "location": "location_attr: 138859 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "internal/fmtsort.compare",
@@ -9989,7 +10101,7 @@
         "name": "aVal",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 138991 (type: int64)"
       },
@@ -9997,11 +10109,12 @@
         "name": "bVal",
         "type": "reflect.Value",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 139672 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "cmp.Compare[int64]",
@@ -10055,8 +10168,8 @@
         "name": "x",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 142363 (type: int64)"
       },
@@ -10064,12 +10177,13 @@
         "name": "y",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RCX",
+          "R8"
         ],
         "location": "location_attr: 142548 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "cmp.Compare[float64]",
@@ -10123,7 +10237,7 @@
         "name": "aVal",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 143599 (type: int64)"
       },
@@ -10131,11 +10245,12 @@
         "name": "bVal",
         "type": "reflect.Value",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 143699 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "cmp.isNaN[uintptr]",
@@ -10173,12 +10288,13 @@
         "name": "x",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 143834 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "cmp.isNaN[uint64]",
@@ -10238,9 +10354,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 144086 (type: int64)"
       }
@@ -10377,12 +10493,13 @@
         "name": "key",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 146241 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "syscall.Close",
@@ -10406,8 +10523,8 @@
         "name": "path",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 147051 (type: int64)"
       },
@@ -10415,7 +10532,7 @@
         "name": "mode",
         "type": "int",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 147169 (type: int64)"
       },
@@ -10423,11 +10540,12 @@
         "name": "perm",
         "type": "uint32",
         "registers": [
-          "RDX"
+          "R8"
         ],
         "location": "location_attr: 147261 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "syscall.Write",
@@ -10445,9 +10563,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 147426 (type: int64)"
       }
@@ -10469,9 +10587,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 147701 (type: int64)"
       }
@@ -10493,9 +10611,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 147859 (type: int64)"
       }
@@ -10517,8 +10635,8 @@
         "name": "path",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 148517 (type: int64)"
       },
@@ -10526,7 +10644,7 @@
         "name": "flags",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 148635 (type: int64)"
       },
@@ -10534,7 +10652,7 @@
         "name": "mode",
         "type": "uint32",
         "registers": [
-          "RCX"
+          "R8"
         ],
         "location": "location_attr: 148746 (type: int64)"
       }
@@ -10548,12 +10666,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 149227 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "syscall.ByteSliceFromString",
@@ -10563,12 +10682,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 149511 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "syscall.Getpid",
@@ -10605,9 +10725,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 150156 (type: int64)"
       }
@@ -10629,9 +10749,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 150431 (type: int64)"
       }
@@ -10675,12 +10795,13 @@
         "name": "str",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 151594 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.nextStdChunk",
@@ -10690,12 +10811,13 @@
         "name": "layout",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 151782 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.isDigit[string]",
@@ -10705,8 +10827,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 153833 (type: int64)"
       },
@@ -10714,11 +10836,12 @@
         "name": "i",
         "type": "int",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 153908 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.stdFracSecond",
@@ -10758,9 +10881,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 154124 (type: int64)"
       },
@@ -10768,7 +10891,7 @@
         "name": "x",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 154557 (type: int64)"
       },
@@ -10776,11 +10899,12 @@
         "name": "width",
         "type": "int",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 154709 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.appendInt$1",
@@ -10832,9 +10956,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 155572 (type: int64)"
       },
@@ -10842,7 +10966,7 @@
         "name": "nanosec",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 155986 (type: int64)"
       },
@@ -10850,11 +10974,12 @@
         "name": "std",
         "type": "int",
         "registers": [
-          "RDX"
+          "R9"
         ],
         "location": "location_attr: 156097 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(*time.ParseError).Error",
@@ -10878,12 +11003,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 156587 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.isLeap",
@@ -10984,8 +11110,8 @@
         "name": "name",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 160333 (type: int64)"
       },
@@ -10999,7 +11125,8 @@
         ],
         "location": "location_attr: 160440 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.loadTzinfo",
@@ -11009,8 +11136,8 @@
         "name": "name",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 161915 (type: int64)"
       },
@@ -11018,12 +11145,13 @@
         "name": "source",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RCX",
+          "R8"
         ],
         "location": "location_attr: 162042 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.LoadLocationFromTZData",
@@ -11033,8 +11161,8 @@
         "name": "name",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 162239 (type: int64)"
       },
@@ -11048,7 +11176,8 @@
         ],
         "location": "location_attr: 162468 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.gorootZoneSource",
@@ -11058,12 +11187,13 @@
         "name": "goroot",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 166544 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(*time.dataIO).read",
@@ -11137,13 +11267,14 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 168128 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(*time.dataIO).big8",
@@ -11167,8 +11298,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 168889 (type: int64)"
       },
@@ -11176,7 +11307,7 @@
         "name": "lastTxSec",
         "type": "int64",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 169424 (type: int64)"
       },
@@ -11184,11 +11315,12 @@
         "name": "sec",
         "type": "int64",
         "registers": [
-          "RDX"
+          "R8"
         ],
         "location": "location_attr: 169639 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.findZone",
@@ -11198,9 +11330,9 @@
         "name": "zones",
         "type": "[]time.zone",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 171678 (type: int64)"
       },
@@ -11208,8 +11340,8 @@
         "name": "name",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "R8",
+          "R9"
         ],
         "location": "location_attr: 171797 (type: int64)"
       },
@@ -11217,7 +11349,7 @@
         "name": "offset",
         "type": "int",
         "registers": [
-          "RDX"
+          "STACK+0x8"
         ],
         "location": "location_attr: 171922 (type: int64)"
       },
@@ -11225,11 +11357,12 @@
         "name": "isDST",
         "type": "bool",
         "registers": [
-          "RCX"
+          "STACK+0x10"
         ],
         "location": "location_attr: 172013 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.tzsetName",
@@ -11239,12 +11372,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 172153 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.tzsetOffset",
@@ -11254,12 +11388,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 172658 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.tzsetRule",
@@ -11269,12 +11404,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 173472 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.absDate",
@@ -11350,8 +11486,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 177268 (type: int64)"
       },
@@ -11359,7 +11495,7 @@
         "name": "min",
         "type": "int",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 177462 (type: int64)"
       },
@@ -11367,11 +11503,12 @@
         "name": "max",
         "type": "int",
         "registers": [
-          "RDX"
+          "R8"
         ],
         "location": "location_attr: 177575 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.loadTzinfoFromDirOrZip",
@@ -11381,8 +11518,8 @@
         "name": "dir",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 177955 (type: int64)"
       },
@@ -11390,12 +11527,13 @@
         "name": "name",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RCX",
+          "R8"
         ],
         "location": "location_attr: 178099 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.loadTzinfoFromZip",
@@ -11405,8 +11543,8 @@
         "name": "zipfile",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 178267 (type: int64)"
       },
@@ -11414,12 +11552,13 @@
         "name": "name",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RCX",
+          "R8"
         ],
         "location": "location_attr: 178761 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.readFile",
@@ -11429,12 +11568,13 @@
         "name": "name",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 181130 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.open",
@@ -11444,12 +11584,13 @@
         "name": "name",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 182090 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.closefd",
@@ -11481,9 +11622,9 @@
         "name": "buf",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 182497 (type: int64)"
       }
@@ -11497,16 +11638,18 @@
         "name": "f",
         "type": "time.fileSizeError",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 182597 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(time.fileSizeError).Error$invoke",
     "address": "0x226260",
-    "arguments": []
+    "arguments": [],
+    "has_return_ptr": true
   },
   {
     "name": "time.preadn",
@@ -11524,9 +11667,9 @@
         "name": "buf",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 182850 (type: int64)"
       },
@@ -11534,7 +11677,7 @@
         "name": "off",
         "type": "int",
         "registers": [
-          "RDX"
+          "R8"
         ],
         "location": "location_attr: 183080 (type: int64)"
       }
@@ -11548,13 +11691,14 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 183502 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.get2",
@@ -11564,13 +11708,14 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 183658 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(*time.Time).sec",
@@ -11655,11 +11800,12 @@
         "name": "t",
         "type": "time.Time",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 184640 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(time.Time).abs",
@@ -11669,11 +11815,12 @@
         "name": "t",
         "type": "time.Time",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 185102 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(time.Time).appendFormatRFC3339",
@@ -11683,7 +11830,7 @@
         "name": "t",
         "type": "time.Time",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 185434 (type: int64)"
       },
@@ -11691,9 +11838,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
+          "RDX",
           "RCX",
-          "R8",
-          "R9"
+          "R8"
         ],
         "location": "location_attr: 185691 (type: int64)"
       },
@@ -11701,10 +11848,11 @@
         "name": "nanos",
         "type": "bool",
         "registers": [
-          "RDX"
+          "R9"
         ]
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "time.absClock",
@@ -11728,11 +11876,12 @@
         "name": "t",
         "type": "time.Time",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 187045 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(time.Time).appendFormat",
@@ -11742,7 +11891,7 @@
         "name": "t",
         "type": "time.Time",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 187230 (type: int64)"
       },
@@ -11750,9 +11899,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
+          "RDX",
           "RCX",
-          "R8",
-          "R9"
+          "R8"
         ],
         "location": "location_attr: 187500 (type: int64)"
       },
@@ -11760,12 +11909,13 @@
         "name": "layout",
         "type": "string",
         "registers": [
-          "R8",
-          "R9"
+          "R9",
+          "STACK+0x8"
         ],
         "location": "location_attr: 188994 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(time.Month).String",
@@ -11817,9 +11967,9 @@
         "name": "buf",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 192186 (type: int64)"
       },
@@ -11827,11 +11977,12 @@
         "name": "v",
         "type": "uint64",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 192358 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(time.Time).Unix",
@@ -11841,11 +11992,12 @@
         "name": "t",
         "type": "time.Time",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 192596 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(time.Time).String",
@@ -11855,11 +12007,12 @@
         "name": "t",
         "type": "time.Time",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 192781 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(time.Time).Format",
@@ -11869,7 +12022,7 @@
         "name": "t",
         "type": "time.Time",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 193728 (type: int64)"
       },
@@ -11882,7 +12035,8 @@
         ],
         "location": "location_attr: 193888 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(time.Time).AppendFormat",
@@ -11892,7 +12046,7 @@
         "name": "t",
         "type": "time.Time",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 194214 (type: int64)"
       },
@@ -11900,9 +12054,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
+          "RDX",
           "RCX",
-          "R8",
-          "R9"
+          "R8"
         ],
         "location": "location_attr: 194399 (type: int64)"
       },
@@ -11910,12 +12064,13 @@
         "name": "layout",
         "type": "string",
         "registers": [
-          "R8",
-          "R9"
+          "R9",
+          "STACK+0x8"
         ],
         "location": "location_attr: 194557 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(time.Time).Location",
@@ -11925,11 +12080,12 @@
         "name": "t",
         "type": "time.Time",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 194636 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(time.Time).GoString",
@@ -11939,21 +12095,24 @@
         "name": "t",
         "type": "time.Time",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 194797 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(time.Time).GoString$invoke",
     "address": "0x228310",
-    "arguments": []
+    "arguments": [],
+    "has_return_ptr": true
   },
   {
     "name": "(time.Time).String$invoke",
     "address": "0x228330",
-    "arguments": []
+    "arguments": [],
+    "has_return_ptr": true
   },
   {
     "name": "(io/fs.FileMode).String",
@@ -11977,11 +12136,12 @@
         "name": "dir",
         "type": "io/fs.DirEntry",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 196778 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(io/fs.FileMode).IsDir",
@@ -12033,11 +12193,12 @@
         "name": "di",
         "type": "io/fs.dirInfo",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 197489 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(io/fs.dirInfo).Name",
@@ -12047,11 +12208,12 @@
         "name": "di",
         "type": "io/fs.dirInfo",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 197590 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(io/fs.dirInfo).String",
@@ -12061,11 +12223,12 @@
         "name": "di",
         "type": "io/fs.dirInfo",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 197691 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(io/fs.dirInfo).Type",
@@ -12075,31 +12238,36 @@
         "name": "di",
         "type": "io/fs.dirInfo",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 197854 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(io/fs.dirInfo).IsDir$invoke",
     "address": "0x228970",
-    "arguments": []
+    "arguments": [],
+    "has_return_ptr": true
   },
   {
     "name": "(io/fs.dirInfo).Name$invoke",
     "address": "0x228990",
-    "arguments": []
+    "arguments": [],
+    "has_return_ptr": true
   },
   {
     "name": "(io/fs.dirInfo).String$invoke",
     "address": "0x2289b0",
-    "arguments": []
+    "arguments": [],
+    "has_return_ptr": true
   },
   {
     "name": "(io/fs.dirInfo).Type$invoke",
     "address": "0x2289d0",
-    "arguments": []
+    "arguments": [],
+    "has_return_ptr": true
   },
   {
     "name": "sort.Slice",
@@ -12109,8 +12277,8 @@
         "name": "x",
         "type": "runtime._interface",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 197955 (type: int64)"
       },
@@ -12118,11 +12286,12 @@
         "name": "less",
         "type": "struct",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 198095 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.pdqsort_func",
@@ -12132,7 +12301,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 198941 (type: int64)"
       },
@@ -12140,7 +12309,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 198577 (type: int64)"
       },
@@ -12148,7 +12317,7 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 198704 (type: int64)"
       },
@@ -12156,11 +12325,12 @@
         "name": "limit",
         "type": "int",
         "registers": [
-          "RCX"
+          "R8"
         ],
         "location": "location_attr: 198831 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.insertionSort_func",
@@ -12170,7 +12340,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 200166 (type: int64)"
       },
@@ -12178,7 +12348,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 199944 (type: int64)"
       },
@@ -12186,11 +12356,12 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 200055 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.heapSort_func",
@@ -12200,7 +12371,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 200603 (type: int64)"
       },
@@ -12208,7 +12379,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 200400 (type: int64)"
       },
@@ -12216,11 +12387,12 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 200511 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.choosePivot_func",
@@ -12230,7 +12402,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 201189 (type: int64)"
       },
@@ -12238,7 +12410,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 200989 (type: int64)"
       },
@@ -12246,11 +12418,12 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 201078 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.reverseRange_func",
@@ -12260,7 +12433,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 201887 (type: int64)"
       },
@@ -12268,7 +12441,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 201725 (type: int64)"
       },
@@ -12276,11 +12449,12 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 201776 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.partialInsertionSort_func",
@@ -12290,7 +12464,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 202306 (type: int64)"
       },
@@ -12298,7 +12472,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 202100 (type: int64)"
       },
@@ -12306,11 +12480,12 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 202195 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.partitionEqual_func",
@@ -12320,7 +12495,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 202916 (type: int64)"
       },
@@ -12328,7 +12503,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 202701 (type: int64)"
       },
@@ -12336,7 +12511,7 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 202771 (type: int64)"
       },
@@ -12344,11 +12519,12 @@
         "name": "pivot",
         "type": "int",
         "registers": [
-          "RCX"
+          "R8"
         ],
         "location": "location_attr: 202863 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.partition_func",
@@ -12358,7 +12534,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 203365 (type: int64)"
       },
@@ -12366,7 +12542,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 203150 (type: int64)"
       },
@@ -12374,7 +12550,7 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 203220 (type: int64)"
       },
@@ -12382,11 +12558,12 @@
         "name": "pivot",
         "type": "int",
         "registers": [
-          "RCX"
+          "R8"
         ],
         "location": "location_attr: 203312 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.breakPatterns_func",
@@ -12396,7 +12573,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 203921 (type: int64)"
       },
@@ -12404,7 +12581,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 203721 (type: int64)"
       },
@@ -12412,11 +12589,12 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 203810 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.nextPowerOfTwo",
@@ -12454,7 +12632,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 204722 (type: int64)"
       },
@@ -12462,7 +12640,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 204630 (type: int64)"
       },
@@ -12470,11 +12648,12 @@
         "name": "swaps",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 204538 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.median_func",
@@ -12484,7 +12663,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 205180 (type: int64)"
       },
@@ -12492,7 +12671,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 204795 (type: int64)"
       },
@@ -12500,7 +12679,7 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 204906 (type: int64)"
       },
@@ -12508,7 +12687,7 @@
         "name": "c",
         "type": "int",
         "registers": [
-          "RCX"
+          "R8"
         ],
         "location": "location_attr: 205036 (type: int64)"
       },
@@ -12516,11 +12695,12 @@
         "name": "swaps",
         "type": "int",
         "registers": [
-          "R8"
+          "R9"
         ],
         "location": "location_attr: 205108 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.order2_func",
@@ -12530,7 +12710,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 205530 (type: int64)"
       },
@@ -12538,7 +12718,7 @@
         "name": "a",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 205253 (type: int64)"
       },
@@ -12546,7 +12726,7 @@
         "name": "b",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 205345 (type: int64)"
       },
@@ -12554,11 +12734,12 @@
         "name": "swaps",
         "type": "int",
         "registers": [
-          "RCX"
+          "R8"
         ],
         "location": "location_attr: 205437 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "sort.siftDown_func",
@@ -12568,7 +12749,7 @@
         "name": "data",
         "type": "sort.lessSwap",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 205856 (type: int64)"
       },
@@ -12576,7 +12757,7 @@
         "name": "lo",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 205603 (type: int64)"
       },
@@ -12584,7 +12765,7 @@
         "name": "hi",
         "type": "int",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 205654 (type: int64)"
       },
@@ -12592,11 +12773,12 @@
         "name": "first",
         "type": "int",
         "registers": [
-          "RCX"
+          "R8"
         ],
         "location": "location_attr: 205765 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(*strings.appendSliceWriter).Write",
@@ -12614,9 +12796,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 206202 (type: int64)"
       }
@@ -12696,11 +12878,12 @@
         "name": "err",
         "type": "error",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 206558 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "(os.unixFileHandle).Write",
@@ -12718,9 +12901,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 206875 (type: int64)"
       }
@@ -12827,9 +13010,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 207786 (type: int64)"
       }
@@ -12856,9 +13039,9 @@
         "name": "p",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 208258 (type: int64)"
       }
@@ -12924,8 +13107,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 208844 (type: int64)"
       }
@@ -12983,9 +13166,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 209382 (type: int64)"
       }
@@ -13007,9 +13190,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 209552 (type: int64)"
       },
@@ -13140,7 +13323,8 @@
         "name": "digits",
         "type": "string",
         "registers": [
-          "STACK"
+          "R9",
+          "STACK+0x8"
         ],
         "location": "location_attr: 213005 (type: int64)"
       }
@@ -13162,8 +13346,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 214420 (type: int64)"
       }
@@ -13207,8 +13391,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 215235 (type: int64)"
       }
@@ -13230,8 +13414,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 215478 (type: int64)"
       },
@@ -13239,7 +13423,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "STACK"
+          "RCX",
+          "R8",
+          "R9"
         ],
         "location": "location_attr: 215611 (type: int64)"
       },
@@ -13247,7 +13433,8 @@
         "name": "digits",
         "type": "string",
         "registers": [
-          "STACK"
+          "STACK+0x8",
+          "STACK+0x10"
         ],
         "location": "location_attr: 215786 (type: int64)"
       }
@@ -13269,8 +13456,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 216835 (type: int64)"
       },
@@ -13278,8 +13465,8 @@
         "name": "digits",
         "type": "string",
         "registers": [
-          "R8",
-          "R9"
+          "RCX",
+          "R8"
         ],
         "location": "location_attr: 216932 (type: int64)"
       }
@@ -13345,9 +13532,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 218341 (type: int64)"
       }
@@ -13369,8 +13556,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 218738 (type: int64)"
       }
@@ -13392,9 +13579,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 219033 (type: int64)"
       }
@@ -13416,8 +13603,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 219675 (type: int64)"
       }
@@ -13448,7 +13635,8 @@
   {
     "name": "(reflect.Value).String$invoke",
     "address": "0x22bd00",
-    "arguments": []
+    "arguments": [],
+    "has_return_ptr": true
   },
   {
     "name": "(*fmt.pp).Write",
@@ -13466,9 +13654,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 220911 (type: int64)"
       }
@@ -13498,8 +13686,8 @@
         "name": "format",
         "type": "string",
         "registers": [
-          "R8",
-          "R9"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 221336 (type: int64)"
       },
@@ -13507,7 +13695,7 @@
         "name": "i",
         "type": "int",
         "registers": [
-          "RCX"
+          "R8"
         ],
         "location": "location_attr: 221506 (type: int64)"
       },
@@ -13515,7 +13703,7 @@
         "name": "numArgs",
         "type": "int",
         "registers": [
-          "R8"
+          "R9"
         ],
         "location": "location_attr: 221658 (type: int64)"
       }
@@ -13581,8 +13769,8 @@
         "name": "arg",
         "type": "runtime._interface",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 222660 (type: int64)"
       },
@@ -13590,7 +13778,7 @@
         "name": "verb",
         "type": "rune",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 222761 (type: int64)"
       },
@@ -13598,7 +13786,8 @@
         "name": "method",
         "type": "string",
         "registers": [
-          "STACK"
+          "R8",
+          "R9"
         ],
         "location": "location_attr: 222872 (type: int64)"
       }
@@ -13620,8 +13809,8 @@
         "name": "format",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 223731 (type: int64)"
       },
@@ -13629,7 +13818,9 @@
         "name": "a",
         "type": "[]any",
         "registers": [
-          "STACK"
+          "RCX",
+          "R8",
+          "R9"
         ],
         "location": "location_attr: 223926 (type: int64)"
       }
@@ -13711,9 +13902,9 @@
         "name": "v",
         "type": "[]byte",
         "registers": [
-          "RCX",
-          "R8",
-          "R9"
+          "RSI",
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 227139 (type: int64)"
       },
@@ -13721,7 +13912,7 @@
         "name": "verb",
         "type": "rune",
         "registers": [
-          "RDX"
+          "R8"
         ],
         "location": "location_attr: 227621 (type: int64)"
       },
@@ -13729,7 +13920,8 @@
         "name": "typeString",
         "type": "string",
         "registers": [
-          "STACK"
+          "R9",
+          "STACK+0x8"
         ],
         "location": "location_attr: 227732 (type: int64)"
       }
@@ -13895,8 +14087,8 @@
         "name": "v",
         "type": "string",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 232500 (type: int64)"
       },
@@ -13904,7 +14096,7 @@
         "name": "verb",
         "type": "rune",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 232675 (type: int64)"
       }
@@ -13984,8 +14176,8 @@
         "name": "arg",
         "type": "runtime._interface",
         "registers": [
-          "RDX",
-          "RCX"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 235055 (type: int64)"
       },
@@ -13993,7 +14185,7 @@
         "name": "verb",
         "type": "rune",
         "registers": [
-          "RDX"
+          "RCX"
         ],
         "location": "location_attr: 235928 (type: int64)"
       }
@@ -14067,7 +14259,7 @@
         "name": "v",
         "type": "reflect.Value",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 240873 (type: int64)"
       },
@@ -14075,11 +14267,12 @@
         "name": "i",
         "type": "int",
         "registers": [
-          "RSI"
+          "RDX"
         ],
         "location": "location_attr: 241041 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "fmt.intFromArg",
@@ -14089,9 +14282,9 @@
         "name": "a",
         "type": "[]any",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 241319 (type: int64)"
       },
@@ -14099,11 +14292,12 @@
         "name": "argNum",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 241536 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "fmt.parsenum",
@@ -14113,8 +14307,8 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 242262 (type: int64)"
       },
@@ -14122,7 +14316,7 @@
         "name": "start",
         "type": "int",
         "registers": [
-          "RSI"
+          "RCX"
         ],
         "location": "location_attr: 242390 (type: int64)"
       },
@@ -14130,11 +14324,12 @@
         "name": "end",
         "type": "int",
         "registers": [
-          "RDX"
+          "R8"
         ],
         "location": "location_attr: 242460 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "fmt.tooLarge",
@@ -14158,12 +14353,13 @@
         "name": "format",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 242764 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "fmt.newPrinter",
@@ -14206,7 +14402,7 @@
         "name": "w",
         "type": "io.Writer",
         "registers": [
-          "RDI"
+          "RSI"
         ],
         "location": "location_attr: 243577 (type: int64)"
       },
@@ -14223,11 +14419,14 @@
         "name": "a",
         "type": "[]any",
         "registers": [
-          "STACK"
+          "R8",
+          "R9",
+          "STACK+0x8"
         ],
         "location": "location_attr: 243846 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "fmt.Printf",
@@ -14237,8 +14436,8 @@
         "name": "format",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 244230 (type: int64)"
       },
@@ -14252,7 +14451,8 @@
         ],
         "location": "location_attr: 244348 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "omni-vuln/merkle.leftChildIndex",
@@ -14292,7 +14492,8 @@
         ],
         "location": "location_attr: 244764 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "omni-vuln/merkle.checkLeafNode",
@@ -14302,9 +14503,9 @@
         "name": "tree",
         "type": "[][32]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 246479 (type: int64)"
       },
@@ -14312,11 +14513,12 @@
         "name": "i",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 246579 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "omni-vuln/merkle.GetMultiProof$1",
@@ -14376,9 +14578,9 @@
         "name": "tree",
         "type": "[][32]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 247077 (type: int64)"
       },
@@ -14386,11 +14588,12 @@
         "name": "i",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 247201 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "omni-vuln/merkle.isTreeNode",
@@ -14400,9 +14603,9 @@
         "name": "tree",
         "type": "[][32]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 247293 (type: int64)"
       },
@@ -14414,7 +14617,8 @@
         ],
         "location": "location_attr: [82] (type: []uint8)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "omni-vuln/merkle.isInternalNode",
@@ -14424,9 +14628,9 @@
         "name": "tree",
         "type": "[][32]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 247352 (type: int64)"
       },
@@ -14434,11 +14638,12 @@
         "name": "i",
         "type": "int",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 247545 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "main.main",
@@ -14558,12 +14763,13 @@
         "name": "slice",
         "type": "runtime._interface",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 35439 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "internal/reflectlite.ValueOf",
@@ -14573,12 +14779,13 @@
         "name": "i",
         "type": "runtime._interface",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 35536 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "runtime/interrupt.Disable",
@@ -14648,12 +14855,13 @@
         "name": "s",
         "type": "string",
         "registers": [
-          "RDI",
-          "RSI"
+          "RSI",
+          "RDX"
         ],
         "location": "location_attr: 43582 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "internal/byteorder.BePutUint32",
@@ -14663,9 +14871,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 127026 (type: int64)"
       },
@@ -14673,11 +14881,12 @@
         "name": "v",
         "type": "uint32",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 127131 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "internal/byteorder.BePutUint64",
@@ -14687,9 +14896,9 @@
         "name": "b",
         "type": "[]byte",
         "registers": [
-          "RDI",
           "RSI",
-          "RDX"
+          "RDX",
+          "RCX"
         ],
         "location": "location_attr: 127204 (type: int64)"
       },
@@ -14697,11 +14906,12 @@
         "name": "v",
         "type": "uint64",
         "registers": [
-          "RSI"
+          "R8"
         ],
         "location": "location_attr: 127309 (type: int64)"
       }
-    ]
+    ],
+    "has_return_ptr": true
   },
   {
     "name": "crypto/internal/boring/sig.StandardCrypto",
@@ -14926,7 +15136,7 @@
         "name": "",
         "type": "pointer",
         "registers": [
-          "STACK"
+          "STACK+0x8"
         ]
       }
     ]

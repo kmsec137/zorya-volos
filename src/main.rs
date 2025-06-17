@@ -9,6 +9,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use parser::parser::{Inst, Opcode};
+use regex::Regex;
 use z3::ast::{Ast, Int, BV};
 use z3::{Config, Context};
 use zorya::concolic::{ConcolicVar, Logger};
@@ -1228,7 +1229,15 @@ fn initialize_slice_argument<'a>(
 
     let inner_ty = &arg_type[2..];
     let elem_desc = if inner_ty.starts_with('[') {
-        TypeDesc::Unknown(inner_ty.to_string())
+        // Handle array type, e.g., "[3]byte" or "[4]int"
+        if let Some(caps) = Regex::new(r"^\[(\d+)\](.+)$").unwrap().captures(inner_ty) {
+            TypeDesc::Array {
+                element: Box::new(TypeDesc::Primitive(caps[2].trim().into())),
+                count:   Some(caps[1].parse::<u64>().unwrap()),
+            }
+        } else {
+            TypeDesc::Unknown(inner_ty.into())
+        }
     } else {
         TypeDesc::Primitive(inner_ty.to_string())
     };

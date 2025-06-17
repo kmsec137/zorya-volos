@@ -37,6 +37,7 @@ pub enum TypeDesc {
     Primitive(String),
     Pointer { to: Box<TypeDesc> },
     Array { element: Box<TypeDesc>, count: Option<u64> },
+    Slice { element: Box<TypeDesc> },
     Struct { members: Vec<StructMember> },
     Union { members: Vec<StructMember> },
     Unknown(String),

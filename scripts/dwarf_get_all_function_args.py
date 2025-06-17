@@ -1,3 +1,7 @@
+# This script is  not used anymore to extract function arguments from DWARF debug info.
+# It has been replaced by a Go script located in /scripts/get-funct-arg-types/main.go
+# but is kept for reference.
+
 from elftools.elf.elffile import ELFFile
 import json
 import sys
