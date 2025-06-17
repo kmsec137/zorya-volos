@@ -9,52 +9,84 @@ QEMU_CLOUDIMG_DIR := $(ZORYA_DIR)/external/qemu-cloudimg
 TARGET_INFO_RS := $(ZORYA_DIR)/src/target_info.rs
 
 # System dependencies
-SYS_DEPS := qemu-kvm qemu-system-x86 virt-manager virt-viewer libvirt-daemon-system libvirt-clients bridge-utils build-essential libclang-dev clang binutils-dev wget netcat python3 cloud-image-utils
+SYS_DEPS := qemu-kvm qemu-system-x86 virt-manager virt-viewer libvirt-daemon-system libvirt-clients bridge-utils build-essential libclang-dev clang binutils-dev wget netcat-openbsd python3 cloud-image-utils
+GHIDRA_VERSION ?= 11.3.1
+GHIDRA_SNAP_PATH = /snap/ghidra/current/ghidra_$(GHIDRA_VERSION)_PUBLIC
 
-.PHONY: all setup install clean help
+# Allow overriding sudo command (e.g., make SUDO=)
+SUDO ?= sudo
+JDK_VER ?= 21
+
+.PHONY: all setup ghidra-config install clean help
 
 all: setup install
 
 help:
-	@echo "Available targets:"
-	@echo "  setup     - Install dependencies and build the project"
-	@echo "  install   - Install the 'zorya' command"
-	@echo "  clean     - Clean up build artifacts"
+	@echo "Zorya build targets:"
+	@echo "  setup            – Install system deps (Rust, qemu, etc.) and build Zorya"
+	@echo "  ghidra-config    – One-time helper: install/refresh Ghidra $(GHIDRA_VERSION) + Pyhidra"
+	@echo "  install          – Copy the 'zorya' wrapper into /usr/local/bin"
+	@echo "  clean            – Remove all build artifacts (Rust and sleigh)"
 	@echo ""
-	@echo "Usage:"
-	@echo "  zorya /path/to/bin"
+	@echo "Typical first-time workflow:"
+	@echo "  make ghidra-config   # install Ghidra + Pyhidra"
+	@echo "  make                 # same as 'make setup install'"
 	@echo ""
-	@echo "Before running 'zorya', ensure that the 'ZORYA_DIR' environment variable is set to the path of your Zorya project."
-	@echo "You can set it by running:"
-	@echo "  export ZORYA_DIR=\"/path/to/zorya\""
-	@echo ""
-	@echo "Alternatively, you can create a configuration file at '/etc/zorya.conf' or '~/.zorya.conf' with the following content:"
-	@echo "  ZORYA_DIR=\"/path/to/zorya\""
+	@echo "Environment overrides:"
+	@echo "  SUDO=$(SUDO)         # set to empty to run as root inside a container"
+	@echo "  GHIDRA_INSTALL_DIR   # path to an existing Ghidra if not using snap"
+	@echo "  ZORYA_DIR            # where your checkout lives (defaults to \$$PWD)"
 
 setup:
 	@echo "Installing system dependencies..."
-	sudo apt-get update
-	sudo apt-get install -y $(SYS_DEPS)
+	$(SUDO) apt-get -qq update
+	$(SUDO) apt-get -y install $(SYS_DEPS)
 	@echo "Checking for Rust installation..."
 	@if ! command -v cargo >/dev/null 2>&1; then \
 		echo "Rust is not installed. Installing Rust..."; \
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; \
+		echo ">>> Rust installed. Open a new shell or 'source $$HOME/.cargo/env' before rerunning make if this step fails later."; \
 		source $$HOME/.cargo/env; \
 	fi
 	@echo "Initializing submodules..."
 	git submodule update --init --recursive
 
 	@echo "Building pcode-generator (sleigh_opt + x86-64.sla)..."
-	$(MAKE) -C $(PCODE_GENERATOR_DIR) all
+	$(MAKE) -C $(PCODE_GENERATOR_DIR) -j$$(nproc) all
 
-	@echo "Building Zorya..."
-	RUSTFLAGS="--cap-lints=allow" cargo build --release
+	@echo "Building Zorya (Rust)..."
+	RUSTFLAGS="--cap-lints=allow" cargo build --release -j$$(nproc)
 
-	@echo "Building Go DWARF function extractor..."
-	@GO_SCRIPT_SRC="$(ZORYA_DIR)/scripts/get-funct-arg-types/main.go"; \
-	GO_SCRIPT_BIN="$(ZORYA_DIR)/scripts/get-funct-arg-types"; \
-	GOOS=linux GOARCH=amd64 go build -o $$GO_SCRIPT_BIN $$GO_SCRIPT_SRC && chmod +x $$GO_SCRIPT_BIN
+ghidra-config:
+	@echo ">>> Ensuring OpenJDK 21 and snapd..."
+	sudo apt-get -qq update
+	sudo apt-get -y install openjdk-21-jdk snapd
 
+	@echo ">>> Checking for an existing Ghidra..."
+	@if [ -n "$$GHIDRA_INSTALL_DIR" ] && [ -d "$$GHIDRA_INSTALL_DIR" ]; then \
+		echo "Found Ghidra at $$GHIDRA_INSTALL_DIR – skipping snap install."; \
+	elif snap list ghidra >/dev/null 2>&1; then \
+		echo "Ghidra snap already present – refreshing to latest…"; \
+		sudo snap refresh ghidra --classic || true; \
+		export GHIDRA_INSTALL_DIR="$(GHIDRA_SNAP_PATH)"; \
+	else \
+		echo "No Ghidra found – installing snap package…"; \
+		sudo snap install ghidra --classic; \
+		export GHIDRA_INSTALL_DIR="$(GHIDRA_SNAP_PATH)"; \
+	fi
+
+	@echo ">>> Installing/Updating Pyhidra…"
+	pip install -q --upgrade pyhidra
+
+	@echo ">>> Exporting GHIDRA_INSTALL_DIR for future shells…"
+	@if ! grep -q "GHIDRA_INSTALL_DIR" $$HOME/.bashrc; then \
+		echo 'export GHIDRA_INSTALL_DIR="$(GHIDRA_SNAP_PATH)"' >> $$HOME/.bashrc; \
+		echo "   (added to ~/.bashrc)"; \
+	else \
+		echo "   ~/.bashrc already contains GHIDRA_INSTALL_DIR"; \
+	fi
+
+	@echo ">>> Done – open a new shell or ‘source ~/.bashrc’ before continuing."
 
 install:
 	@echo "Installing zorya command..."

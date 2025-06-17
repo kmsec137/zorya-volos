@@ -16,11 +16,12 @@ Zorya supports both concrete and symbolic data types, x86-64 instructions and sy
 > Zorya comes, and nothing sleeps.
 
 ## :inbox_tray: Install
-Make sure to have Rust, Golang and Python properly installed.
+Make sure to have Rust, Golang and Python properly installed. FYI, he project is beeing developped and maintained under a Linux Ubuntu distrubution.
 
 ```
-git clone --recursive https://github.com/kajaaz/zorya.git
+git clone --recursive https://github.com/Ledger-Donjon/zorya
 cd zorya
+make ghidra-config    # if you don't have Ghidra nor Pyhidra
 make all
 ```
 
