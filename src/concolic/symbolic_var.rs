@@ -40,59 +40,47 @@ impl<'ctx> SymbolicVar<'ctx> {
         // default # of elements to populate for dynamic slices
         const DEFAULT_SLICE_LEN: usize = 3;
 
-        println!("DEBUG: Creating symbolic value for '{}' with type: {:?}", name, typ);
-
         let result = match typ {
             TypeDesc::Primitive(s) if s == "int" || s == "uintptr" || s == "byte" => {
-                println!("DEBUG: Creating primitive int/uintptr/byte for '{}'", name);
                 SymbolicVar::Int(BV::fresh_const(ctx, name, 64))
             }
 
             TypeDesc::Primitive(s) if s == "bool" => {
-                println!("DEBUG: Creating primitive bool for '{}'", name);
                 SymbolicVar::Bool(Bool::fresh_const(ctx, name))
             }
 
             TypeDesc::Primitive(s) if s == "float64" => {
-                println!("DEBUG: Creating primitive float64 for '{}'", name);
                 SymbolicVar::Float(Float::new_const(ctx, name, 11, 53))
             }
 
             TypeDesc::Pointer { .. } => {
-                println!("DEBUG: Creating pointer for '{}'", name);
                 // model pointers as 64-bit bitvectors
                 SymbolicVar::Int(BV::fresh_const(ctx, name, 64))
             }
 
             TypeDesc::Array { element, count } => {
-                println!("DEBUG: Creating array for '{}' with element type: {:?}, count: {:?}", name, element, count);
                 // a fixed-size array or even a Go static array like [32]byte
                 let len = count.map(|n| n as usize).unwrap_or(DEFAULT_SLICE_LEN);
                 SymbolicVar::make_symbolic_slice(ctx, name, element, len)
             }
 
             TypeDesc::Unknown(s) if s.starts_with("[]") => {
-                println!("DEBUG: Creating slice for '{}' with raw type: '{}'", name, s);
                 // covers Raw Go slices: []T, and nested like [][32]byte
                 let inner = &s[2..];
-                println!("DEBUG: Inner slice type: '{}'", inner);
                 
                 // if the inner is a fixed-size array, e.g. "[32]byte"
                 if let Some(caps) = Regex::new(r"^\[(\d+)\](.+)$").unwrap().captures(inner) {
                     let fixed_len = caps[1].parse::<usize>().unwrap_or(DEFAULT_SLICE_LEN);
                     let elem_ty_str = &caps[2];
-                    println!("DEBUG: Detected fixed-size array element: [{}]{}", fixed_len, elem_ty_str);
                     
                     // Create a proper TypeDesc for the fixed-size array element
                     let elem_type = TypeDesc::Array {
                         element: Box::new(TypeDesc::Primitive(elem_ty_str.to_string())),
                         count: Some(fixed_len as u64),
                     };
-                    println!("DEBUG: Created element type: {:?}", elem_type);
                     
                     SymbolicVar::make_symbolic_slice(ctx, name, &elem_type, DEFAULT_SLICE_LEN)
                 } else {
-                    println!("DEBUG: Simple dynamic slice element: '{}'", inner);
                     // simple dynamic slice, e.g. []int or []string
                     let elem_type = TypeDesc::Primitive(inner.to_string());
                     SymbolicVar::make_symbolic_slice(ctx, name, &elem_type, DEFAULT_SLICE_LEN)
@@ -107,21 +95,21 @@ impl<'ctx> SymbolicVar<'ctx> {
         };
 
         // Log the final result
-        match &result {
-            SymbolicVar::Slice(slice) => {
-                println!("DEBUG: Created slice '{}' with:", slice.name);
-                println!("  - pointer: {:?}", slice.pointer);
-                println!("  - length: {:?}", slice.length);
-                println!("  - element_type: {:?}", slice.element_type);
-                println!("  - elements count: {}", slice.elements.len());
-                for (i, elem) in slice.elements.iter().enumerate() {
-                    println!("  - element[{}]: {:?}", i, elem);
-                }
-            }
-            _ => {
-                println!("DEBUG: Created non-slice symbolic var: {:?}", result);
-            }
-        }
+        // match &result {
+        //     SymbolicVar::Slice(slice) => {
+        //         println!("DEBUG: Created slice '{}' with:", slice.name);
+        //         println!("  - pointer: {:?}", slice.pointer);
+        //         println!("  - length: {:?}", slice.length);
+        //         println!("  - element_type: {:?}", slice.element_type);
+        //         println!("  - elements count: {}", slice.elements.len());
+        //         for (i, elem) in slice.elements.iter().enumerate() {
+        //             println!("  - element[{}]: {:?}", i, elem);
+        //         }
+        //     }
+        //     _ => {
+        //         println!("DEBUG: Created non-slice symbolic var: {:?}", result);
+        //     }
+        // }
 
         result
     }

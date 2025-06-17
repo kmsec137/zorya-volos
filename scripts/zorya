@@ -53,7 +53,7 @@ if [[ -z "$1" || "$1" == -* ]]; then
 fi
 BIN_PATH="$1"; shift || true
 
-SOURCE_LANG=""; COMPILER=""; MODE=""; ADDR=""; ARGS="none"; NEGATE_FLAG=""
+SOURCE_LANG=""; COMPILER=""; MODE=""; ADDR=""; ARGS="none"; NEGATE_PATH_FLAG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -63,9 +63,29 @@ while [[ $# -gt 0 ]]; do
                  if [[ "$MODE" =~ ^(function|custom)$ && $# -gt 0 && "$1" != "--"* ]]; then
                      ADDR="$1"; shift
                  fi ;;
-    --arg)       shift; ARGS="$*"; break ;;
-    --negate)    NEGATE_FLAG="true"; shift ;;
-    --no-negate) NEGATE_FLAG="false"; shift ;;
+    --negate-path-exploration|--negate)       NEGATE_PATH_FLAG="true";  shift ;;
+    --no-negate-path-exploration|--no-negate) NEGATE_PATH_FLAG="false"; shift ;;
+    --arg)       shift; 
+                 # Collect remaining arguments, but stop at negation flags
+                 while [[ $# -gt 0 ]]; do
+                   if [[ "$1" == "--negate-path-exploration" || "$1" == "--negate" ]]; then
+                     NEGATE_PATH_FLAG="true"
+                     shift
+                     break
+                   elif [[ "$1" == "--no-negate-path-exploration" || "$1" == "--no-negate" ]]; then
+                     NEGATE_PATH_FLAG="false"
+                     shift
+                     break
+                   else
+                     if [[ "$ARGS" == "none" ]]; then
+                       ARGS="$1"
+                     else
+                       ARGS="$ARGS $1"
+                     fi
+                     shift
+                   fi
+                 done
+                 ;;
     --help|-h)   exec "$0" -h ;;
     *)           echo "Unknown flag: $1"; exit 1 ;;
   esac
@@ -76,8 +96,18 @@ done
 #                        INTERACTIVE QUESTIONS (fallback)
 ##############################################################################
 
-echo ""
-print_banner
+# Check if we're in interactive mode (any required info missing)
+INTERACTIVE_MODE=false
+[[ -z "$SOURCE_LANG" || -z "$MODE" || -z "$ADDR" || "$ARGS" == "none" || -z "$NEGATE_PATH_FLAG" ]] && INTERACTIVE_MODE=true
+[[ "${SOURCE_LANG,,}" == "go" && -z "$COMPILER" ]] && INTERACTIVE_MODE=true
+
+if [[ "$INTERACTIVE_MODE" == "true" ]]; then
+  echo ""
+  print_banner
+else
+  echo ""
+  echo -e "${CYAN}${BOLD}ZORYA - Next Generation Concolic Analysis${RESET}"
+fi
 
 # 0. language
 if [[ -z "$SOURCE_LANG" ]]; then
@@ -90,7 +120,7 @@ if [[ "${SOURCE_LANG,,}" == "go" && -z "$COMPILER" ]]; then
   echo ""; echo "Which Go compiler was used? (tinygo / gc)"
   read -rp "[tinygo]: " COMPILER; COMPILER="${COMPILER:-tinygo}"
 fi; export COMPILER
-divider
+[[ "$INTERACTIVE_MODE" == "true" ]] && divider
 
 ENTRY_POINT=$(get_entry_point "$BIN_PATH")
 
@@ -103,10 +133,10 @@ fi
 # 2. address selection by mode (if still missing)
 case "$MODE" in
   start) [[ -z "$ADDR" ]] && ADDR="$ENTRY_POINT"
-         echo -e "${GREEN}Entry point: $ADDR${RESET}" ;;
+         [[ "$INTERACTIVE_MODE" == "true" ]] && echo -e "${GREEN}Entry point: $ADDR${RESET}" ;;
   main)  [[ -z "$ADDR" ]] && ADDR=$(get_main_addr "$BIN_PATH")
          [[ -z "$ADDR" ]] && { echo "Could not locate main"; exit 1; }
-         echo -e "${GREEN}Main address: $ADDR${RESET}" ;;
+         [[ "$INTERACTIVE_MODE" == "true" ]] && echo -e "${GREEN}Main address: $ADDR${RESET}" ;;
   function|custom)
          while [[ -z "$ADDR" ]]; do
              echo ""; read -rp "At what address should the analysis begin? (hex e.g. 0x123): " ADDR
@@ -114,14 +144,14 @@ case "$MODE" in
          done ;;
   *) echo "Unknown mode"; exit 1 ;;
 esac
-divider
+[[ "$INTERACTIVE_MODE" == "true" ]] && divider
 
 # 3. runtime arguments
 if [[ "$ARGS" == "none" ]]; then
   echo ""; echo "Does the binary expect any arguments? (none / e.g., x y z)"
   read -rp "[none]: " ARGS; ARGS="${ARGS:-none}"
 fi
-divider
+[[ "$INTERACTIVE_MODE" == "true" ]] && divider
 
 # 4. Enable negating path exploration (if not set via flag)
 if [[ -z "$NEGATE_PATH_FLAG" ]]; then
@@ -133,7 +163,7 @@ if [[ -z "$NEGATE_PATH_FLAG" ]]; then
     NEGATE_PATH_FLAG="true"
   fi
 fi
-divider
+[[ "$INTERACTIVE_MODE" == "true" ]] && divider
 
 ##############################################################################
 #                        ENV EXPORTS & COMMAND LINE
@@ -143,7 +173,7 @@ export MODE ARGS START_POINT="$ADDR" ZORYA_DIR BIN_PATH NEGATE_PATH_FLAG="$NEGAT
 CMD="$ZORYA_DIR/zorya $BIN_PATH --mode $MODE $ADDR"
 [[ -n "$SOURCE_LANG" ]] && CMD+=" --lang $SOURCE_LANG"
 [[ -n "$COMPILER"     ]] && CMD+=" --compiler $COMPILER"
-[[ "$ARGS" != "none"  ]] && CMD+=" --arg $ARGS"
+[[ "$ARGS" != "none"  ]] && CMD+=" --arg \"$ARGS\""
 [[ "$NEGATE_PATH_FLAG" == "true" ]] && CMD+=" --negate-path-exploration" || CMD+=" --no-negate-path-exploration"
 
 echo "Running command: $CMD"
@@ -167,4 +197,3 @@ echo "**************************************************************************
 echo "";
 cd "$ZORYA_DIR" || exit 1
 RUSTFLAGS="--cap-lints=allow" cargo run --release -- --write-args "$ARGS"
-

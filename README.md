@@ -49,7 +49,7 @@ The prompt will ask you for the:
 ### B. Basic Command-Line Usage
 To use Zorya in its basic form, you need the absolute path to the binary you wish to analyze (```<path>```) and the hexadecimal address where execution should begin (```<addr>```). You must then specify the execution mode (start, main, function, or custom) based on your chosen analysis strategy. Additionally, you can provide any necessary arguments to be passed to the binary:
 ```
-zorya <path> --lang <go|c|c++> [--compiler <tinygo|gc>] --mode <start|main|function|custom> <addr> --arg <arg1> <arg2> [--negate-path-exploration | --no-negate-path-exploration]
+zorya <path> --lang <go|c|c++> [--compiler <tinygo|gc>] --mode <start|main|function|custom> <addr> --arg "<arg1> <arg2>" [--negate-path-exploration | --no-negate-path-exploration]
 
 FLAG:
   --lang                        Specifies the language used in the source code (go/c/c++)
