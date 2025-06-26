@@ -118,6 +118,25 @@ Running command: /home/kgorna/Documents/zorya/zorya /home/kgorna/Documents/zorya
 ...
 ```
 
+Make sure that this section in the ```main.rs``` file is uncommented (we are currently making tests so we comment it from time to time):
+```
+if panic_address_ints.contains(&z3::ast::Int::from_u64(executor.context, branch_target_address)) {
+    log!(executor.state.logger, "Potential branching to a panic function at 0x{:x}", branch_target_address);
+    evaluate_args_z3(executor, inst, binary_path, address_of_negated_path_exploration, conditional_flag).unwrap_or_else(|e| {
+        log!(executor.state.logger, "Error evaluating arguments for branch at 0x{:x}: {}", branch_target_address, e);
+    });
+} 
+```
+Then, you should see a SATISFIABLE state in the ```results/execution_log.txt``` like this:
+```
+~~~~~~~~~~~
+SATISFIABLE: Symbolic execution can lead to a panic function.
+~~~~~~~~~~~
+To take the panic-branch => os.Args ptr=0x7fffb7e11dd0, len=2
+The user input nr.1 must be => "C", the raw value being [67] (len=1)
+~~~~~~~~~~~
+```
+This is it, you have entered the concrete value "a", and Zorya tells you that if you have entered the value "C", the program would have panicked.
 
 ## :books: Deep dive inside
 

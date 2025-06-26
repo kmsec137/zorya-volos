@@ -15,7 +15,7 @@ use z3::{
     ast::{Ast, BV, Int},
 };
 use zorya::concolic::{ConcolicVar, Logger};
-use zorya::executor::{self, ConcolicExecutor, ConcreteVar, SymbolicVar};
+use zorya::executor::{ConcolicExecutor, ConcreteVar, SymbolicVar};
 use zorya::state::evaluate_z3::{get_os_args_address, evaluate_args_z3};
 use zorya::state::function_signatures::{load_function_args_map, load_go_function_args_map, precompute_function_signatures_via_ghidra, GoFunctionArg, TypeDesc};
 use zorya::state::memory_x86_64::MemoryValue;
@@ -375,12 +375,12 @@ fn execute_instructions_from(executor: &mut ConcolicExecutor, start_address: u64
                     log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");
                 }
                 
-                // if panic_address_ints.contains(&z3::ast::Int::from_u64(executor.context, branch_target_address)) {
-                //     log!(executor.state.logger, "Potential branching to a panic function at 0x{:x}", branch_target_address);
-                //     evaluate_args_z3(executor, inst, binary_path, address_of_negated_path_exploration, conditional_flag).unwrap_or_else(|e| {
-                //         log!(executor.state.logger, "Error evaluating arguments for branch at 0x{:x}: {}", branch_target_address, e);
-                //     });
-                // } 
+                if panic_address_ints.contains(&z3::ast::Int::from_u64(executor.context, branch_target_address)) {
+                    log!(executor.state.logger, "Potential branching to a panic function at 0x{:x}", branch_target_address);
+                    evaluate_args_z3(executor, inst, binary_path, address_of_negated_path_exploration, conditional_flag).unwrap_or_else(|e| {
+                        log!(executor.state.logger, "Error evaluating arguments for branch at 0x{:x}: {}", branch_target_address, e);
+                    });
+                } 
             }
             
             // Calculate the potential next address taken by RIP, for the purpose of updating the symbolic part of CBRANCH
