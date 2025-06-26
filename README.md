@@ -114,7 +114,7 @@ Does the binary expect any arguments? (none / e.g., x y z)
 Do you want to activate the negating path execution to cover symbolically more paths?
 [Y/n]: 
 *************************************************************************************
-Running command: /home/kgorna/Documents/zorya/zorya /home/kgorna/Documents/zorya/tests/programs/crashme/crashme --mode main 0x000000000022b1d0 --lang go --compiler tinygo --arg a --negate-path-exploration
+Running command: /home/kgorna/Documents/zorya/zorya /home/kgorna/Documents/zorya/tests/programs/crashme/crashme --mode main 0x000000000022b1d0 --lang go --compiler tinygo --arg "a" --negate-path-exploration
 ...
 ```
 

@@ -47,6 +47,7 @@ pub struct ConcolicExecutor<'ctx> {
     pub inside_jump_table: bool, // check if the current instruction is handling a jump table
     pub trace_logger: Logger,
     pub function_symbolic_arguments: BTreeMap<String, SymbolicVar<'ctx>>, // in "function" mode, this is used to store the symbolic arguments of the function
+    pub constraint_vector: Vec<BV<'ctx>>, // NEW: Vector to collect constraints on tracked symbolic variables
 }
 
 impl<'ctx> ConcolicExecutor<'ctx> {
@@ -66,6 +67,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             inside_jump_table: false,
             trace_logger,
             function_symbolic_arguments: BTreeMap::new(),
+            constraint_vector: Vec::new(),
          })
     }
 
@@ -935,6 +937,19 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         self.state.create_or_update_concolic_variable_int(&result_var_name, branch_target_address, branch_target_concolic.symbolic);
     
         Ok(())
+    }
+
+     // Helper function to check if any tracked symbolic variable is present in the symbolic expression
+    fn contains_tracked_symbolic_variable(&self, symbolic_expr: &BV<'ctx>) -> bool {
+        let expr_string = format!("{:?}", symbolic_expr.simplify());
+        
+        for (arg_name, _) in self.function_symbolic_arguments.iter() {
+            if expr_string.contains(arg_name) {
+                log!(self.state.logger.clone(), "Found tracked symbolic variable '{}' in expression", arg_name);
+                return true;
+            }
+        }
+        false
     }    
 
     // Handle conditional branch operation
@@ -962,6 +977,30 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 // Extract a plain Rust bool from the concolic condition's concrete part
                 let condition_concrete_bool = branch_condition_concolic.concrete.to_bool();
                 log!(self.state.logger.clone(), "Branch condition concrete: {}", condition_concrete_bool);
+
+                // Check if condition involves tracked symbolic variables and add to constraint vector
+                let condition_symbolic_bv = branch_condition_concolic.symbolic.to_bv(self.context);
+                if self.contains_tracked_symbolic_variable(&condition_symbolic_bv) {
+                    log!(self.state.logger.clone(), "Branch condition involves tracked symbolic variables, adding to constraint vector");
+                    
+                    let zero_bv = BV::from_u64(self.context, 0, condition_symbolic_bv.get_size());
+                    let constraint = if condition_concrete_bool {
+                        // Condition is true: assert condition != 0 (i.e., condition is non-zero)
+                        log!(self.state.logger.clone(), "Adding constraint: condition != 0 (branch taken)");
+                        condition_symbolic_bv._eq(&zero_bv).not().ite(
+                            &BV::from_u64(self.context, 1, 1),
+                            &BV::from_u64(self.context, 0, 1)
+                        )
+                    } else {
+                        // Condition is false: assert condition == 0 (i.e., condition is zero)
+                        log!(self.state.logger.clone(), "Adding constraint: condition == 0 (branch not taken)");
+                        condition_symbolic_bv._eq(&zero_bv).ite(
+                            &BV::from_u64(self.context, 1, 1),
+                            &BV::from_u64(self.context, 0, 1)
+                        )
+                    };
+                    self.constraint_vector.push(constraint);
+                }
     
                 // Create symbolic BV values for the two potential RIP values (if condition true vs false)
                 let rip1 = BV::from_u64(self.context, *addr, 64);
@@ -1024,6 +1063,30 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 // Extract a plain Rust bool from the concolic condition's concrete part
                 let condition_concrete_bool = branch_condition_concolic.concrete.to_bool();
                 log!(self.state.logger.clone(), "Branch condition concrete: {}", condition_concrete_bool);
+
+                // Check if condition involves tracked symbolic variables and add to constraint vector
+                let condition_symbolic_bv = branch_condition_concolic.symbolic.to_bv(self.context);
+                if self.contains_tracked_symbolic_variable(&condition_symbolic_bv) {
+                    log!(self.state.logger.clone(), "Branch condition involves tracked symbolic variables, adding to constraint vector");
+                    
+                    let zero_bv = BV::from_u64(self.context, 0, condition_symbolic_bv.get_size());
+                    let constraint = if condition_concrete_bool {
+                        // Condition is true: assert condition != 0 (i.e., condition is non-zero)
+                        log!(self.state.logger.clone(), "Adding constraint: condition != 0 (branch taken)");
+                        condition_symbolic_bv._eq(&zero_bv).not().ite(
+                            &BV::from_u64(self.context, 1, 1),
+                            &BV::from_u64(self.context, 0, 1)
+                        )
+                    } else {
+                        // Condition is false: assert condition == 0 (i.e., condition is zero)
+                        log!(self.state.logger.clone(), "Adding constraint: condition == 0 (branch not taken)");
+                        condition_symbolic_bv._eq(&zero_bv).ite(
+                            &BV::from_u64(self.context, 1, 1),
+                            &BV::from_u64(self.context, 0, 1)
+                        )
+                    };
+                    self.constraint_vector.push(constraint);
+                }
     
                 // Create two BV values: 
                 //  - rip0 for next_inst_in_map (condition false)
@@ -1068,6 +1131,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     
         Ok(())
     }
+
     
     pub fn handle_call(&mut self, instruction: Inst) -> Result<(), String> {
         if instruction.opcode != Opcode::Call || instruction.inputs.len() < 1 {

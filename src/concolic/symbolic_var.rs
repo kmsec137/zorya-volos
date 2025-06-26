@@ -1,4 +1,3 @@
-extern crate z3;
 use z3::ast::{Ast, Bool, Float, Int, BV};
 use z3::Context;
 use z3_sys::Z3_ast;

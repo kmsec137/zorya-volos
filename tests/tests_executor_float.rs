@@ -32,7 +32,8 @@ mod tests {
             initialiazed_var: BTreeMap::new(),
             inside_jump_table: false, 
             trace_logger, 
-            function_symbolic_arguments: BTreeMap::new(),      
+            function_symbolic_arguments: BTreeMap::new(), 
+            constraint_vector: Vec::new(),     
         }
     }
 
