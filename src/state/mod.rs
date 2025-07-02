@@ -5,6 +5,7 @@ pub mod virtual_file_system;
 pub mod explore_ast;
 pub mod function_signatures;
 pub mod evaluate_z3;
+pub mod simplify_z3;
 mod futex_manager;
 
 pub use state_manager::State;
