@@ -2,6 +2,8 @@ pub mod cpu_state;
 pub mod evaluate_z3;
 pub mod explore_ast;
 pub mod function_signatures;
+pub mod evaluate_z3;
+pub mod simplify_z3;
 mod futex_manager;
 pub mod memory_x86_64;
 pub mod state_manager;
