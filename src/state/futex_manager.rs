@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::{Arc, Mutex, Condvar};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 struct Futex {
@@ -23,9 +23,23 @@ impl FutexManager {
         }
     }
 
-    pub fn futex_wait(&self, uaddr: u64, val: i32, timeout: Option<Duration>) -> Result<(), String> {
+    pub fn futex_wait(
+        &self,
+        uaddr: u64,
+        val: i32,
+        timeout: Option<Duration>,
+    ) -> Result<(), String> {
         let mut futexes = self.futexes.lock().unwrap();
-        let futex = futexes.entry(uaddr).or_insert_with(|| Arc::new(Mutex::new(Futex { count: val, waiters: 0, condvar: Condvar::new() }))).clone();
+        let futex = futexes
+            .entry(uaddr)
+            .or_insert_with(|| {
+                Arc::new(Mutex::new(Futex {
+                    count: val,
+                    waiters: 0,
+                    condvar: Condvar::new(),
+                }))
+            })
+            .clone();
 
         let mut futex_guard = futex.lock().unwrap();
         if futex_guard.count != val {
@@ -38,7 +52,9 @@ impl FutexManager {
             let condvar = &futex_guard.condvar;
             let futex = Arc::clone(&futex);
             let mut futex_guard = futex.lock().unwrap();
-            let (guard, timeout_result) = condvar.wait_timeout_while(futex_guard, to, |futex| futex.count == val).unwrap();
+            let (guard, timeout_result) = condvar
+                .wait_timeout_while(futex_guard, to, |futex| futex.count == val)
+                .unwrap();
             futex_guard = guard;
             if timeout_result.timed_out() {
                 Err("ETIMEDOUT".to_string())
@@ -49,7 +65,9 @@ impl FutexManager {
             let condvar = &futex_guard.condvar;
             let futex = Arc::clone(&futex);
             let mut futex_guard = futex.lock().unwrap();
-            futex_guard = condvar.wait_while(futex_guard, |futex| futex.count == val).unwrap();
+            futex_guard = condvar
+                .wait_while(futex_guard, |futex| futex.count == val)
+                .unwrap();
             Ok(())
         };
 
@@ -70,12 +88,27 @@ impl FutexManager {
         } else {
             Ok(0)
         }
-    } 
+    }
 
-    pub fn futex_requeue(&self, uaddr: u64, nwake: usize, requeue_uaddr: u64, nrequeue: usize) -> Result<usize, String> {
+    pub fn futex_requeue(
+        &self,
+        uaddr: u64,
+        nwake: usize,
+        requeue_uaddr: u64,
+        nrequeue: usize,
+    ) -> Result<usize, String> {
         let mut futexes = self.futexes.lock().unwrap();
         let futex = futexes.get(&uaddr).cloned();
-        let requeue_futex = futexes.entry(requeue_uaddr).or_insert_with(|| Arc::new(Mutex::new(Futex { count: 0, waiters: 0, condvar: Condvar::new() }))).clone();
+        let requeue_futex = futexes
+            .entry(requeue_uaddr)
+            .or_insert_with(|| {
+                Arc::new(Mutex::new(Futex {
+                    count: 0,
+                    waiters: 0,
+                    condvar: Condvar::new(),
+                }))
+            })
+            .clone();
 
         if let Some(futex) = futex {
             let mut futex_guard = futex.lock().unwrap();
@@ -105,7 +138,10 @@ impl fmt::Debug for FutexManager {
 impl Clone for FutexManager {
     fn clone(&self) -> Self {
         let futexes = self.futexes.lock().unwrap();
-        let cloned_futexes = futexes.iter().map(|(uaddr, futex)| (*uaddr, Arc::clone(futex))).collect();
+        let cloned_futexes = futexes
+            .iter()
+            .map(|(uaddr, futex)| (*uaddr, Arc::clone(futex)))
+            .collect();
         FutexManager {
             futexes: Mutex::new(cloned_futexes),
         }

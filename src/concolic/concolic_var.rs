@@ -1,5 +1,8 @@
 use std::fmt;
-use z3::{ast::{Ast, Bool, Float, BV}, Context};
+use z3::{
+    ast::{Ast, Bool, Float, BV},
+    Context,
+};
 
 use crate::state::memory_x86_64::MemoryValue;
 
@@ -14,7 +17,12 @@ pub struct ConcolicVar<'ctx> {
 
 impl<'ctx> ConcolicVar<'ctx> {
     // Function to create a new ConcolicVar with a symbolic BV
-    pub fn new_concrete_and_symbolic_int(concrete: u64, symbolic: BV<'ctx>, ctx: &'ctx Context, size: u32) -> Self {
+    pub fn new_concrete_and_symbolic_int(
+        concrete: u64,
+        symbolic: BV<'ctx>,
+        ctx: &'ctx Context,
+        size: u32,
+    ) -> Self {
         let var = ConcolicVar {
             concrete: ConcreteVar::Int(concrete),
             symbolic: SymbolicVar::Int(symbolic),
@@ -24,7 +32,11 @@ impl<'ctx> ConcolicVar<'ctx> {
     }
 
     // Function to create a new ConcolicVar for a Large Int with a symbolic BV
-    pub fn new_concrete_and_symbolic_large_int(concrete: Vec<u64>, symbolic: Vec<BV<'ctx>>, ctx: &'ctx Context) -> Self {
+    pub fn new_concrete_and_symbolic_large_int(
+        concrete: Vec<u64>,
+        symbolic: Vec<BV<'ctx>>,
+        ctx: &'ctx Context,
+    ) -> Self {
         let var = ConcolicVar {
             concrete: ConcreteVar::LargeInt(concrete),
             symbolic: SymbolicVar::LargeInt(symbolic),
@@ -34,7 +46,12 @@ impl<'ctx> ConcolicVar<'ctx> {
     }
 
     // Function to create a new ConcolicVar with a symbolic double-precision float
-    pub fn new_concrete_and_symbolic_float(concrete: f64, symbolic: Float<'ctx>, ctx: &'ctx Context, size: u32) -> Self {
+    pub fn new_concrete_and_symbolic_float(
+        concrete: f64,
+        symbolic: Float<'ctx>,
+        ctx: &'ctx Context,
+        size: u32,
+    ) -> Self {
         let var = ConcolicVar {
             concrete: ConcreteVar::Float(concrete),
             symbolic: SymbolicVar::Float(symbolic),
@@ -45,7 +62,12 @@ impl<'ctx> ConcolicVar<'ctx> {
     }
 
     // Function to create a new ConcolicVar with a symbolic boolean
-    pub fn new_concrete_and_symbolic_bool(concrete: bool, symbolic: Bool<'ctx>, ctx: &'ctx Context, _size: u32) -> Self {
+    pub fn new_concrete_and_symbolic_bool(
+        concrete: bool,
+        symbolic: Bool<'ctx>,
+        ctx: &'ctx Context,
+        _size: u32,
+    ) -> Self {
         let var = ConcolicVar {
             concrete: ConcreteVar::Bool(concrete),
             symbolic: SymbolicVar::Bool(symbolic),
@@ -60,19 +82,19 @@ impl<'ctx> ConcolicVar<'ctx> {
             symbolic: SymbolicVar::Int(value.symbolic.clone()),
             ctx: value.symbolic.get_ctx(),
         }
-    } 
+    }
 
     // Method to retrieve the concrete u64 value
     pub fn get_concrete_value(&self) -> Result<u64, String> {
         match self.concrete {
             ConcreteVar::Int(value) => Ok(value),
-            ConcreteVar::Float(value) => Ok(value as u64),  // Simplistic conversion
+            ConcreteVar::Float(value) => Ok(value as u64), // Simplistic conversion
             ConcreteVar::Str(ref s) => u64::from_str_radix(s.trim_start_matches("0x"), 16)
                 .map_err(|_| format!("Failed to parse '{}' as a hexadecimal number", s)),
             ConcreteVar::Bool(value) => Ok(value as u64),
             ConcreteVar::LargeInt(ref values) => Ok(values[0]), // Return the lower 64 bits
         }
-    }      
+    }
 
     pub fn update_concrete_int(&mut self, new_value: u64) {
         self.concrete = ConcreteVar::Int(new_value);
@@ -116,12 +138,14 @@ impl<'ctx> ConcolicVar<'ctx> {
     pub fn get_size_bits(&self) -> u32 {
         64 // Default to 64-bit for now, modify if dynamic size is required
     }
-
 }
-
 
 impl<'ctx> fmt::Display for ConcolicVar<'ctx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Concrete: {:x}, Symbolic: {:?}", self.concrete, self.symbolic)
+        write!(
+            f,
+            "Concrete: {:x}, Symbolic: {:?}",
+            self.concrete, self.symbolic
+        )
     }
 }

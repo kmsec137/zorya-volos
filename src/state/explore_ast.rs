@@ -1,7 +1,7 @@
 use crate::executor::ConcolicExecutor;
+use std::io::Write;
 use std::process::Command;
 use std::str;
-use std::io::Write;
 
 const MAX_AST_DEPTH: usize = 10;
 
@@ -13,8 +13,16 @@ macro_rules! log {
 
 /// Explore the Go AST via Pyhidra to check if the instruction address is in a path toward a panic function.
 /// Returns the line of stdout: "FOUND_PANIC_XREF_AT 0x..." or "NO_PANIC_XREF_FOUND"
-pub fn explore_ast_for_panic(executor: &mut ConcolicExecutor, target_addr: u64, binary_path: &str) -> String {
-    log!(executor.state.logger, "Exploring AST for panic at address 0x{:x}", target_addr);
+pub fn explore_ast_for_panic(
+    executor: &mut ConcolicExecutor,
+    target_addr: u64,
+    binary_path: &str,
+) -> String {
+    log!(
+        executor.state.logger,
+        "Exploring AST for panic at address 0x{:x}",
+        target_addr
+    );
 
     let output = Command::new("python3")
         .arg("scripts/explore_ast_panic.py")
@@ -28,7 +36,11 @@ pub fn explore_ast_for_panic(executor: &mut ConcolicExecutor, target_addr: u64, 
     let stderr = str::from_utf8(&output.stderr).unwrap();
 
     if !output.status.success() {
-        log!(executor.state.logger, "Pyhidra AST exploration failed:\n{}", stderr);
+        log!(
+            executor.state.logger,
+            "Pyhidra AST exploration failed:\n{}",
+            stderr
+        );
         return "AST_ERROR".to_string();
     }
 

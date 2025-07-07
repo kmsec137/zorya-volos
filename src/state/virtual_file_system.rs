@@ -21,7 +21,8 @@ impl VirtualFileSystem {
         let fd = self.file_counter;
         self.file_counter += 1;
         // Mock behavior for opening a file with a size, e.g., 1024 bytes
-        self.open_files.insert(fd, Arc::new(Mutex::new(FileDescriptor::new(fd, 1024))));
+        self.open_files
+            .insert(fd, Arc::new(Mutex::new(FileDescriptor::new(fd, 1024))));
         fd
     }
 
@@ -65,7 +66,11 @@ pub struct FileDescriptor {
 
 impl FileDescriptor {
     fn new(fd: u32, size: u64) -> Self {
-        FileDescriptor { fd, position: 0, size }
+        FileDescriptor {
+            fd,
+            position: 0,
+            size,
+        }
     }
 
     /// Mock read method.
@@ -101,7 +106,7 @@ impl FileDescriptor {
                 } else {
                     self.size + (offset as u64)
                 }
-            },
+            }
             SeekFrom::Current(offset) => {
                 if offset < 0 {
                     self.position.saturating_sub((-offset) as u64)
@@ -110,7 +115,7 @@ impl FileDescriptor {
                         io::Error::new(io::ErrorKind::Other, "Seek position overflow")
                     })?
                 }
-            },
+            }
         };
         Ok(self.position)
     }

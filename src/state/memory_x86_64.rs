@@ -16,7 +16,7 @@ use crate::target_info::GLOBAL_TARGET_INFO;
 // Protection flags for memory regions
 const PROT_READ: i32 = 0x1;
 const PROT_WRITE: i32 = 0x2;
-const PROT_EXEC: i32  = 0x4;
+const PROT_EXEC: i32 = 0x4;
 
 #[derive(Debug)]
 pub enum MemoryError {
@@ -37,7 +37,11 @@ impl Error for MemoryError {}
 impl fmt::Display for MemoryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MemoryError::OutOfBounds(addr, size) => write!(f, "Out of bounds access at address 0x{:x} with size {}", addr, size),
+            MemoryError::OutOfBounds(addr, size) => write!(
+                f,
+                "Out of bounds access at address 0x{:x} with size {}",
+                addr, size
+            ),
             MemoryError::WriteOutOfBounds => write!(f, "Write out of bounds"),
             MemoryError::ReadOutOfBounds => write!(f, "Read out of bounds"),
             MemoryError::IncorrectSliceLength => write!(f, "Incorrect slice length"),
@@ -90,9 +94,9 @@ impl<'ctx> MemoryValue<'ctx> {
 pub struct MemoryRegion<'ctx> {
     pub start_address: u64,
     pub end_address: u64,
-    pub concrete_data: Vec<u8>,  // Holds only the concrete data (compact, 1 byte per memory cell)
+    pub concrete_data: Vec<u8>, // Holds only the concrete data (compact, 1 byte per memory cell)
     pub symbolic_data: BTreeMap<usize, Arc<BV<'ctx>>>, // Holds symbolic data for only some addresses, sorted by offset
-    pub prot: i32,  // Protection flags (e.g., PROT_READ, PROT_WRITE)
+    pub prot: i32, // Protection flags (e.g., PROT_READ, PROT_WRITE)
 }
 
 impl<'ctx> MemoryRegion<'ctx> {
@@ -117,7 +121,7 @@ impl<'ctx> MemoryRegion<'ctx> {
             start_address,
             end_address: start_address + size as u64,
             concrete_data: vec![0; size], // Initialize the concrete data with zeros
-            symbolic_data: BTreeMap::new(),  // Initially, no symbolic values
+            symbolic_data: BTreeMap::new(), // Initially, no symbolic values
             prot,
         }
     }
@@ -146,7 +150,10 @@ pub struct MemoryX86_64<'ctx> {
 }
 
 impl<'ctx> MemoryX86_64<'ctx> {
-    pub fn new(ctx: &'ctx Context, vfs: Arc<RwLock<VirtualFileSystem>>) -> Result<Self, MemoryError> {
+    pub fn new(
+        ctx: &'ctx Context,
+        vfs: Arc<RwLock<VirtualFileSystem>>,
+    ) -> Result<Self, MemoryError> {
         Ok(MemoryX86_64 {
             regions: Arc::new(RwLock::new(Vec::new())),
             ctx,
@@ -160,7 +167,10 @@ impl<'ctx> MemoryX86_64<'ctx> {
             info.zorya_path.clone()
         };
 
-        let dumps_dir_path = zorya_dir.join("results").join("initialization_data").join("dumps");
+        let dumps_dir_path = zorya_dir
+            .join("results")
+            .join("initialization_data")
+            .join("dumps");
 
         let entries = fs::read_dir(dumps_dir_path)?;
         for entry in entries {
@@ -175,50 +185,69 @@ impl<'ctx> MemoryX86_64<'ctx> {
     }
 
     /// Load memory dump with dynamic chunk size and handle symbolic values separately.
-    pub fn load_memory_dump_with_dynamic_chunk_size(&self, file_path: &Path) -> Result<(), MemoryError> {
+    pub fn load_memory_dump_with_dynamic_chunk_size(
+        &self,
+        file_path: &Path,
+    ) -> Result<(), MemoryError> {
         let start_addr = self.parse_start_address_from_path(file_path)?;
         let file = File::open(file_path)?;
         let file_len = file.metadata()?.len();
-    
+
         let chunk_size = match file_len {
             0..=100_000_000 => 64 * 1024, // 64 KB chunks for small files
             100_000_001..=1_000_000_000 => 256 * 1024, // 256 KB chunks for medium files
-            _ => 1 * 1024 * 1024, // 1 MB chunks for large files
+            _ => 1 * 1024 * 1024,         // 1 MB chunks for large files
         };
-    
-        let mut memory_region = MemoryRegion::new(start_addr, file_len as usize, PROT_READ | PROT_WRITE);
-    
+
+        let mut memory_region =
+            MemoryRegion::new(start_addr, file_len as usize, PROT_READ | PROT_WRITE);
+
         let mut current_offset = 0usize;
         let mut reader = BufReader::new(file);
         let mut buffer = vec![0; chunk_size]; // Buffer for reading chunks
-    
+
         while current_offset < file_len as usize {
             let bytes_read = reader.read(&mut buffer)?;
             if bytes_read == 0 {
                 break; // EOF reached
             }
-    
+
             // Only process concrete data (no symbolic data yet)
             for (i, &byte) in buffer[..bytes_read].iter().enumerate() {
                 memory_region.concrete_data[current_offset + i] = byte;
             }
-    
+
             current_offset += bytes_read;
         }
-    
+
         let mut regions = self.regions.write().unwrap();
         regions.push(memory_region);
         regions.sort_by_key(|region| region.start_address);
-    
+
         Ok(())
-    }    
+    }
 
     fn parse_start_address_from_path(&self, path: &Path) -> Result<u64, MemoryError> {
-        let file_name = path.file_name().ok_or(io::Error::new(io::ErrorKind::NotFound, "File name not found"))?;
-        let file_str = file_name.to_str().ok_or(io::Error::new(io::ErrorKind::InvalidData, "Invalid file name"))?;
+        let file_name = path.file_name().ok_or(io::Error::new(
+            io::ErrorKind::NotFound,
+            "File name not found",
+        ))?;
+        let file_str = file_name.to_str().ok_or(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid file name",
+        ))?;
         let re = Regex::new(r"^(0x[[:xdigit:]]+)-")?;
-        let caps = re.captures(file_str).ok_or(io::Error::new(io::ErrorKind::InvalidData, "Regex capture failed"))?;
-        let start_str = caps.get(1).ok_or(io::Error::new(io::ErrorKind::InvalidData, "Capture group empty"))?.as_str();
+        let caps = re.captures(file_str).ok_or(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Regex capture failed",
+        ))?;
+        let start_str = caps
+            .get(1)
+            .ok_or(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Capture group empty",
+            ))?
+            .as_str();
         let start_addr = u64::from_str_radix(&start_str[2..], 16)?;
         Ok(start_addr)
     }
@@ -249,29 +278,33 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
     /// Reads both concrete and symbolic data from memory.
     /// Only returns symbolic data if it has been explicitly initialized.
-    pub fn read_memory(&self, address: u64, size: usize) -> Result<(Vec<u8>, Vec<Option<Arc<BV<'ctx>>>>), MemoryError> {
+    pub fn read_memory(
+        &self,
+        address: u64,
+        size: usize,
+    ) -> Result<(Vec<u8>, Vec<Option<Arc<BV<'ctx>>>>), MemoryError> {
         let regions = self.regions.read().unwrap();
-    
+
         for region in regions.iter() {
             if region.contains(address, size) {
                 let offset = region.offset(address);
-    
+
                 if offset + size > region.concrete_data.len() {
                     return Err(MemoryError::ReadOutOfBounds);
                 }
-    
+
                 let concrete = region.concrete_data[offset..offset + size].to_vec();
-    
+
                 let symbolic = (offset..offset + size)
                     .map(|i| region.symbolic_data.get(&i).cloned())
                     .collect();
-    
+
                 return Ok((concrete, symbolic));
             }
         }
-    
+
         Err(MemoryError::ReadOutOfBounds)
-    }    
+    }
 
     /// Reads a sequence of bytes from memory (concrete data only).
     pub fn read_bytes(&self, address: u64, size: usize) -> Result<Vec<u8>, MemoryError> {
@@ -302,9 +335,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
         let (concrete, symbolic) = self.read_memory(address, 1)?;
         let cbyte = concrete[0] as u64;
 
-        let sym_bv = symbolic[0].clone().unwrap_or_else(|| {
-            Arc::new(BV::from_u64(self.ctx, cbyte, 8))
-        });
+        let sym_bv = symbolic[0]
+            .clone()
+            .unwrap_or_else(|| Arc::new(BV::from_u64(self.ctx, cbyte, 8)));
 
         Ok(ConcolicVar {
             concrete: ConcreteVar::Int(cbyte),
@@ -318,51 +351,77 @@ impl<'ctx> MemoryX86_64<'ctx> {
         if size == 128 {
             let (concrete_low, symbolic_low) = self.read_memory(address, 8)?;
             let (concrete_high, symbolic_high) = self.read_memory(address + 8, 8)?;
-    
+
             let low = u64::from_le_bytes(concrete_low.as_slice().try_into().unwrap());
             let high = u64::from_le_bytes(concrete_high.as_slice().try_into().unwrap());
-    
+
             let concrete = ConcreteVar::LargeInt(vec![low, high]);
-    
-            let symbolic_low_concat = symbolic_low.iter().enumerate().rev().fold(None, |acc: Option<BV<'ctx>>, (i, sym)| {
-                let bv = sym.as_ref().map(|s| s.as_ref().clone()).unwrap_or_else(|| {
-                    BV::from_u64(self.ctx, concrete_low[i] as u64, 8)
-                });
-                Some(acc.map_or_else(|| bv.clone(), |a| a.concat(&bv)))
-            }).unwrap();
-    
-            let symbolic_high_concat = symbolic_high.iter().enumerate().rev().fold(None, |acc: Option<BV<'ctx>>, (i, sym)| {
-                let bv = sym.as_ref().map(|s| s.as_ref().clone()).unwrap_or_else(|| {
-                    BV::from_u64(self.ctx, concrete_high[i] as u64, 8)
-                });
-                Some(acc.map_or_else(|| bv.clone(), |a| a.concat(&bv)))
-            }).unwrap();
-    
+
+            let symbolic_low_concat = symbolic_low
+                .iter()
+                .enumerate()
+                .rev()
+                .fold(None, |acc: Option<BV<'ctx>>, (i, sym)| {
+                    let bv = sym
+                        .as_ref()
+                        .map(|s| s.as_ref().clone())
+                        .unwrap_or_else(|| BV::from_u64(self.ctx, concrete_low[i] as u64, 8));
+                    Some(acc.map_or_else(|| bv.clone(), |a| a.concat(&bv)))
+                })
+                .unwrap();
+
+            let symbolic_high_concat = symbolic_high
+                .iter()
+                .enumerate()
+                .rev()
+                .fold(None, |acc: Option<BV<'ctx>>, (i, sym)| {
+                    let bv = sym
+                        .as_ref()
+                        .map(|s| s.as_ref().clone())
+                        .unwrap_or_else(|| BV::from_u64(self.ctx, concrete_high[i] as u64, 8));
+                    Some(acc.map_or_else(|| bv.clone(), |a| a.concat(&bv)))
+                })
+                .unwrap();
+
             let symbolic = SymbolicVar::LargeInt(vec![symbolic_low_concat, symbolic_high_concat]);
-    
-            Ok(ConcolicVar { concrete, symbolic, ctx: self.ctx })
+
+            Ok(ConcolicVar {
+                concrete,
+                symbolic,
+                ctx: self.ctx,
+            })
         } else if size <= 64 {
             let byte_size = ((size + 7) / 8) as usize;
             let (mut concrete, symbolic) = self.read_memory(address, byte_size)?;
-    
+
             if concrete.len() < 8 {
                 let mut padded = vec![0u8; 8];
                 padded[..concrete.len()].copy_from_slice(&concrete);
                 concrete = padded;
             }
-    
+
             let value = u64::from_le_bytes(concrete.as_slice().try_into().unwrap());
-            let mask = if size < 64 { (1u64 << size) - 1 } else { u64::MAX };
+            let mask = if size < 64 {
+                (1u64 << size) - 1
+            } else {
+                u64::MAX
+            };
             let masked = value & mask;
             let concrete_var = ConcreteVar::Int(masked);
-    
-            let symbolic_concat = symbolic.iter().enumerate().rev().fold(None, |acc: Option<BV<'ctx>>, (i, sym)| {
-                let bv = sym.as_ref().map(|s| s.as_ref().clone()).unwrap_or_else(|| {
-                    BV::from_u64(self.ctx, concrete[i] as u64, 8)
-                });
-                Some(acc.map_or_else(|| bv.clone(), |a| a.concat(&bv)))
-            }).unwrap();
-    
+
+            let symbolic_concat = symbolic
+                .iter()
+                .enumerate()
+                .rev()
+                .fold(None, |acc: Option<BV<'ctx>>, (i, sym)| {
+                    let bv = sym
+                        .as_ref()
+                        .map(|s| s.as_ref().clone())
+                        .unwrap_or_else(|| BV::from_u64(self.ctx, concrete[i] as u64, 8));
+                    Some(acc.map_or_else(|| bv.clone(), |a| a.concat(&bv)))
+                })
+                .unwrap();
+
             let resized_sym = if symbolic_concat.get_size() < size {
                 symbolic_concat.zero_ext(size - symbolic_concat.get_size())
             } else if symbolic_concat.get_size() > size {
@@ -370,17 +429,26 @@ impl<'ctx> MemoryX86_64<'ctx> {
             } else {
                 symbolic_concat
             };
-    
+
             let symbolic_var = SymbolicVar::Int(resized_sym);
-    
-            Ok(ConcolicVar { concrete: concrete_var, symbolic: symbolic_var, ctx: self.ctx })
+
+            Ok(ConcolicVar {
+                concrete: concrete_var,
+                symbolic: symbolic_var,
+                ctx: self.ctx,
+            })
         } else {
             Err(MemoryError::InvalidString)
         }
-    }    
+    }
 
     /// Writes concrete and symbolic memory to a given address range.
-    pub fn write_memory(&self, address: u64, concrete: &[u8], symbolic: &[Option<Arc<BV<'ctx>>>]) -> Result<(), MemoryError> {
+    pub fn write_memory(
+        &self,
+        address: u64,
+        concrete: &[u8],
+        symbolic: &[Option<Arc<BV<'ctx>>>],
+    ) -> Result<(), MemoryError> {
         if concrete.len() != symbolic.len() {
             return Err(MemoryError::IncorrectSliceLength);
         }
@@ -401,7 +469,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
                     if let Some(symb) = symb {
                         region.write_symbolic(offset + i, symb.clone());
                     } else {
-                        region.remove_symbolic(offset + i);  // Remove symbolic data if `None`
+                        region.remove_symbolic(offset + i); // Remove symbolic data if `None`
                     }
                 }
 
@@ -424,10 +492,10 @@ impl<'ctx> MemoryX86_64<'ctx> {
     /// Writes a MemoryValue (both concrete and symbolic) to memory.
     pub fn write_value(&self, address: u64, value: &MemoryValue<'ctx>) -> Result<(), MemoryError> {
         let byte_size = ((value.size + 7) / 8) as usize; // Calculate the byte size from the bit size
-        
+
         // Prepare concrete bytes for storage, padded as needed
         let mut concrete_bytes = Vec::with_capacity(byte_size);
-        
+
         if byte_size > 8 {
             // If the size exceeds 8 bytes (e.g., 128 bits), split the value into parts
             let mut remaining_value = value.concrete;
@@ -483,30 +551,32 @@ impl<'ctx> MemoryX86_64<'ctx> {
     pub fn initialize_cpuid_memory_variables(&self) -> Result<(), MemoryError> {
         // Initial values for EAX, EBX, ECX, EDX (you can set these values as per your requirements)
         let values = [0x00000000, 0x00000000, 0x00000000, 0x00000000];
-    
+
         // Start address for the variables
         let start_address = 0x300000;
-    
+
         // create a 4KB memory region that includes this start_address
         let mut regions = self.regions.write().unwrap();
-    
+
         // Check if any region already covers the address 0x300000
-        let region_exists = regions.iter().any(|region| region.contains(start_address, 4 * values.len()));
-    
+        let region_exists = regions
+            .iter()
+            .any(|region| region.contains(start_address, 4 * values.len()));
+
         // If no region covers the 0x300000 address, we create a new one
         if !region_exists {
             let new_region = MemoryRegion::new(start_address, 0x1000, PROT_READ | PROT_WRITE); // 4KB region
             regions.push(new_region);
             regions.sort_by_key(|region| region.start_address);
         }
-    
+
         drop(regions); // Drop the lock after modifying the regions
-    
+
         // Now write the values to memory
         for (i, &concrete_value) in values.iter().enumerate() {
             let address = start_address + (i as u64) * 4; // Calculate address for each variable
             let symbolic_value = BV::from_u64(self.ctx, concrete_value as u64, 32);
-    
+
             let mem_value = MemoryValue {
                 concrete: concrete_value as u64,
                 symbolic: symbolic_value,
@@ -514,10 +584,13 @@ impl<'ctx> MemoryX86_64<'ctx> {
             };
             self.write_value(address, &mem_value)?; // Writing values to memory
         }
-        println!("Initialized CPUID memory variables at address 0x{:x}", start_address);
-    
+        println!(
+            "Initialized CPUID memory variables at address 0x{:x}",
+            start_address
+        );
+
         Ok(())
-    }    
+    }
 
     pub fn read_sigaction(&self, address: u64) -> Result<Sigaction<'ctx>, MemoryError> {
         // Read the sigaction structure from memory
@@ -525,10 +598,19 @@ impl<'ctx> MemoryX86_64<'ctx> {
         let flags = self.read_u64(address + 8)?.to_memory_value_u64();
         let restorer = self.read_u64(address + 16)?.to_memory_value_u64();
         let mask = self.read_u64(address + 24)?.to_memory_value_u64();
-        Ok(Sigaction { handler, flags, restorer, mask })
+        Ok(Sigaction {
+            handler,
+            flags,
+            restorer,
+            mask,
+        })
     }
 
-    pub fn write_sigaction(&self, address: u64, sigaction: &Sigaction<'ctx>) -> Result<(), MemoryError> {
+    pub fn write_sigaction(
+        &self,
+        address: u64,
+        sigaction: &Sigaction<'ctx>,
+    ) -> Result<(), MemoryError> {
         // Write the sigaction structure to memory
         self.write_u64(address, &sigaction.handler)?;
         self.write_u64(address + 8, &sigaction.flags)?;
@@ -538,7 +620,15 @@ impl<'ctx> MemoryX86_64<'ctx> {
     }
 
     /// Maps a memory region, either anonymous or file-backed.
-    pub fn mmap(&self, addr: u64, length: usize, prot: i32, flags: i32, fd: i32, offset: usize) -> Result<u64, MemoryError> {
+    pub fn mmap(
+        &self,
+        addr: u64,
+        length: usize,
+        prot: i32,
+        flags: i32,
+        fd: i32,
+        offset: usize,
+    ) -> Result<u64, MemoryError> {
         const MAP_ANONYMOUS: i32 = 0x20;
         const MAP_FIXED: i32 = 0x10;
         const MAX_USER_ADDRESS: u64 = 0x0000_7FFF_FFFF_FFFF; // Highest user space address
@@ -559,7 +649,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
                     return Err(MemoryError::AddressOverflow);
                 }
 
-                let end_address = proposed_address.checked_add(length as u64)
+                let end_address = proposed_address
+                    .checked_add(length as u64)
                     .ok_or(MemoryError::AddressOverflow)?;
                 if end_address > MAX_USER_ADDRESS {
                     return Err(MemoryError::AddressOverflow);
@@ -572,8 +663,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
                         return false;
                     }
 
-                    (proposed_address >= region.start_address && proposed_address < region.end_address) ||
-                    (end_address > region.start_address && end_address <= region.end_address)
+                    (proposed_address >= region.start_address
+                        && proposed_address < region.end_address)
+                        || (end_address > region.start_address && end_address <= region.end_address)
                 });
 
                 if !overlap {
@@ -581,7 +673,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 }
 
                 // Move proposed_address forward
-                proposed_address = proposed_address.checked_add(0x10000)
+                proposed_address = proposed_address
+                    .checked_add(0x10000)
                     .ok_or(MemoryError::AddressOverflow)?; // Increment by 64 KiB
             }
 
@@ -592,7 +685,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
         println!("Length: {}", length);
 
         // Ensure end_address does not exceed MAX_USER_ADDRESS
-        let end_address = start_address.checked_add(length as u64)
+        let end_address = start_address
+            .checked_add(length as u64)
             .ok_or(MemoryError::AddressOverflow)?;
         if end_address > MAX_USER_ADDRESS {
             return Err(MemoryError::AddressOverflow);
@@ -612,7 +706,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
             // Access the virtual file system to read data
             let vfs = self.vfs.read().unwrap();
-            let file = vfs.get_file(fd as u32).ok_or(MemoryError::InvalidFileDescriptor)?;
+            let file = vfs
+                .get_file(fd as u32)
+                .ok_or(MemoryError::InvalidFileDescriptor)?;
 
             // Lock the file descriptor to perform operations
             let mut file_guard = file.lock().unwrap();
@@ -678,7 +774,10 @@ impl<'ctx> MemoryX86_64<'ctx> {
     /// Reads the gdb-style memory_mapping.txt and ensures each range is covered
     /// by a MemoryRegion in `self.regions`. If not, create a zero-initialized
     /// region with the appropriate permission flags.
-    pub fn ensure_gdb_mappings_covered<P: AsRef<Path>>(&self, mapping_file: P) -> Result<(), MemoryError> {
+    pub fn ensure_gdb_mappings_covered<P: AsRef<Path>>(
+        &self,
+        mapping_file: P,
+    ) -> Result<(), MemoryError> {
         let file = fs::File::open(mapping_file)?;
         let reader = io::BufReader::new(file);
 
@@ -701,12 +800,12 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
             // Extract addresses & perms
             let start_str = parts[0];
-            let end_str   = parts[1];
+            let end_str = parts[1];
             let perms_str = parts[4];
 
             // Convert hex to u64
             let start_addr = u64::from_str_radix(start_str.trim_start_matches("0x"), 16)?;
-            let end_addr   = u64::from_str_radix(end_str.trim_start_matches("0x"), 16)?;
+            let end_addr = u64::from_str_radix(end_str.trim_start_matches("0x"), 16)?;
             if end_addr <= start_addr {
                 continue;
             }
@@ -724,14 +823,18 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
     // Checks if we already have a MemoryRegion covering `[start_addr, start_addr + size)`.
     // If not, create one with zero-initialized data and the given `prot_flags`.
-    fn ensure_region_exists(&self, start_addr: u64, size: usize, prot_flags: i32) -> Result<(), MemoryError> {
+    fn ensure_region_exists(
+        &self,
+        start_addr: u64,
+        size: usize,
+        prot_flags: i32,
+    ) -> Result<(), MemoryError> {
         let mut regions = self.regions.write().unwrap();
 
         // See if any existing region fully covers this address range
-        let already_covered = regions.iter().any(|r| {
-            r.start_address <= start_addr
-                && r.end_address >= (start_addr + size as u64)
-        });
+        let already_covered = regions
+            .iter()
+            .any(|r| r.start_address <= start_addr && r.end_address >= (start_addr + size as u64));
 
         if !already_covered {
             // Create a new region
@@ -747,10 +850,10 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
 #[derive(Clone, Debug)]
 pub struct Sigaction<'ctx> {
-    pub handler: MemoryValue<'ctx>,   // sa_handler or sa_sigaction (union)
-    pub flags: MemoryValue<'ctx>,     // sa_flags
-    pub restorer: MemoryValue<'ctx>,  // sa_restorer (deprecated)
-    pub mask: MemoryValue<'ctx>,      // sa_mask
+    pub handler: MemoryValue<'ctx>,  // sa_handler or sa_sigaction (union)
+    pub flags: MemoryValue<'ctx>,    // sa_flags
+    pub restorer: MemoryValue<'ctx>, // sa_restorer (deprecated)
+    pub mask: MemoryValue<'ctx>,     // sa_mask
 }
 
 impl<'ctx> Sigaction<'ctx> {

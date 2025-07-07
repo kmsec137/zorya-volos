@@ -1,7 +1,9 @@
-use crate::state::{cpu_state::CpuConcolicValue, memory_x86_64::MemoryValue};
-use z3::{ast::{Ast, Bool, BV}, Context};
 use super::{concrete_var::VarError, ConcolicVar, ConcreteVar, SymbolicVar};
-
+use crate::state::{cpu_state::CpuConcolicValue, memory_x86_64::MemoryValue};
+use z3::{
+    ast::{Ast, Bool, BV},
+    Context,
+};
 
 #[derive(Clone, Debug)]
 pub enum ConcolicEnum<'ctx> {
@@ -11,7 +13,6 @@ pub enum ConcolicEnum<'ctx> {
 }
 
 impl<'ctx> ConcolicEnum<'ctx> {
-
     pub fn is_bool(&self) -> bool {
         match self {
             ConcolicEnum::ConcolicVar(var) => var.concrete.is_bool(),
@@ -24,15 +25,19 @@ impl<'ctx> ConcolicEnum<'ctx> {
     pub fn get_concrete_value(&self) -> u64 {
         match self {
             ConcolicEnum::ConcolicVar(var) => var.concrete.to_u64(),
-            ConcolicEnum::CpuConcolicValue(cpu) => cpu.concrete.to_u64(), 
-            ConcolicEnum::MemoryValue(mem) => mem.concrete, 
+            ConcolicEnum::CpuConcolicValue(cpu) => cpu.concrete.to_u64(),
+            ConcolicEnum::MemoryValue(mem) => mem.concrete,
         }
     }
 
     pub fn get_concrete_value_signed(&self) -> Result<i64, VarError> {
         match self {
-            ConcolicEnum::ConcolicVar(var) => var.concrete.to_i64().map_err(|_| VarError::ConversionError),
-            ConcolicEnum::CpuConcolicValue(cpu) => cpu.concrete.to_i64().map_err(|_| VarError::ConversionError),
+            ConcolicEnum::ConcolicVar(var) => {
+                var.concrete.to_i64().map_err(|_| VarError::ConversionError)
+            }
+            ConcolicEnum::CpuConcolicValue(cpu) => {
+                cpu.concrete.to_i64().map_err(|_| VarError::ConversionError)
+            }
             ConcolicEnum::MemoryValue(mem) => Ok(mem.concrete as i64),
         }
     }
@@ -49,7 +54,11 @@ impl<'ctx> ConcolicEnum<'ctx> {
         match self {
             ConcolicEnum::ConcolicVar(var) => var.symbolic.to_bool(),
             ConcolicEnum::CpuConcolicValue(cpu) => cpu.symbolic.to_bool(),
-            ConcolicEnum::MemoryValue(mem_value) => mem_value.symbolic._eq(&BV::from_u64(mem_value.symbolic.get_ctx(), 1, 1)),
+            ConcolicEnum::MemoryValue(mem_value) => {
+                mem_value
+                    .symbolic
+                    ._eq(&BV::from_u64(mem_value.symbolic.get_ctx(), 1, 1))
+            }
         }
     }
 

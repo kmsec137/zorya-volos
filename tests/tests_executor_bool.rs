@@ -2,19 +2,20 @@
 mod tests {
     use std::collections::BTreeMap;
 
+    use parser::parser::{Inst, Opcode, Size, Var, Varnode};
     use z3::ast::BV;
+    use z3::{Config, Context, Solver};
     use zorya::concolic::executor_bool::{handle_bool_and, handle_bool_negate, handle_bool_xor};
     use zorya::concolic::{ConcolicExecutor, ConcolicVar, Logger};
     use zorya::executor::SymbolicVar;
     use zorya::state::State;
-    use parser::parser::{Inst, Opcode, Var, Varnode, Size};
-    use z3::{Config, Context, Solver};
 
     fn setup_executor() -> ConcolicExecutor<'static> {
         let cfg = Config::new();
         let ctx = Box::leak(Box::new(Context::new(&cfg)));
         let logger = Logger::new("execution_log.txt", false).expect("Failed to create logger");
-        let trace_logger = Logger::new("trace_log.txt", true).expect("Failed to create trace logger");
+        let trace_logger =
+            Logger::new("trace_log.txt", true).expect("Failed to create trace logger");
         let state = State::default_for_tests(ctx, logger).expect("Failed to create state.");
         let current_lines_number = 0;
         ConcolicExecutor {
@@ -33,7 +34,7 @@ mod tests {
             constraint_vector: Vec::new(),
         }
     }
-    
+
     #[test]
     fn test_handle_bool_and() {
         let mut executor = setup_executor();
@@ -41,10 +42,24 @@ mod tests {
         // Setup: Create two boolean variables, one true and one false
         let symbolic0 = SymbolicVar::Int(BV::new_const(executor.context, format!("true"), 64));
         let symbolic1 = SymbolicVar::Int(BV::new_const(executor.context, format!("false"), 64));
-        let input0 = ConcolicVar::new_concrete_and_symbolic_int(1, symbolic0.to_bv(&executor.context), executor.context, 1); // true
-        let input1 = ConcolicVar::new_concrete_and_symbolic_int(0, symbolic1.to_bv(&executor.context), executor.context, 1); // false
-        executor.unique_variables.insert("Unique(0x100)".to_string(), input0);
-        executor.unique_variables.insert("Unique(0x101)".to_string(), input1);
+        let input0 = ConcolicVar::new_concrete_and_symbolic_int(
+            1,
+            symbolic0.to_bv(&executor.context),
+            executor.context,
+            1,
+        ); // true
+        let input1 = ConcolicVar::new_concrete_and_symbolic_int(
+            0,
+            symbolic1.to_bv(&executor.context),
+            executor.context,
+            1,
+        ); // false
+        executor
+            .unique_variables
+            .insert("Unique(0x100)".to_string(), input0);
+        executor
+            .unique_variables
+            .insert("Unique(0x101)".to_string(), input1);
 
         // Define the instruction to perform a BOOL_AND operation
         let and_inst = Inst {
@@ -73,7 +88,11 @@ mod tests {
 
         // Verify the result of the BOOL_AND operation
         if let Some(result_var) = executor.unique_variables.get("Unique(0x102)") {
-            assert_eq!(result_var.concrete, zorya::concolic::ConcreteVar::Int(0), "BOOL_AND did not compute the correct result (true AND false should be false)");
+            assert_eq!(
+                result_var.concrete,
+                zorya::concolic::ConcreteVar::Int(0),
+                "BOOL_AND did not compute the correct result (true AND false should be false)"
+            );
         } else {
             panic!("BOOL_AND result not found or incorrect type");
         }
@@ -85,8 +104,15 @@ mod tests {
 
         // Setup: Create and insert a test variable assumed to represent a boolean value 'true' (1)
         let symbolic = SymbolicVar::Int(BV::new_const(executor.context, format!("true"), 64));
-        let test_bool = ConcolicVar::new_concrete_and_symbolic_int(1, symbolic.to_bv(&executor.context),executor.context, 1);
-        executor.unique_variables.insert("Unique(0x200)".to_string(), test_bool);
+        let test_bool = ConcolicVar::new_concrete_and_symbolic_int(
+            1,
+            symbolic.to_bv(&executor.context),
+            executor.context,
+            1,
+        );
+        executor
+            .unique_variables
+            .insert("Unique(0x200)".to_string(), test_bool);
 
         let negate_inst = Inst {
             opcode: Opcode::BoolNegate,
@@ -100,13 +126,24 @@ mod tests {
             }],
         };
 
-        assert!(handle_bool_negate(&mut executor, negate_inst).is_ok(), "BOOL_NEGATE operation failed");
+        assert!(
+            handle_bool_negate(&mut executor, negate_inst).is_ok(),
+            "BOOL_NEGATE operation failed"
+        );
 
         // Verify: Check if the boolean value was negated correctly
-        if let Some(negated_var) = executor.unique_variables.get("Unique(0x200)").map(|enum_var| match enum_var {
-            var => var.clone(),
-        }) {
-            assert_eq!(negated_var.concrete.to_u64(), 0, "Boolean negation did not produce the expected result");
+        if let Some(negated_var) = executor
+            .unique_variables
+            .get("Unique(0x200)")
+            .map(|enum_var| match enum_var {
+                var => var.clone(),
+            })
+        {
+            assert_eq!(
+                negated_var.concrete.to_u64(),
+                0,
+                "Boolean negation did not produce the expected result"
+            );
         } else {
             panic!("Result of BOOL_NEGATE not found or incorrect type");
         }
@@ -119,10 +156,24 @@ mod tests {
         // Setup: Create two boolean variables, one true and one false
         let symbolic0 = SymbolicVar::Int(BV::new_const(executor.context, format!("true"), 64));
         let symbolic1 = SymbolicVar::Int(BV::new_const(executor.context, format!("false"), 64));
-        let input0 = ConcolicVar::new_concrete_and_symbolic_int(1, symbolic0.to_bv(&executor.context), executor.context, 1); // true
-        let input1 = ConcolicVar::new_concrete_and_symbolic_int(0, symbolic1.to_bv(&executor.context), executor.context, 1); // false
-        executor.unique_variables.insert("Unique(0x100)".to_string(), input0);
-        executor.unique_variables.insert("Unique(0x101)".to_string(), input1);
+        let input0 = ConcolicVar::new_concrete_and_symbolic_int(
+            1,
+            symbolic0.to_bv(&executor.context),
+            executor.context,
+            1,
+        ); // true
+        let input1 = ConcolicVar::new_concrete_and_symbolic_int(
+            0,
+            symbolic1.to_bv(&executor.context),
+            executor.context,
+            1,
+        ); // false
+        executor
+            .unique_variables
+            .insert("Unique(0x100)".to_string(), input0);
+        executor
+            .unique_variables
+            .insert("Unique(0x101)".to_string(), input1);
 
         // Define the instruction to perform a BOOL_XOR operation
         let xor_inst = Inst {
@@ -151,7 +202,11 @@ mod tests {
 
         // Verify the result of the BOOL_XOR operation
         if let Some(result_var) = executor.unique_variables.get("Unique(0x102)") {
-            assert_eq!(result_var.concrete, zorya::concolic::ConcreteVar::Int(1), "BOOL_XOR did not compute the correct result (true XOR false should be true)");
+            assert_eq!(
+                result_var.concrete,
+                zorya::concolic::ConcreteVar::Int(1),
+                "BOOL_XOR did not compute the correct result (true XOR false should be true)"
+            );
         } else {
             panic!("BOOL_XOR result not found or incorrect type");
         }

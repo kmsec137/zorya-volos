@@ -1,6 +1,9 @@
-use std::{error::Error, fmt::{self, LowerHex}};
 use num_bigint::BigUint;
 use num_traits::Zero;
+use std::{
+    error::Error,
+    fmt::{self, LowerHex},
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConcreteVar {
@@ -11,7 +14,7 @@ pub enum ConcreteVar {
     Bool(bool),
 }
 
-impl ConcreteVar {   
+impl ConcreteVar {
     // Method to convert ConcreteVar to a byte
     pub fn to_byte(&self) -> Result<u8, VarError> {
         match *self {
@@ -21,13 +24,12 @@ impl ConcreteVar {
                 } else {
                     Err(VarError::ConversionError)
                 }
-            },
+            }
             // A float cannot sensibly be converted to a byte for memory operations
             ConcreteVar::Float(_) => Err(VarError::ConversionError),
             ConcreteVar::Str(_) => Err(VarError::ConversionError),
             ConcreteVar::Bool(value) => Ok(value as u8),
             ConcreteVar::LargeInt(_) => Err(VarError::ConversionError),
-           
         }
     }
 
@@ -41,11 +43,8 @@ impl ConcreteVar {
                 } else {
                     Err(VarError::ConversionError)
                 }
-            },
-            ConcreteVar::Str(ref s) => {
-                s.parse::<u64>()
-                 .map_err(|_| VarError::ConversionError)
-            },
+            }
+            ConcreteVar::Str(ref s) => s.parse::<u64>().map_err(|_| VarError::ConversionError),
             ConcreteVar::Bool(value) => Ok(*value as u64),
             ConcreteVar::LargeInt(value) => Ok(value[0]), // little-endian interpretation
         }
@@ -77,10 +76,10 @@ impl ConcreteVar {
                 } else {
                     0 // Default value for out-of-range or negative floats
                 }
-            },
+            }
             ConcreteVar::Str(ref s) => {
                 s.parse::<u64>().unwrap_or(0) // Default value for unparsable strings
-            },
+            }
             ConcreteVar::Bool(value) => *value as u64,
             ConcreteVar::LargeInt(value) => value[0], // Return the lower 64 bits
         }
@@ -104,7 +103,7 @@ impl ConcreteVar {
                     num |= BigUint::from(chunk) << (64 * i);
                 }
                 num
-            },
+            }
             _ => BigUint::zero(), // Default value for non-integer types
         }
     }
@@ -118,18 +117,15 @@ impl ConcreteVar {
                 } else {
                     Err(VarError::ConversionError)
                 }
-            },
+            }
             ConcreteVar::Float(value) => {
                 if value >= &0.0 && value <= &(u32::MAX as f64) {
                     Ok(*value as u32)
                 } else {
                     Err(VarError::ConversionError)
                 }
-            },
-            ConcreteVar::Str(ref s) => {
-                s.parse::<u32>()
-                 .map_err(|_| VarError::ConversionError)
-            },
+            }
+            ConcreteVar::Str(ref s) => s.parse::<u32>().map_err(|_| VarError::ConversionError),
             ConcreteVar::Bool(value) => Ok(*value as u32),
             ConcreteVar::LargeInt(_) => Err(VarError::ConversionError),
         }
@@ -151,7 +147,7 @@ impl ConcreteVar {
                 result.trim_start_matches('0').to_string()
             }
         }
-    }    
+    }
 
     // Convert ConcreteVar to a boolean value
     pub fn to_bool(&self) -> bool {
@@ -166,9 +162,9 @@ impl ConcreteVar {
 
     pub fn get_size(&self) -> u32 {
         match self {
-            ConcreteVar::Int(_) => 64,  // all integers are u64
-            ConcreteVar::Float(_) => 64, // double precision floats
-            ConcreteVar::Str(s) => (s.len() * 8) as u32,  // ?
+            ConcreteVar::Int(_) => 64,                   // all integers are u64
+            ConcreteVar::Float(_) => 64,                 // double precision floats
+            ConcreteVar::Str(s) => (s.len() * 8) as u32, // ?
             ConcreteVar::Bool(_) => 1,
             ConcreteVar::LargeInt(values) => (values.len() * 64) as u32, // Size in bits
         }
@@ -178,15 +174,15 @@ impl ConcreteVar {
     pub fn get_concrete_value_signed(&self, bit_size: u32) -> Result<i64, VarError> {
         let raw_value = self.to_u64(); // Get raw value as unsigned
         let sign_extended = match bit_size {
-            8 => (raw_value as i8) as i64,  // Sign-extend from 8-bit
+            8 => (raw_value as i8) as i64,   // Sign-extend from 8-bit
             16 => (raw_value as i16) as i64, // Sign-extend from 16-bit
             32 => (raw_value as i32) as i64, // Sign-extend from 32-bit
-            64 => raw_value as i64,         // Already correct
+            64 => raw_value as i64,          // Already correct
             _ => return Err(VarError::ConversionError),
         };
 
         Ok(sign_extended)
-    }    
+    }
 
     // Method to perform a right shift operation safely
     pub fn right_shift(self, shift: usize) -> Self {
@@ -195,16 +191,14 @@ impl ConcreteVar {
                 // Safely perform the right shift on an integer value.
                 // We mask the shift by 63 to prevent panics or undefined behavior from shifting more than the bits available in u64.
                 ConcreteVar::Int(value >> (shift & 63))
-            },
+            }
             // For other types, return them unchanged or handle as needed.
             ConcreteVar::Float(_) | ConcreteVar::Str(_) => {
                 // Logically, right shifting a float or string does not make sense,
                 // so we can return the value unchanged or handle it differently if needed.
                 self
-            },
-            ConcreteVar::Bool(_) => {
-                self
-            },
+            }
+            ConcreteVar::Bool(_) => self,
             ConcreteVar::LargeInt(mut values) => {
                 let mut carry = 0u64;
                 for v in values.iter_mut().rev() {
@@ -213,9 +207,9 @@ impl ConcreteVar {
                     carry = new_carry;
                 }
                 ConcreteVar::LargeInt(values)
-            },
+            }
         }
-    } 
+    }
 
     // Bitwise AND operation for ConcreteVar
     pub fn bitand(&self, other: &ConcreteVar) -> Self {
@@ -260,7 +254,7 @@ impl<'ctx> LowerHex for ConcreteVar {
                     write!(f, "{:016x}", chunk)?;
                 }
                 Ok(())
-            }, 
+            }
         };
         Ok(())
     }

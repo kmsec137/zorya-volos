@@ -1,7 +1,6 @@
-/// File containing all the information regarding the binary file to be analyzed by zorya
-
-use std::{env, path::PathBuf};
 use std::sync::Mutex;
+/// File containing all the information regarding the binary file to be analyzed by zorya
+use std::{env, path::PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct TargetInfo {
@@ -13,7 +12,12 @@ pub struct TargetInfo {
 
 impl TargetInfo {
     // Define a new function for easily creating a new TargetInfo
-    pub fn new(binary_path: &str, main_program_addr: &str, pcode_file_path: PathBuf, zorya_path: PathBuf) -> Self {
+    pub fn new(
+        binary_path: &str,
+        main_program_addr: &str,
+        pcode_file_path: PathBuf,
+        zorya_path: PathBuf,
+    ) -> Self {
         TargetInfo {
             binary_path: binary_path.to_string(),
             main_program_addr: main_program_addr.to_string(),
@@ -28,7 +32,7 @@ lazy_static::lazy_static! {
         // Get ZORYA_DIR and BIN_PATH from environment
         let zorya_path = PathBuf::from(env::var("ZORYA_DIR").expect("ZORYA_DIR environment variable is not set"));
         let bin_path = PathBuf::from(env::var("BIN_PATH").expect("BIN_PATH environment variable is not set"));
-        
+
         // Extract binary name from BIN_PATH and construct the pcode file path
         let binary_name = bin_path.file_name().expect("Failed to extract binary name from BIN_PATH").to_str().expect("Binary name contains invalid UTF-8 characters");
         let pcode_file_name = format!("{}_low_pcode.txt", binary_name);

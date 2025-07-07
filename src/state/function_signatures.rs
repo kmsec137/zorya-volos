@@ -3,27 +3,23 @@
 #![allow(non_upper_case_globals)]
 
 use std::collections::HashMap;
-use std::process::Command;
-use std::{env, fs};
 use std::fs::File;
+use std::io::Write;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
-use std::io::Write;
+use std::process::Command;
+use std::{env, fs};
 
-
+use crate::concolic::ConcolicExecutor;
 use gimli::{
-    AttributeValue, DebuggingInformationEntry, Dwarf, EndianSlice, LittleEndian, Operation, Reader,
-    Unit, DwTag,
-    DW_AT_location, DW_AT_low_pc,
-    DW_AT_name, DW_AT_type, DW_TAG_array_type, DW_TAG_const_type,
-    DW_TAG_formal_parameter, DW_TAG_pointer_type,
-    DW_TAG_restrict_type, DW_TAG_subprogram, DW_TAG_typedef,
-    DW_TAG_volatile_type, DW_TAG_subrange_type,
+    AttributeValue, DW_AT_location, DW_AT_low_pc, DW_AT_name, DW_AT_type, DW_TAG_array_type,
+    DW_TAG_const_type, DW_TAG_formal_parameter, DW_TAG_pointer_type, DW_TAG_restrict_type,
+    DW_TAG_subprogram, DW_TAG_subrange_type, DW_TAG_typedef, DW_TAG_volatile_type,
+    DebuggingInformationEntry, DwTag, Dwarf, EndianSlice, LittleEndian, Operation, Reader, Unit,
 };
 use memmap2::Mmap;
 use object::{Object, ObjectSection};
 use serde::{Deserialize, Serialize};
-use crate::concolic::ConcolicExecutor;
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
@@ -35,11 +31,22 @@ macro_rules! log {
 #[serde(tag = "kind")]
 pub enum TypeDesc {
     Primitive(String),
-    Pointer { to: Box<TypeDesc> },
-    Array { element: Box<TypeDesc>, count: Option<u64> },
-    Slice { element: Box<TypeDesc> },
-    Struct { members: Vec<StructMember> },
-    Union { members: Vec<StructMember> },
+    Pointer {
+        to: Box<TypeDesc>,
+    },
+    Array {
+        element: Box<TypeDesc>,
+        count: Option<u64>,
+    },
+    Slice {
+        element: Box<TypeDesc>,
+    },
+    Struct {
+        members: Vec<StructMember>,
+    },
+    Union {
+        members: Vec<StructMember>,
+    },
     Unknown(String),
 }
 
@@ -65,7 +72,7 @@ pub struct Argument {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub register: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub registers: Option<Vec<String>>, 
+    pub registers: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<String>,
 }
@@ -109,7 +116,10 @@ fn format_register(reg: gimli::Register) -> String {
     format!("DW_OP_reg{}", reg.0)
 }
 
-fn parse_location<R: Reader>(attr_val: AttributeValue<R>, unit: &Unit<R>) -> Result<(String, Vec<String>), gimli::Error> {
+fn parse_location<R: Reader>(
+    attr_val: AttributeValue<R>,
+    unit: &Unit<R>,
+) -> Result<(String, Vec<String>), gimli::Error> {
     let mut loc = "complex".to_string();
     let mut regs = vec![];
     if let AttributeValue::Exprloc(expr) = attr_val {
@@ -121,8 +131,16 @@ fn parse_location<R: Reader>(attr_val: AttributeValue<R>, unit: &Unit<R>) -> Res
                     regs.push(r.clone());
                     loc = r;
                 }
-                Operation::Piece { size_in_bits, bit_offset, .. } => {
-                    regs.push(format!("piece:{}@{:?}", size_in_bits, bit_offset.unwrap_or(0)));
+                Operation::Piece {
+                    size_in_bits,
+                    bit_offset,
+                    ..
+                } => {
+                    regs.push(format!(
+                        "piece:{}@{:?}",
+                        size_in_bits,
+                        bit_offset.unwrap_or(0)
+                    ));
                 }
                 Operation::CallFrameCFA => loc = "CFA".to_string(),
                 _ => {}
@@ -133,36 +151,58 @@ fn parse_location<R: Reader>(attr_val: AttributeValue<R>, unit: &Unit<R>) -> Res
 }
 
 // Home made parse function for DWARF location expressions in Go binaries
-fn resolve_type<R: Reader>(dwarf: &Dwarf<R>, unit: &Unit<R>, entry: &DebuggingInformationEntry<R>) -> Option<TypeDesc> {
+fn resolve_type<R: Reader>(
+    dwarf: &Dwarf<R>,
+    unit: &Unit<R>,
+    entry: &DebuggingInformationEntry<R>,
+) -> Option<TypeDesc> {
     match entry.tag() {
         DwTag(0x24) => Some(TypeDesc::Unknown("unspecified_parameters".into())),
         // DW_TAG_base_type => {
         //     entry.attr(DW_AT_name).ok().flatten()
         //         .and_then(|a| a.string_value(&dwarf.debug_str))
         //         .map(|s| TypeDesc::Primitive(s.to_string_lossy().into_owned()))
-                
+
         // }
-        DW_TAG_typedef | DW_TAG_const_type | DW_TAG_volatile_type | DW_TAG_restrict_type => {
-            entry.attr_value(DW_AT_type).ok().flatten().and_then(|v| match v {
-                AttributeValue::UnitRef(offs) => unit.entry(offs).ok().and_then(|e| 
-                    resolve_type(dwarf, unit, &e)),
+        DW_TAG_typedef | DW_TAG_const_type | DW_TAG_volatile_type | DW_TAG_restrict_type => entry
+            .attr_value(DW_AT_type)
+            .ok()
+            .flatten()
+            .and_then(|v| match v {
+                AttributeValue::UnitRef(offs) => unit
+                    .entry(offs)
+                    .ok()
+                    .and_then(|e| resolve_type(dwarf, unit, &e)),
                 _ => None,
+            }),
+        DW_TAG_pointer_type => {
+            let inner = entry
+                .attr_value(DW_AT_type)
+                .ok()
+                .flatten()
+                .and_then(|v| match v {
+                    AttributeValue::UnitRef(offs) => unit
+                        .entry(offs)
+                        .ok()
+                        .and_then(|e| resolve_type(dwarf, unit, &e)),
+                    _ => Some(TypeDesc::Unknown("void*".into())),
+                })?;
+            Some(TypeDesc::Pointer {
+                to: Box::new(inner),
             })
         }
-        DW_TAG_pointer_type => {
-            let inner = entry.attr_value(DW_AT_type).ok().flatten().and_then(|v| match v {
-                AttributeValue::UnitRef(offs) => unit.entry(offs).ok().and_then(|e| 
-                    resolve_type(dwarf, unit, &e)),
-                _ => Some(TypeDesc::Unknown("void*".into())),
-            })?;
-            Some(TypeDesc::Pointer { to: Box::new(inner) })
-        }
         DW_TAG_array_type => {
-            let element = entry.attr_value(DW_AT_type).ok().flatten().and_then(|v| match v {
-                AttributeValue::UnitRef(offs) => unit.entry(offs).ok().and_then(|e| 
-                    resolve_type(dwarf, unit, &e)),
-                _ => None,
-            })?;
+            let element = entry
+                .attr_value(DW_AT_type)
+                .ok()
+                .flatten()
+                .and_then(|v| match v {
+                    AttributeValue::UnitRef(offs) => unit
+                        .entry(offs)
+                        .ok()
+                        .and_then(|e| resolve_type(dwarf, unit, &e)),
+                    _ => None,
+                })?;
             let mut count = None;
             if let Ok(mut tree) = unit.entries_tree(Some(entry.offset())) {
                 if let Ok(root) = tree.root() {
@@ -178,7 +218,10 @@ fn resolve_type<R: Reader>(dwarf: &Dwarf<R>, unit: &Unit<R>, entry: &DebuggingIn
                     }
                 }
             }
-            Some(TypeDesc::Array { element: Box::new(element), count })
+            Some(TypeDesc::Array {
+                element: Box::new(element),
+                count,
+            })
         }
         // DW_TAG_structure_type | DW_TAG_union_type => {
         //     let mut members = vec![];
@@ -215,7 +258,10 @@ fn resolve_type<R: Reader>(dwarf: &Dwarf<R>, unit: &Unit<R>, entry: &DebuggingIn
 }
 
 // This function is used to precompute function signatures from a binary file using the Gimli library.
-pub fn precompute_function_signatures_via_gimli(binary_path: &str, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn precompute_function_signatures_via_gimli(
+    binary_path: &str,
+    output_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let file = File::open(binary_path)?;
     let mmap = unsafe { Mmap::map(&file)? };
     let object = object::File::parse(&*mmap)?;
@@ -260,7 +306,9 @@ pub fn precompute_function_signatures_via_gimli(binary_path: &str, output_path: 
                 continue;
             };
 
-            let name = entry.attr_value(DW_AT_name)?.and_then(|v| dwarf.attr_string(&unit, v).ok())
+            let name = entry
+                .attr_value(DW_AT_name)?
+                .and_then(|v| dwarf.attr_string(&unit, v).ok())
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "<unknown_fn>".to_string());
 
@@ -276,15 +324,22 @@ pub fn precompute_function_signatures_via_gimli(binary_path: &str, output_path: 
                             continue;
                         }
 
-                        let name = arg.attr_value(DW_AT_name)?.and_then(|v| dwarf.attr_string(&unit, v).ok())
+                        let name = arg
+                            .attr_value(DW_AT_name)?
+                            .and_then(|v| dwarf.attr_string(&unit, v).ok())
                             .map(|s| s.to_string_lossy().into_owned())
                             .unwrap_or_else(|| "<arg>".to_string());
 
-                        let arg_type = arg.attr_value(DW_AT_type)?.and_then(|v| match v {
-                            AttributeValue::UnitRef(off) => unit.entry(off).ok()
-                                .and_then(|e| resolve_type(&dwarf, &unit, &e)),
-                            _ => None,
-                        }).unwrap_or(TypeDesc::Unknown("<no type>".to_string()));
+                        let arg_type = arg
+                            .attr_value(DW_AT_type)?
+                            .and_then(|v| match v {
+                                AttributeValue::UnitRef(off) => unit
+                                    .entry(off)
+                                    .ok()
+                                    .and_then(|e| resolve_type(&dwarf, &unit, &e)),
+                                _ => None,
+                            })
+                            .unwrap_or(TypeDesc::Unknown("<no type>".to_string()));
 
                         let (location, registers) = match arg.attr_value(DW_AT_location) {
                             Ok(Some(loc)) => match parse_location(loc, &unit) {
@@ -297,7 +352,13 @@ pub fn precompute_function_signatures_via_gimli(binary_path: &str, output_path: 
                         arguments.push(Argument {
                             name,
                             arg_type: TypeDescCompat::Typed(arg_type),
-                            register: registers.clone().and_then(|r| if r.len() == 1 { Some(r[0].clone()) } else { None }),
+                            register: registers.clone().and_then(|r| {
+                                if r.len() == 1 {
+                                    Some(r[0].clone())
+                                } else {
+                                    None
+                                }
+                            }),
                             registers,
                             location,
                         });
@@ -321,21 +382,27 @@ pub fn precompute_function_signatures_via_gimli(binary_path: &str, output_path: 
 }
 
 // Precompute all function signatures using Ghidra headless once.
-pub fn precompute_function_signatures_via_ghidra(binary_path: &str, _executor: &mut ConcolicExecutor) -> Result<(), Box<dyn std::error::Error>> {
+pub fn precompute_function_signatures_via_ghidra(
+    binary_path: &str,
+    _executor: &mut ConcolicExecutor,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Read GHIDRA_INSTALL_DIR from environment (or use fallback).
-    let ghidra_path = env::var("GHIDRA_INSTALL_DIR")
-        .unwrap_or_else(|_| String::from("~/ghidra_11.0.3_PUBLIC/"));
+    let ghidra_path =
+        env::var("GHIDRA_INSTALL_DIR").unwrap_or_else(|_| String::from("~/ghidra_11.0.3_PUBLIC/"));
     print!("Using Ghidra path: {}", ghidra_path);
 
     let project_path = "results/ghidra-project";
-    let project_name = "ghidra-project"; 
+    let project_name = "ghidra-project";
     // Use the new script that processes all functions.
     let post_script_path = "scripts/ghidra_get_all_function_args.py";
     let trace_file = "results/function_signature.txt";
 
     // Ensure the Ghidra project directory exists; create it if it doesn't.
     if !Path::new(project_path).exists() {
-        println!("Project directory '{}' not found. Creating it...", project_path);
+        println!(
+            "Project directory '{}' not found. Creating it...",
+            project_path
+        );
         fs::create_dir_all(project_path)?;
     }
 
@@ -348,24 +415,23 @@ pub fn precompute_function_signatures_via_ghidra(binary_path: &str, _executor: &
     }
 
     // Get the ZORYA directory.
-    let zorya_dir = env::var("ZORYA_DIR")
-        .expect("ZORYA_DIR environment variable is not set");
+    let zorya_dir = env::var("ZORYA_DIR").expect("ZORYA_DIR environment variable is not set");
 
     // Build the full path to the Ghidra headless executable.
     let ghidra_executable = format!("{}/support/analyzeHeadless", ghidra_path);
     // Construct the arguments as a vector.
     let args = vec![
-        project_path,           // Project path (e.g., "results/ghidra-project")
-        project_name,           // Project name
+        project_path, // Project path (e.g., "results/ghidra-project")
+        project_name, // Project name
         "-import",
-        binary_path,            // Binary to import
+        binary_path, // Binary to import
         "-processor",
         "x86:LE:64:default",
         "-cspec",
-        "golang",               // Compiler specification - TO MODIFY
+        "golang", // Compiler specification - TO MODIFY
         "-postScript",
-        post_script_path,       // Script to process all functions
-        &zorya_dir,             // ZORYA directory (used by the script)
+        post_script_path, // Script to process all functions
+        &zorya_dir,       // ZORYA directory (used by the script)
     ];
 
     println!("Running Ghidra command: {} {:?}", ghidra_executable, args);
@@ -383,10 +449,12 @@ pub fn precompute_function_signatures_via_ghidra(binary_path: &str, _executor: &
         );
         return Err(Box::from("Ghidra analysis failed"));
     }
-    println!("Ghidra analysis complete. Function signatures written to {}", trace_file);
+    println!(
+        "Ghidra analysis complete. Function signatures written to {}",
+        trace_file
+    );
     Ok(())
 }
-
 
 // Function to clean the Ghidra project directory
 fn clean_ghidra_project_dir(project_path: &str) {
@@ -418,9 +486,8 @@ pub fn load_function_args_map() -> HashMap<u64, (String, Vec<(String, Vec<String
         return map;
     }
 
-    let reader = BufReader::new(
-        File::open(json_file).expect("Failed to open function signature JSON file"),
-    );
+    let reader =
+        BufReader::new(File::open(json_file).expect("Failed to open function signature JSON file"));
     let wrapper: FunctionSigWrapper =
         serde_json::from_reader(reader).expect("Failed to parse JSON file");
 
@@ -464,12 +531,19 @@ pub fn load_function_args_map() -> HashMap<u64, (String, Vec<(String, Vec<String
 }
 
 pub fn load_go_function_args_map(
-    binary_path: &str, 
-    executor: &mut ConcolicExecutor
-) -> Result<HashMap<u64, (String, Vec<(String, Vec<String>, String)>)>, Box<dyn std::error::Error>> {
-    log!(executor.state.logger, "Calling get-funct-arg-types to extract Go function info...");
-    
-    let go_bin = format!("{}/scripts/get-funct-arg-types/main", env::var("ZORYA_DIR")?);
+    binary_path: &str,
+    executor: &mut ConcolicExecutor,
+) -> Result<HashMap<u64, (String, Vec<(String, Vec<String>, String)>)>, Box<dyn std::error::Error>>
+{
+    log!(
+        executor.state.logger,
+        "Calling get-funct-arg-types to extract Go function info..."
+    );
+
+    let go_bin = format!(
+        "{}/scripts/get-funct-arg-types/main",
+        env::var("ZORYA_DIR")?
+    );
     let func_signatures_path = "results/function_signatures_go.json";
 
     let out = std::process::Command::new(&go_bin)
@@ -480,31 +554,52 @@ pub fn load_go_function_args_map(
         return Err(format!("go script failed: {}", String::from_utf8_lossy(&out.stderr)).into());
     }
 
-    log!(executor.state.logger, "Loading Go signatures from {}...", func_signatures_path);
-    
+    log!(
+        executor.state.logger,
+        "Loading Go signatures from {}...",
+        func_signatures_path
+    );
+
     let file = std::fs::File::open(func_signatures_path)?;
     let reader = std::io::BufReader::new(file);
     let functions: Vec<GoFunctionArg> = serde_json::from_reader(reader)?;
 
-    log!(executor.state.logger, "Loaded {} functions from JSON.", functions.len());
+    log!(
+        executor.state.logger,
+        "Loaded {} functions from JSON.",
+        functions.len()
+    );
 
     let mut go_signatures = HashMap::new();
     for func in functions {
         if let Ok(addr) = u64::from_str_radix(func.address.trim_start_matches("0x"), 16) {
-            let args = func.arguments.iter()
-                .map(|arg| (
-                    arg.name.clone(), 
-                    vec![arg.registers.join(",")], // Convert to Vec<String> to match return type
-                    arg.arg_type.clone()
-                ))
+            let args = func
+                .arguments
+                .iter()
+                .map(|arg| {
+                    (
+                        arg.name.clone(),
+                        vec![arg.registers.join(",")], // Convert to Vec<String> to match return type
+                        arg.arg_type.clone(),
+                    )
+                })
                 .collect();
             go_signatures.insert(addr, (func.name, args));
         } else {
-            log!(executor.state.logger, "Warning: Failed to parse address {} for function {}", func.address, func.name);
+            log!(
+                executor.state.logger,
+                "Warning: Failed to parse address {} for function {}",
+                func.address,
+                func.name
+            );
         }
     }
 
-    log!(executor.state.logger, "Processed {} Go signatures.", go_signatures.len());
+    log!(
+        executor.state.logger,
+        "Processed {} Go signatures.",
+        go_signatures.len()
+    );
 
     Ok(go_signatures)
 }
