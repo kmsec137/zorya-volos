@@ -1,6 +1,6 @@
 [submodule "external/pcode-parser"]
 	path = external/pcode-parser
-	url = git@github.com:kajaaz/pcode-parser.git
+	url = https://github.com∕Ledger-Donjon/pcode-parser.git
 [submodule "external/pcode-generator"]
 	path = external/pcode-generator
-	url = git@github.com:kajaaz/pcode-generator.git
+	url = https://github.com/Ledger-Donjon/pcode-generator.git
