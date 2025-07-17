@@ -2,16 +2,24 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, File};
+use std::io::Write;
 use std::io::{self, BufRead, BufReader, Read, SeekFrom};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use regex::Regex;
+use z3::ast::Ast;
 use z3::{ast::BV, Context};
 
 use super::VirtualFileSystem;
-use crate::concolic::{ConcolicVar, ConcreteVar, SymbolicVar};
+use crate::concolic::{ConcolicVar, ConcreteVar, Logger, SymbolicVar};
 use crate::target_info::GLOBAL_TARGET_INFO;
+
+macro_rules! log {
+    ($logger:expr, $($arg:tt)*) => {{
+        writeln!($logger, $($arg)*).unwrap();
+    }};
+}
 
 // Protection flags for memory regions
 const PROT_READ: i32 = 0x1;
@@ -346,9 +354,16 @@ impl<'ctx> MemoryX86_64<'ctx> {
         })
     }
 
-    /// Reads a MemoryValue (both concrete and symbolic) from memory.
-    pub fn read_value(&self, address: u64, size: u32) -> Result<ConcolicVar<'ctx>, MemoryError> {
+    /// Reads a MemoryValue (both concrete and symbolic) from memory
+    pub fn read_value(
+        &self,
+        address: u64,
+        size: u32,
+        logger: &mut Logger,
+    ) -> Result<ConcolicVar<'ctx>, MemoryError> {
         if size == 128 {
+            log!(logger, "Reading 128-bit value from address 0x{:x}", address);
+
             let (concrete_low, symbolic_low) = self.read_memory(address, 8)?;
             let (concrete_high, symbolic_high) = self.read_memory(address + 8, 8)?;
 
@@ -357,31 +372,23 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
             let concrete = ConcreteVar::LargeInt(vec![low, high]);
 
-            let symbolic_low_concat = symbolic_low
-                .iter()
-                .enumerate()
-                .rev()
-                .fold(None, |acc: Option<BV<'ctx>>, (i, sym)| {
-                    let bv = sym
-                        .as_ref()
-                        .map(|s| s.as_ref().clone())
-                        .unwrap_or_else(|| BV::from_u64(self.ctx, concrete_low[i] as u64, 8));
-                    Some(acc.map_or_else(|| bv.clone(), |a| a.concat(&bv)))
-                })
-                .unwrap();
+            //log!(logger, "Building low 64-bit symbolic value:");
+            let symbolic_low_concat = Self::concatenate_symbolic_bytes(
+                &symbolic_low,
+                &concrete_low,
+                self.ctx,
+                logger,
+                address,
+            );
 
-            let symbolic_high_concat = symbolic_high
-                .iter()
-                .enumerate()
-                .rev()
-                .fold(None, |acc: Option<BV<'ctx>>, (i, sym)| {
-                    let bv = sym
-                        .as_ref()
-                        .map(|s| s.as_ref().clone())
-                        .unwrap_or_else(|| BV::from_u64(self.ctx, concrete_high[i] as u64, 8));
-                    Some(acc.map_or_else(|| bv.clone(), |a| a.concat(&bv)))
-                })
-                .unwrap();
+            //log!(logger, "Building high 64-bit symbolic value:");
+            let symbolic_high_concat = Self::concatenate_symbolic_bytes(
+                &symbolic_high,
+                &concrete_high,
+                self.ctx,
+                logger,
+                address + 8,
+            );
 
             let symbolic = SymbolicVar::LargeInt(vec![symbolic_low_concat, symbolic_high_concat]);
 
@@ -394,12 +401,24 @@ impl<'ctx> MemoryX86_64<'ctx> {
             let byte_size = ((size + 7) / 8) as usize;
             let (mut concrete, symbolic) = self.read_memory(address, byte_size)?;
 
+            //log!(logger, "Reading {}-bit value ({} bytes) from address 0x{:x}", size, byte_size, address);
+            //log!(logger, "Raw concrete bytes: {:02x?}", concrete);
+
+            // Pad concrete data if needed
             if concrete.len() < 8 {
+                let original_len = concrete.len();
                 let mut padded = vec![0u8; 8];
                 padded[..concrete.len()].copy_from_slice(&concrete);
                 concrete = padded;
+                log!(
+                    logger,
+                    "Padded concrete from {} to 8 bytes: {:02x?}",
+                    original_len,
+                    concrete
+                );
             }
 
+            // Convert to integer value
             let value = u64::from_le_bytes(concrete.as_slice().try_into().unwrap());
             let mask = if size < 64 {
                 (1u64 << size) - 1
@@ -409,28 +428,45 @@ impl<'ctx> MemoryX86_64<'ctx> {
             let masked = value & mask;
             let concrete_var = ConcreteVar::Int(masked);
 
-            let symbolic_concat = symbolic
-                .iter()
-                .enumerate()
-                .rev()
-                .fold(None, |acc: Option<BV<'ctx>>, (i, sym)| {
-                    let bv = sym
-                        .as_ref()
-                        .map(|s| s.as_ref().clone())
-                        .unwrap_or_else(|| BV::from_u64(self.ctx, concrete[i] as u64, 8));
-                    Some(acc.map_or_else(|| bv.clone(), |a| a.concat(&bv)))
-                })
-                .unwrap();
+            //log!(logger, "Concrete value: raw=0x{:x}, masked=0x{:x} (for {} bits)", value, masked, size);
 
+            // Build symbolic value with detailed logging
+            // log!(logger, "Building symbolic value from {} bytes:", byte_size);
+            // for (i, sym_opt) in symbolic.iter().enumerate() {
+            //     let byte_addr = address + i as u64;
+            //     match sym_opt {
+            //         Some(sym) => {
+            //             log!(logger, "  Byte {} at 0x{:x}: HAS symbolic data: {:?}", i, byte_addr, sym.simplify());
+            //         }
+            //         None => {
+            //             log!(logger, "  Byte {} at 0x{:x}: NO symbolic data (concrete: 0x{:02x})", i, byte_addr, concrete[i]);
+            //         }
+            //     }
+            // }
+
+            let symbolic_concat = Self::concatenate_symbolic_bytes(
+                &symbolic[..byte_size], // Only use the actual bytes we read
+                &concrete[..byte_size],
+                self.ctx,
+                logger,
+                address,
+            );
+
+            // Resize symbolic value if needed
             let resized_sym = if symbolic_concat.get_size() < size {
+                //log!(logger, "Zero-extending symbolic from {} to {} bits", symbolic_concat.get_size(), size);
                 symbolic_concat.zero_ext(size - symbolic_concat.get_size())
             } else if symbolic_concat.get_size() > size {
+                //log!(logger, "Extracting {} bits from {}-bit symbolic value", size, symbolic_concat.get_size());
                 symbolic_concat.extract(size - 1, 0)
             } else {
+                //log!(logger, "Symbolic size {} matches requested size {}", symbolic_concat.get_size(), size);
                 symbolic_concat
             };
 
-            let symbolic_var = SymbolicVar::Int(resized_sym);
+            let symbolic_var = SymbolicVar::Int(resized_sym.clone());
+
+            //log!(logger, "Final result: concrete=0x{:x}, symbolic={:?}", masked, resized_sym.simplify());
 
             Ok(ConcolicVar {
                 concrete: concrete_var,
@@ -440,6 +476,88 @@ impl<'ctx> MemoryX86_64<'ctx> {
         } else {
             Err(MemoryError::InvalidString)
         }
+    }
+
+    /// Helper function to concatenate symbolic bytes into a single BV with detailed logging
+    fn concatenate_symbolic_bytes(
+        symbolic_bytes: &[Option<Arc<BV<'ctx>>>],
+        concrete_bytes: &[u8],
+        ctx: &'ctx Context,
+        logger: &mut Logger,
+        address: u64,
+    ) -> BV<'ctx> {
+        // log!(logger, "=== SYMBOLIC CONCATENATION DEBUG ===");
+        // log!(logger, "Building symbolic value from {} bytes", symbolic_bytes.len());
+
+        let mut result: Option<BV<'ctx>> = None;
+
+        // Process bytes in reverse order (little-endian: least significant byte first)
+        for (byte_index, (sym_opt, &concrete_byte)) in symbolic_bytes
+            .iter()
+            .zip(concrete_bytes.iter())
+            .enumerate()
+            .rev()
+        {
+            let byte_addr = address + byte_index as u64;
+
+            let byte_bv = match sym_opt {
+                Some(symbolic_ref) => {
+                    let sym_bv = symbolic_ref.as_ref().clone();
+                    // log!(
+                    //     logger,
+                    //     "Byte {} at 0x{:x}: Using SYMBOLIC value {:?} (concrete=0x{:02x})",
+                    //     byte_index, byte_addr, sym_bv.simplify(), concrete_byte
+                    // );
+                    sym_bv
+                }
+                None => {
+                    let concrete_bv = BV::from_u64(ctx, concrete_byte as u64, 8);
+                    // log!(
+                    //     logger,
+                    //     "Byte {} at 0x{:x}: Using CONCRETE value 0x{:02x} -> BV(0x{:02x})",
+                    //     byte_index, byte_addr, concrete_byte, concrete_byte
+                    // );
+                    concrete_bv
+                }
+            };
+
+            // Build the result by concatenating
+            result = match result {
+                None => {
+                    // log!(logger, "  Starting with byte {}: {:?}", byte_index, byte_bv.simplify());
+                    Some(byte_bv)
+                }
+                Some(accumulated) => {
+                    let new_result = accumulated.concat(&byte_bv);
+                    // log!(
+                    //     logger,
+                    //     "  Concatenating byte {} to existing {} bits -> {} bits total",
+                    //     byte_index,
+                    //     accumulated.get_size(),
+                    //     new_result.get_size()
+                    // );
+                    // log!(logger, "    Previous: {:?}", accumulated.simplify());
+                    // log!(logger, "    Added: {:?}", byte_bv.simplify());
+                    // log!(logger, "    Result: {:?}", new_result.simplify());
+                    Some(new_result)
+                }
+            };
+        }
+
+        let final_result = result.unwrap_or_else(|| {
+            log!(logger, "WARNING: No bytes processed, creating zero BV");
+            BV::from_u64(ctx, 0, 8)
+        });
+
+        // log!(
+        //     logger,
+        //     "Final concatenated result: {} bits, {:?}",
+        //     final_result.get_size(),
+        //     final_result.simplify()
+        // );
+        // log!(logger, "=== END SYMBOLIC CONCATENATION DEBUG ===");
+
+        final_result
     }
 
     /// Writes concrete and symbolic memory to a given address range.
@@ -532,16 +650,24 @@ impl<'ctx> MemoryX86_64<'ctx> {
     }
 
     // Additional methods for reading and writing standard data types
-    pub fn read_u64(&self, address: u64) -> Result<ConcolicVar<'ctx>, MemoryError> {
-        self.read_value(address, 64)
+    pub fn read_u64(
+        &self,
+        address: u64,
+        logger: &mut Logger,
+    ) -> Result<ConcolicVar<'ctx>, MemoryError> {
+        self.read_value(address, 64, logger)
     }
 
     pub fn write_u64(&self, address: u64, value: &MemoryValue<'ctx>) -> Result<(), MemoryError> {
         self.write_value(address, value)
     }
 
-    pub fn read_u32(&self, address: u64) -> Result<ConcolicVar<'ctx>, MemoryError> {
-        self.read_value(address, 32)
+    pub fn read_u32(
+        &self,
+        address: u64,
+        logger: &mut Logger,
+    ) -> Result<ConcolicVar<'ctx>, MemoryError> {
+        self.read_value(address, 32, logger)
     }
 
     pub fn write_u32(&self, address: u64, value: &MemoryValue<'ctx>) -> Result<(), MemoryError> {
@@ -592,12 +718,16 @@ impl<'ctx> MemoryX86_64<'ctx> {
         Ok(())
     }
 
-    pub fn read_sigaction(&self, address: u64) -> Result<Sigaction<'ctx>, MemoryError> {
+    pub fn read_sigaction(
+        &self,
+        address: u64,
+        logger: &mut Logger,
+    ) -> Result<Sigaction<'ctx>, MemoryError> {
         // Read the sigaction structure from memory
-        let handler = self.read_u64(address)?.to_memory_value_u64();
-        let flags = self.read_u64(address + 8)?.to_memory_value_u64();
-        let restorer = self.read_u64(address + 16)?.to_memory_value_u64();
-        let mask = self.read_u64(address + 24)?.to_memory_value_u64();
+        let handler = self.read_u64(address, logger)?.to_memory_value_u64();
+        let flags = self.read_u64(address + 8, logger)?.to_memory_value_u64();
+        let restorer = self.read_u64(address + 16, logger)?.to_memory_value_u64();
+        let mask = self.read_u64(address + 24, logger)?.to_memory_value_u64();
         Ok(Sigaction {
             handler,
             flags,

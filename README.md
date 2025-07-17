@@ -16,7 +16,7 @@ Zorya supports both concrete and symbolic data types, x86-64 instructions and sy
 > Zorya comes, and nothing sleeps.
 
 ## :inbox_tray: Install
-Make sure to have Rust, Golang and Python properly installed. FYI, he project is beeing developped and maintained under a Linux Ubuntu distrubution.
+Make sure to have Rust, Golang and Python properly installed. FYI, the project is beeing developped and maintained under a Linux Ubuntu distrubution.
 
 ```
 git clone --recursive https://github.com/Ledger-Donjon/zorya
@@ -49,7 +49,7 @@ The prompt will ask you for the:
 ### B. Basic Command-Line Usage
 To use Zorya in its basic form, you need the absolute path to the binary you wish to analyze (```<path>```) and the hexadecimal address where execution should begin (```<addr>```). You must then specify the execution mode (start, main, function, or custom) based on your chosen analysis strategy. Additionally, you can provide any necessary arguments to be passed to the binary:
 ```
-zorya <path> --lang <go|c|c++> [--compiler <tinygo|gc>] --mode <start|main|function|custom> <addr> --arg "<arg1> <arg2>" [--negate-path-exploration | --no-negate-path-exploration]
+zorya <path> --lang <go|c|c++> [--compiler <tinygo|gc>] --mode <start|main|function|custom> <addr> --arg "<arg1> <arg2>" [--negate-path-exploration|--no-negate-path-exploration]
 
 FLAG:
   --lang                        Specifies the language used in the source code (go/c/c++)
@@ -153,7 +153,7 @@ This is it, you have entered the concrete value "a", and Zorya tells you that if
 
 ### Functionnalities
 - Can generate a file with the detailed logs of the execution of each instruction (see ```execution_log.txt```),
-- Can generate a file with the names of the executed functions (see ```execution_trace.txt```),
+- Can generate a file with the names of the executed functions and their arguments at runtime (see ```execution_trace.txt```),
 - Can analyse the concolic handling of the jump tables, a specific type of switch tables that replace binary search by more efficient jumping mechanism for close number labels (see ```jump_table.json```),
 - Can generate a file witht the cross-reference addresses leading to all the panic functions that are in the target binary (see ```xref_addresses.txt```),
 - Is able to translate the executable part of libc.so and ld-linux-x86-64.so as P-Code after its dynamic loading.
@@ -171,14 +171,13 @@ For more explanation about the bugs/panics/vuln research strategies, read here :
 ## :movie_camera: Demo video
 In this demo, we showcase how the Zorya Concolic Executor analyzes a Go binary named "broken-calculator", compiled using the TinyGo compiler. The calculator works correctly on inputs like "2 + 3", but contains an artificial vulnerability that causes a panic when both operands are "5".
 
-Zorya explores execution paths symbolically and is currently able to identify the conditions leading to the panic independently: operand1 == 5
-operand2 == 5
+Zorya explores execution paths symbolically and is currently able to identify the conditions leading to the panic independently: ```operand1 == 5 and operand2 == 5```
 
 This demonstrates Zorya's ability to uncover subtle conditions that trigger runtime errors in TinyGo binaries.
 
-Link to the demo : [Youtube](https://youtu.be/8PeSZFvr6WA)
+Link to the demo : [Demo](https://youtu.be/8PeSZFvr6WA)
 
-[![Watch the demo on YouTube](https://img.youtube.com/vi/8PeSZFvr6WA/0.jpg)](https://youtu.be/8PeSZFvr6WA)
+Link to the overall presentation of Zorya at EthCC 2025 : [Presentation](https://www.youtube.com/live/QpcAtfN3B9M)
 
 ## :spiral_calendar: Roadmap 
 Zorya has been developeped and tested for now on Linux Ubuntu as the execution environement with x86-64 binaries targets. The roadmap below details the features that have been added over time and those that are planned:

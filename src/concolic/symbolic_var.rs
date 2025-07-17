@@ -1,4 +1,5 @@
 use crate::state::function_signatures::TypeDesc;
+use crate::state::simplify_z3::{bool_to_bv_smart, bv_to_bool_smart};
 use regex::Regex;
 use z3::ast::{Ast, Bool, Float, Int, BV};
 use z3::Context;
@@ -315,48 +316,6 @@ impl<'ctx> SymbolicVar<'ctx> {
         }
     }
 
-    // Convert the symbolic variable to a bit vector
-    pub fn to_bv(&self, ctx: &'ctx Context) -> BV<'ctx> {
-        match self {
-            SymbolicVar::Int(bv) => bv.clone(),
-            SymbolicVar::LargeInt(vec) => {
-                // Concatenate the BVs in the vector to form a single BV
-                // Since in little-endian, least significant bits are in vec[0], we need to reverse the vector
-                let mut bv_iter = vec.iter().rev();
-                let first_bv = bv_iter
-                    .next()
-                    .expect("LargeInt should not be empty")
-                    .clone();
-                bv_iter.fold(first_bv, |acc, bv| acc.concat(&bv.clone()))
-            }
-            SymbolicVar::Float(_) => {
-                panic!("Cannot convert a floating-point symbolic variable to a bit vector")
-            }
-            SymbolicVar::Bool(b) => {
-                let one = BV::from_u64(ctx, 1, 1);
-                let zero = BV::from_u64(ctx, 0, 1);
-                b.ite(&one, &zero) // If `b` is true, return `one`, otherwise return `zero`
-            }
-            SymbolicVar::Slice(slice_symbolic) => {
-                // For slices, we can only convert if the element type is an integer
-                if let TypeDesc::Primitive(s) = &slice_symbolic.element_type {
-                    if s == "int" || s == "byte" {
-                        let mut bv_iter = slice_symbolic.elements.iter().rev(); // Reverse for little-endian order
-                        let first_bv = bv_iter
-                            .next()
-                            .expect("Slice should not be empty")
-                            .to_bv(ctx);
-                        bv_iter.fold(first_bv, |acc, bv| acc.concat(&bv.to_bv(ctx)))
-                    } else {
-                        panic!("Cannot convert slice with non-integer elements to bit vector");
-                    }
-                } else {
-                    panic!("Cannot convert slice with non-integer elements to bit vector");
-                }
-            }
-        }
-    }
-
     pub fn to_largebv(&self) -> Vec<BV<'ctx>> {
         match self {
             SymbolicVar::Int(bv) => vec![bv.clone()],
@@ -451,6 +410,180 @@ impl<'ctx> SymbolicVar<'ctx> {
         }
     }
 
+    // Fixed to_bv method
+    pub fn to_bv(&self, ctx: &'ctx Context) -> BV<'ctx> {
+        match self {
+            SymbolicVar::Int(bv) => bv.clone(),
+            SymbolicVar::LargeInt(vec) => {
+                // Concatenate the BVs in the vector to form a single BV
+                let mut bv_iter = vec.iter().rev();
+                let first_bv = bv_iter
+                    .next()
+                    .expect("LargeInt should not be empty")
+                    .clone();
+                bv_iter.fold(first_bv, |acc, bv| acc.concat(&bv.clone()))
+            }
+            SymbolicVar::Float(_) => {
+                panic!("Cannot convert a floating-point symbolic variable to a bit vector")
+            }
+            SymbolicVar::Bool(b) => {
+                // For storage operations, preserve symbolic info using ite
+                let one = BV::from_u64(ctx, 1, 8); // Use 8-bit for compatibility
+                let zero = BV::from_u64(ctx, 0, 8);
+                b.ite(&one, &zero)
+            }
+            SymbolicVar::Slice(slice_symbolic) => {
+                // For slices, we can only convert if the element type is an integer
+                if let TypeDesc::Primitive(s) = &slice_symbolic.element_type {
+                    if s == "int" || s == "byte" {
+                        let mut bv_iter = slice_symbolic.elements.iter().rev();
+                        let first_bv = bv_iter
+                            .next()
+                            .expect("Slice should not be empty")
+                            .to_bv(ctx);
+                        bv_iter.fold(first_bv, |acc, bv| acc.concat(&bv.to_bv(ctx)))
+                    } else {
+                        panic!("Cannot convert slice with non-integer elements to bit vector");
+                    }
+                } else {
+                    panic!("Cannot convert slice with non-integer elements to bit vector");
+                }
+            }
+        }
+    }
+
+    // Convert the symbolic variable to a bit vector based on the concrete value to avaoid using ITE
+    pub fn to_bv_with_concrete(
+        &self,
+        ctx: &'ctx Context,
+        concrete_value: u64,
+        target_size: u32,
+    ) -> BV<'ctx> {
+        match self {
+            SymbolicVar::Bool(_) => {
+                // Use concrete value to avoid ITE
+                let concrete_bool = concrete_value != 0;
+                if concrete_bool {
+                    BV::from_u64(ctx, 1, target_size)
+                } else {
+                    BV::from_u64(ctx, 0, target_size)
+                }
+            }
+            SymbolicVar::Int(bv) => {
+                if bv.get_size() == target_size {
+                    bv.clone()
+                } else if bv.get_size() > target_size {
+                    bv.extract(target_size - 1, 0)
+                } else {
+                    bv.zero_ext(target_size - bv.get_size())
+                }
+            }
+            SymbolicVar::LargeInt(vec) => {
+                let mut bv_iter = vec.iter().rev();
+                let first_bv = bv_iter
+                    .next()
+                    .expect("LargeInt should not be empty")
+                    .clone();
+                let combined = bv_iter.fold(first_bv, |acc, bv| acc.concat(&bv.clone()));
+
+                if combined.get_size() == target_size {
+                    combined
+                } else if combined.get_size() > target_size {
+                    combined.extract(target_size - 1, 0)
+                } else {
+                    combined.zero_ext(target_size - combined.get_size())
+                }
+            }
+            SymbolicVar::Float(_) => {
+                // For float operations in integer context, use concrete bit representation
+                BV::from_u64(ctx, concrete_value, target_size)
+            }
+            SymbolicVar::Slice(slice) => {
+                // For slice operations in integer context, use the pointer value
+                if slice.pointer.get_size() == target_size {
+                    slice.pointer.clone()
+                } else if slice.pointer.get_size() > target_size {
+                    slice.pointer.extract(target_size - 1, 0)
+                } else {
+                    slice
+                        .pointer
+                        .zero_ext(target_size - slice.pointer.get_size())
+                }
+            }
+        }
+    }
+
+    // Add new method that handles Bool with concrete context
+    pub fn to_bv_of_size_with_concrete(
+        &self,
+        ctx: &'ctx Context,
+        size: u32,
+        concrete_value: u64,
+    ) -> BV<'ctx> {
+        match self {
+            SymbolicVar::Bool(_) => {
+                // Use concrete value to avoid ITE
+                let concrete_bool = concrete_value != 0;
+                if concrete_bool {
+                    BV::from_u64(ctx, 1, size)
+                } else {
+                    BV::from_u64(ctx, 0, size)
+                }
+            }
+            SymbolicVar::Int(bv) => {
+                if bv.get_size() == size {
+                    bv.clone()
+                } else if bv.get_size() > size {
+                    bv.extract(size - 1, 0)
+                } else {
+                    bv.zero_ext(size - bv.get_size())
+                }
+            }
+            SymbolicVar::LargeInt(bv_vec) => {
+                let mut bv_iter = bv_vec.iter().rev();
+                let first_bv = bv_iter
+                    .next()
+                    .expect("LargeInt should not be empty")
+                    .clone();
+
+                let result_bv = bv_iter.fold(first_bv, |acc, bv| acc.concat(&bv.clone()));
+
+                if result_bv.get_size() > size {
+                    result_bv.extract(size - 1, 0)
+                } else {
+                    result_bv.zero_ext(size - result_bv.get_size())
+                }
+            }
+            _ => panic!("Unsupported symbolic type for to_bv_of_size_with_concrete"),
+        }
+    }
+
+    /// Convert to Bool while preserving symbolic information using AST inspection
+    pub fn to_bool_ast_smart(&self) -> Bool<'ctx> {
+        match self {
+            SymbolicVar::Bool(b) => b.clone(),
+            SymbolicVar::Int(bv) => bv_to_bool_smart(bv),
+            _ => self.to_bool(), // Fallback to existing implementation
+        }
+    }
+
+    /// Convert to BV while preserving symbolic information using AST inspection
+    pub fn to_bv_ast_smart(&self, ctx: &'ctx Context, target_size: u32) -> BV<'ctx> {
+        match self {
+            SymbolicVar::Bool(b) => bool_to_bv_smart(b, target_size),
+            SymbolicVar::Int(bv) => {
+                if bv.get_size() == target_size {
+                    bv.clone()
+                } else if bv.get_size() > target_size {
+                    bv.extract(target_size - 1, 0)
+                } else {
+                    bv.zero_ext(target_size - bv.get_size())
+                }
+            }
+            _ => self.to_bv_with_concrete(ctx, 0, target_size), // Fallback
+        }
+    }
+
     // Convert a constant to a symbolic value.
     pub fn from_u64(ctx: &'ctx Context, value: u64, size: u32) -> SymbolicVar<'ctx> {
         if size > 64 {
@@ -506,39 +639,6 @@ impl<'ctx> SymbolicVar<'ctx> {
             SymbolicVar::Float(_) => 64,
             SymbolicVar::Bool(_) => 1,
             SymbolicVar::Slice(slice_symbolic) => slice_symbolic.length.get_size(),
-        }
-    }
-
-    pub fn to_bv_of_size(&self, ctx: &'ctx Context, size: u32) -> BV<'ctx> {
-        match self {
-            SymbolicVar::Bool(b) => b.ite(&BV::from_u64(ctx, 1, size), &BV::from_u64(ctx, 0, size)),
-            SymbolicVar::Int(bv) => {
-                if bv.get_size() == size {
-                    bv.clone()
-                } else if bv.get_size() > size {
-                    bv.extract(size - 1, 0)
-                } else {
-                    bv.zero_ext(size - bv.get_size())
-                }
-            }
-            SymbolicVar::LargeInt(bv_vec) => {
-                let mut bv_iter = bv_vec.iter().rev(); // Reverse for little-endian order
-                let first_bv = bv_iter
-                    .next()
-                    .expect("LargeInt should not be empty")
-                    .clone();
-
-                // Concatenate all BV parts
-                let result_bv = bv_iter.fold(first_bv, |acc, bv| acc.concat(&bv.clone()));
-
-                // Extract or extend based on the required size
-                if result_bv.get_size() > size {
-                    result_bv.extract(size - 1, 0) // Truncate excess bits
-                } else {
-                    result_bv.zero_ext(size - result_bv.get_size()) // Zero-extend if smaller
-                }
-            }
-            _ => panic!("Unsupported symbolic type for to_bv_of_size"),
         }
     }
 

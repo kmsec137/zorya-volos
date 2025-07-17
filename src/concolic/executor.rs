@@ -1,3 +1,4 @@
+use core::panic;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -16,6 +17,7 @@ pub use super::SymbolicVar;
 use crate::concolic::ConcolicVar;
 use crate::state::cpu_state::CpuConcolicValue;
 use crate::state::memory_x86_64::MemoryValue;
+use crate::state::simplify_z3::extract_underlying_condition_from_flag_ast;
 use crate::state::state_manager::FunctionFrame;
 use crate::state::state_manager::Logger;
 use crate::state::CpuState;
@@ -47,7 +49,7 @@ pub struct ConcolicExecutor<'ctx> {
     pub inside_jump_table: bool, // check if the current instruction is handling a jump table
     pub trace_logger: Logger,
     pub function_symbolic_arguments: BTreeMap<String, SymbolicVar<'ctx>>, // in "function" mode, this is used to store the symbolic arguments of the function
-    pub constraint_vector: Vec<BV<'ctx>>, // NEW: Vector to collect constraints on tracked symbolic variables
+    pub constraint_vector: Vec<Bool<'ctx>>, // Vector to collect constraints on tracked symbolic variables
 }
 
 impl<'ctx> ConcolicExecutor<'ctx> {
@@ -435,8 +437,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             Var::Unique(id) => {
                 log!(
                     self.state.logger.clone(),
-                    "Varnode is of type 'unique' with ID: 0x{:x}",
-                    id
+                    "Varnode is of type 'unique' with ID: 0x{:x} and size: {} bits",
+                    id,
+                    bit_size
                 );
                 let unique_name = format!("Unique(0x{:x})", id);
 
@@ -603,9 +606,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 );
 
                 // Read the value from memory
-                let mem_value = self.state.memory.read_value(*addr, bit_size).map_err(|e| {
-                    format!("Failed to read memory at address 0x{:x}: {:?}", addr, e)
-                })?;
+                let mem_value = self
+                    .state
+                    .memory
+                    .read_value(*addr, bit_size, &mut self.state.logger.clone())
+                    .map_err(|e| {
+                        format!("Failed to read memory at address 0x{:x}: {:?}", addr, e)
+                    })?;
 
                 log!(
                     self.state.logger.clone(),
@@ -982,7 +989,11 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     let mem_value = self
                         .state
                         .memory
-                        .read_value(*addr, varnode.size.to_bitvector_size())
+                        .read_value(
+                            *addr,
+                            varnode.size.to_bitvector_size(),
+                            &mut self.state.logger.clone(),
+                        )
                         .map_err(|e| {
                             format!("Failed to read memory at address 0x{:x}: {:?}", addr, e)
                         })?;
@@ -1240,7 +1251,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     }
 
     // Helper function to check if any tracked symbolic variable is present in the symbolic expression
-    fn contains_tracked_symbolic_variable(&self, symbolic_expr: &BV<'ctx>) -> bool {
+    fn contains_tracked_symbolic_variable(&self, symbolic_expr: &Bool<'ctx>) -> bool {
         let expr_string = format!("{:?}", symbolic_expr.simplify());
 
         for (arg_name, _) in self.function_symbolic_arguments.iter() {
@@ -1273,6 +1284,87 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         );
         let branch_target_varnode = &instruction.inputs[0];
 
+        let branch_condition_concolic = self
+            .varnode_to_concolic(&instruction.inputs[1])
+            .map_err(|e| e.to_string())?
+            .to_concolic_var()
+            .unwrap();
+
+        // Extract a plain Rust bool from the concolic condition's concrete part
+        let condition_concrete_bool = branch_condition_concolic.concrete.to_bool();
+        log!(
+            self.state.logger.clone(),
+            "Branch condition concrete: {}",
+            condition_concrete_bool
+        );
+
+        // Extract the meaningful symbolic condition using AST inspection
+        log!(
+            self.state.logger.clone(),
+            "Branching condition symbolic: {:?}",
+            branch_condition_concolic.symbolic.simplify()
+        );
+
+        let condition_symbolic = match &branch_condition_concolic.symbolic {
+            SymbolicVar::Int(bv) => {
+                log!(
+                    self.state.logger.clone(),
+                    "Extracting condition from Int BV: {:?}",
+                    bv.simplify()
+                );
+                extract_underlying_condition_from_flag_ast(
+                    &bv.simplify(),
+                    condition_concrete_bool,
+                    &mut self.state.logger,
+                )
+            }
+            SymbolicVar::Bool(b) => {
+                log!(
+                    self.state.logger.clone(),
+                    "Branch condition is a Bool: {:?}",
+                    b
+                );
+                // For Bool types, use the boolean directly based on the path taken
+                if condition_concrete_bool {
+                    b.clone()
+                } else {
+                    b.not()
+                }
+            }
+            _ => {
+                // Fallback to smart conversion
+                let smart_bool = branch_condition_concolic.symbolic.to_bool_ast_smart();
+                if condition_concrete_bool {
+                    smart_bool
+                } else {
+                    smart_bool.not()
+                }
+            }
+        };
+
+        // Check if condition involves tracked symbolic variables and add to constraint vector
+        if self.contains_tracked_symbolic_variable(&condition_symbolic) {
+            log!(
+                self.state.logger.clone(),
+                "Branch condition involves tracked symbolic variables, adding to constraint vector"
+            );
+
+            let path_description = if condition_concrete_bool {
+                "path taken (branch executed)"
+            } else {
+                "path NOT taken (branch not executed)"
+            };
+
+            log!(
+                self.state.logger.clone(),
+                "Adding constraint to vector ({}): {:?}",
+                path_description,
+                condition_symbolic.simplify()
+            );
+
+            self.constraint_vector.push(condition_symbolic);
+        }
+
         // Check if the branch target is a memory address or a constant
         match &branch_target_varnode.var {
             Var::Memory(addr) => {
@@ -1282,65 +1374,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     addr
                 );
 
-                // Fetch the branch condition (input1)
-                log!(
-                    self.state.logger.clone(),
-                    "* Fetching branch condition from instruction.input[1]"
-                );
-                let branch_condition_concolic = self
-                    .varnode_to_concolic(&instruction.inputs[1])
-                    .map_err(|e| e.to_string())?
-                    .to_concolic_var()
-                    .unwrap();
-
-                // Extract a plain Rust bool from the concolic condition's concrete part
-                let condition_concrete_bool = branch_condition_concolic.concrete.to_bool();
-                log!(
-                    self.state.logger.clone(),
-                    "Branch condition concrete: {}",
-                    condition_concrete_bool
-                );
-
-                // Check if condition involves tracked symbolic variables and add to constraint vector
-                let condition_symbolic_bv = branch_condition_concolic.symbolic.to_bv(self.context);
-                if self.contains_tracked_symbolic_variable(&condition_symbolic_bv) {
-                    log!(self.state.logger.clone(), "Branch condition involves tracked symbolic variables, adding to constraint vector");
-
-                    let zero_bv = BV::from_u64(self.context, 0, condition_symbolic_bv.get_size());
-                    let constraint = if condition_concrete_bool {
-                        // Condition is true: assert condition != 0 (i.e., condition is non-zero)
-                        log!(
-                            self.state.logger.clone(),
-                            "Adding constraint: condition != 0 (branch taken)"
-                        );
-                        condition_symbolic_bv._eq(&zero_bv).not().ite(
-                            &BV::from_u64(self.context, 1, 1),
-                            &BV::from_u64(self.context, 0, 1),
-                        )
-                    } else {
-                        // Condition is false: assert condition == 0 (i.e., condition is zero)
-                        log!(
-                            self.state.logger.clone(),
-                            "Adding constraint: condition == 0 (branch not taken)"
-                        );
-                        condition_symbolic_bv._eq(&zero_bv).ite(
-                            &BV::from_u64(self.context, 1, 1),
-                            &BV::from_u64(self.context, 0, 1),
-                        )
-                    };
-                    self.constraint_vector.push(constraint);
-                }
-
-                // Create symbolic BV values for the two potential RIP values (if condition true vs false)
-                let rip1 = BV::from_u64(self.context, *addr, 64);
-                let rip0 = BV::from_u64(self.context, next_inst_in_map, 64);
-
-                // Build a Z3 Bool from the Rust bool
-                let branch_condition_bool = Bool::from_bool(self.context, condition_concrete_bool);
-                // Use the Bool's ite method to create an if-then-else expression over BVs
-                let branch_condition_symbolic = branch_condition_bool.ite(&rip1, &rip0);
-
-                // Decide which branch to take based on the plain bool
+                // Follow concrete execution path for branch target calculation
                 let branch_target_concolic = if condition_concrete_bool {
                     log!(
                         self.state.logger.clone(),
@@ -1350,7 +1384,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
                     let target = ConcolicVar::new_concrete_and_symbolic_int(
                         *addr,
-                        branch_condition_symbolic,
+                        BV::from_u64(self.context, *addr, 64),
                         self.context,
                         64,
                     );
@@ -1371,7 +1405,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     );
                     ConcolicVar::new_concrete_and_symbolic_int(
                         next_inst_in_map,
-                        branch_condition_symbolic,
+                        BV::from_u64(self.context, next_inst_in_map, 64),
                         self.context,
                         64,
                     )
@@ -1392,7 +1426,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 );
             }
             Var::Const(value) => {
-                // Log the value to be parsed
                 log!(
                     self.state.logger.clone(),
                     "Attempting to parse branch target constant: {:?}",
@@ -1401,7 +1434,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 let value_string = value.to_string();
                 let value_str = value_string.trim_start_matches("0x");
 
-                // Attempt to parse the string as a hexadecimal number
                 let value_u64 = match u64::from_str_radix(value_str, 16) {
                     Ok(parsed) => {
                         log!(self.state.logger.clone(), "Branch target is a constant: 0x{:x}, which means this is a sub instruction of a pcode instruction.", parsed);
@@ -1417,74 +1449,12 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     }
                 };
 
-                // Fetch the branch condition (input1)
-                log!(
-                    self.state.logger.clone(),
-                    "* Fetching branch condition from instruction.input[1]"
-                );
-                let branch_condition_concolic = self
-                    .varnode_to_concolic(&instruction.inputs[1])
-                    .map_err(|e| e.to_string())?
-                    .to_concolic_var()
-                    .unwrap();
-
-                // Extract a plain Rust bool from the concolic condition's concrete part
-                let condition_concrete_bool = branch_condition_concolic.concrete.to_bool();
-                log!(
-                    self.state.logger.clone(),
-                    "Branch condition concrete: {}",
-                    condition_concrete_bool
-                );
-
-                // Check if condition involves tracked symbolic variables and add to constraint vector
-                let condition_symbolic_bv = branch_condition_concolic.symbolic.to_bv(self.context);
-                if self.contains_tracked_symbolic_variable(&condition_symbolic_bv) {
-                    log!(self.state.logger.clone(), "Branch condition involves tracked symbolic variables, adding to constraint vector");
-
-                    let zero_bv = BV::from_u64(self.context, 0, condition_symbolic_bv.get_size());
-                    let constraint = if condition_concrete_bool {
-                        // Condition is true: assert condition != 0 (i.e., condition is non-zero)
-                        log!(
-                            self.state.logger.clone(),
-                            "Adding constraint: condition != 0 (branch taken)"
-                        );
-                        condition_symbolic_bv._eq(&zero_bv).not().ite(
-                            &BV::from_u64(self.context, 1, 1),
-                            &BV::from_u64(self.context, 0, 1),
-                        )
-                    } else {
-                        // Condition is false: assert condition == 0 (i.e., condition is zero)
-                        log!(
-                            self.state.logger.clone(),
-                            "Adding constraint: condition == 0 (branch not taken)"
-                        );
-                        condition_symbolic_bv._eq(&zero_bv).ite(
-                            &BV::from_u64(self.context, 1, 1),
-                            &BV::from_u64(self.context, 0, 1),
-                        )
-                    };
-                    self.constraint_vector.push(constraint);
-                }
-
-                // Create two BV values:
-                //  - rip0 for next_inst_in_map (condition false)
-                //  - rip1 for value_u64 (condition true, i.e. "jump x lines")
-                let rip0 = BV::from_u64(self.context, next_inst_in_map, 64);
-                let rip1 = BV::from_u64(self.context, value_u64, 64);
-
-                // Build a Z3 Bool from the Rust bool
-                let branch_condition_bool = Bool::from_bool(self.context, condition_concrete_bool);
-                // Create the ITE: if condition then rip1 else rip0
-                let branch_condition_symbolic = branch_condition_bool.ite(&rip1, &rip0);
-
-                // Check the condition
                 let branch_target_concolic = if condition_concrete_bool {
                     log!(self.state.logger.clone(), "Branch condition is true, and because it is a sub-instruction, the execution jumps of {:x} lines.", value_u64);
-                    // setting the number of lines to skip
                     self.pcode_internal_lines_to_be_jumped = value_u64 as i64;
                     ConcolicVar::new_concrete_and_symbolic_int(
                         value_u64,
-                        branch_condition_symbolic,
+                        BV::from_u64(self.context, value_u64, 64),
                         self.context,
                         64,
                     )
@@ -1495,13 +1465,12 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     );
                     ConcolicVar::new_concrete_and_symbolic_int(
                         next_inst_in_map,
-                        branch_condition_symbolic,
+                        BV::from_u64(self.context, next_inst_in_map, 64),
                         self.context,
                         64,
                     )
                 };
 
-                // Create or update a concolic variable for logging/tracking
                 let current_addr_hex = self
                     .current_address
                     .map_or_else(|| "unknown".to_string(), |addr| format!("{:x}", addr));
@@ -1516,7 +1485,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 );
             }
             _ => {
-                // For other Var types not handled by cbranch
                 log!(
                     self.state.logger.clone(),
                     "Branch instruction doesn't handle this type of Var: {:?}",
@@ -1525,7 +1493,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             }
         };
 
-        // Update the instruction counter
         self.instruction_counter += 1;
 
         Ok(())
@@ -1814,7 +1781,11 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         let mut mem_value = self
             .state
             .memory
-            .read_value(pointer_offset_concrete, load_size_bits)
+            .read_value(
+                pointer_offset_concrete,
+                load_size_bits,
+                &mut self.state.logger.clone(),
+            )
             .map_err(|e| {
                 format!(
                     "Failed to read memory at address 0x{:x}: {:?}",
@@ -1823,9 +1794,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             })?;
         let mem_value_size = mem_value.concrete.get_size();
 
-        // For narrow memory values (<=64 bits), adjust if needed.
+        // For narrow memory values (<=64 bits)
         if mem_value_size <= 64 {
             if load_size_bits > mem_size {
+                log!(
+                    self.state.logger.clone(),
+                    "Extending memory value from {} bits to {} bits",
+                    mem_size,
+                    load_size_bits
+                );
                 mem_value = ConcolicVar::new_concrete_and_symbolic_int(
                     mem_value.concrete.to_u64(),
                     mem_value.symbolic.to_bv(&self.context),
@@ -1834,6 +1811,12 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 );
             }
             if load_size_bits < mem_size {
+                log!(
+                    self.state.logger.clone(),
+                    "Extracting memory value from {} bits to {} bits",
+                    mem_size,
+                    load_size_bits
+                );
                 let extracted_symbolic = mem_value
                     .symbolic
                     .to_bv(&self.context)
@@ -1850,9 +1833,10 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         let mem_value_size = mem_value.concrete.get_size();
         log!(
             self.state.logger.clone(),
-            "Dereferenced value: 0x{:x}, with size {:?}",
+            "Dereferenced value: 0x{:x}, with size {:?}, and symbolic: {:?}",
             mem_value.concrete,
-            mem_value_size
+            mem_value_size,
+            mem_value.symbolic.simplify()
         );
 
         // --- Handle jump table access versus regular LOAD ---
@@ -2114,7 +2098,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         }
     }
 
-    // Handle STORE operation
+    // Handle STORE operation with chunked storage for LargeInt values
     pub fn handle_store(&mut self, instruction: Inst) -> Result<(), String> {
         // Validate the instruction format
         if instruction.opcode != Opcode::Store || instruction.inputs.len() != 3 {
@@ -2173,13 +2157,10 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         let data_to_store_concolic = self
             .varnode_to_concolic(data_to_store_var)
             .map_err(|e| e.to_string())?;
-        let data_to_store_concrete = data_to_store_concolic.get_concrete_value();
+
+        // Get the full concrete value (preserving all chunks)
+        let full_concrete_value = data_to_store_concolic.get_full_concrete_value();
         let data_to_store_symbolic = data_to_store_concolic.get_symbolic_value_bv(self.context);
-        log!(
-            self.state.logger.clone(),
-            "Data to store: 0x{:x}",
-            data_to_store_concrete
-        );
 
         // Determine the size of the data to store
         let data_size_bits = data_to_store_var.size.to_bitvector_size() as u32;
@@ -2198,35 +2179,236 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             ));
         }
 
-        // Create a MemoryValue
-        let mem_value = MemoryValue {
-            concrete: data_to_store_concrete,
-            symbolic: data_to_store_symbolic.clone(),
-            size: data_size_bits,
-        };
-
-        // Write the MemoryValue to memory
-        match self
-            .state
-            .memory
-            .write_value(pointer_offset_concrete, &mem_value)
-        {
-            Ok(_) => {
+        // Handle storage based on concrete value type
+        match &full_concrete_value {
+            ConcreteVar::LargeInt(chunks) => {
                 log!(
                     self.state.logger.clone(),
-                    "Stored value 0x{:x} to memory at address 0x{:x}",
-                    data_to_store_concrete,
-                    pointer_offset_concrete
+                    "Storing LargeInt with {} chunks: {:?}",
+                    chunks.len(),
+                    chunks
+                );
+
+                // Store each chunk at consecutive 8-byte addresses
+                for (i, &chunk) in chunks.iter().enumerate() {
+                    let chunk_addr = pointer_offset_concrete + (i as u64 * 8);
+
+                    // Extract the appropriate part of the symbolic value for this chunk
+                    let chunk_symbolic = if data_size_bits <= 64 {
+                        // For single chunk data, use the full symbolic value
+                        data_to_store_symbolic.clone()
+                    } else {
+                        // For multi-chunk data, extract the appropriate 64-bit slice
+                        // IMPORTANT: Match the chunk order with the symbolic concatenation
+                        // Symbolic: (concat indices_R8!258 indices_len_R9!259)
+                        // This means: [high 64 bits = indices_R8!258, low 64 bits = indices_len_R9!259]
+                        // LargeInt: [chunk0 = ptr, chunk1 = len]
+                        // So: chunk0 (ptr) should get high bits, chunk1 (len) should get low bits
+
+                        if i == 0 {
+                            // Chunk 0 (ptr) = high 64 bits (127:64)
+                            data_to_store_symbolic.extract(127, 64)
+                        } else if i == 1 {
+                            // Chunk 1 (len) = low 64 bits (63:0)
+                            data_to_store_symbolic.extract(63, 0)
+                        } else {
+                            // Additional chunks beyond 128 bits
+                            BV::from_u64(self.context, 0, 64)
+                        }
+                    };
+
+                    // Create individual MemoryValue for each chunk
+                    let chunk_mem_value = MemoryValue {
+                        concrete: chunk,
+                        symbolic: chunk_symbolic.clone(),
+                        size: 64, // Each chunk is 64 bits
+                    };
+
+                    log!(
+                        self.state.logger.clone(),
+                        "Creating chunk {} MemoryValue: concrete=0x{:x}, symbolic={:?}, size=64",
+                        i,
+                        chunk,
+                        chunk_symbolic.simplify()
+                    );
+
+                    // Write the chunk to memory
+                    match self.state.memory.write_value(chunk_addr, &chunk_mem_value) {
+                        Ok(_) => {
+                            log!(
+                                self.state.logger.clone(),
+                                "Stored chunk {} (0x{:x}) at address 0x{:x}",
+                                i,
+                                chunk,
+                                chunk_addr
+                            );
+                        }
+                        Err(e) => {
+                            let error_msg = format!(
+                                "Failed to write chunk {} to memory at address 0x{:x}: {:?}",
+                                i, chunk_addr, e
+                            );
+                            log!(self.state.logger.clone(), "{}", error_msg);
+                            return Err(error_msg);
+                        }
+                    }
+
+                    // Mark each chunk address as initialized
+                    self.initialiazed_var.insert(
+                        format!("{:x}", chunk_addr),
+                        self.current_address.unwrap_or(0),
+                    );
+                }
+
+                // Log the complete operation
+                log!(
+                    self.state.logger.clone(),
+                    "Stored complete LargeInt value starting at 0x{:x} ({} chunks)",
+                    pointer_offset_concrete,
+                    chunks.len()
                 );
             }
-            Err(e) => {
-                let error_msg = format!(
-                    "Failed to write to memory at address 0x{:x}: {:?}",
-                    pointer_offset_concrete, e
+            ConcreteVar::Int(value) => {
+                // Handle single values normally
+                let mem_value = MemoryValue {
+                    concrete: *value,
+                    symbolic: data_to_store_symbolic.simplify().clone(),
+                    size: data_size_bits,
+                };
+
+                log!(
+                    self.state.logger.clone(),
+                    "Creating single MemoryValue: concrete=0x{:x}, symbolic={:?}, size={}",
+                    mem_value.concrete,
+                    mem_value.symbolic.simplify(),
+                    mem_value.size
                 );
-                log!(self.state.logger.clone(), "{}", error_msg);
-                return Err(error_msg);
+
+                // Write the single value to memory
+                match self
+                    .state
+                    .memory
+                    .write_value(pointer_offset_concrete, &mem_value)
+                {
+                    Ok(_) => {
+                        log!(
+                            self.state.logger.clone(),
+                            "Stored single value 0x{:x} to memory at address 0x{:x}",
+                            *value,
+                            pointer_offset_concrete
+                        );
+                    }
+                    Err(e) => {
+                        let error_msg = format!(
+                            "Failed to write to memory at address 0x{:x}: {:?}",
+                            pointer_offset_concrete, e
+                        );
+                        log!(self.state.logger.clone(), "{}", error_msg);
+                        return Err(error_msg);
+                    }
+                }
             }
+            _ => {
+                return Err("Unsupported concrete variable type in STORE".to_string());
+            }
+        }
+
+        // Verification: Read back the stored value(s) to verify correctness
+        // Verification: Read back the stored value(s) to verify correctness
+        match &full_concrete_value {
+            ConcreteVar::LargeInt(chunks) => {
+                // Verify each chunk was stored correctly
+                for (i, &expected_chunk) in chunks.iter().enumerate() {
+                    let chunk_addr = pointer_offset_concrete + (i as u64 * 8);
+                    match self.state.memory.read_value(
+                        chunk_addr,
+                        64,
+                        &mut self.state.logger.clone(),
+                    ) {
+                        Ok(stored_value) => {
+                            // Convert ConcreteVar to u64 for comparison
+                            let stored_concrete_value = match stored_value.concrete {
+                                ConcreteVar::Int(val) => val,
+                                ConcreteVar::LargeInt(ref values) => {
+                                    if values.is_empty() {
+                                        0
+                                    } else {
+                                        values[0]
+                                    }
+                                }
+                                _ => 0,
+                            };
+
+                            log!(
+                                self.state.logger.clone(),
+                                "Verified chunk {} at 0x{:x}: stored=0x{:x}, expected=0x{:x}",
+                                i,
+                                chunk_addr,
+                                stored_concrete_value,
+                                expected_chunk
+                            );
+
+                            if stored_concrete_value != expected_chunk {
+                                return Err(format!(
+                                    "Chunk {} verification failed: expected 0x{:x}, got 0x{:x}",
+                                    i, expected_chunk, stored_concrete_value
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            return Err(format!(
+                                "Failed to verify chunk {} at address 0x{:x}: {:?}",
+                                i, chunk_addr, e
+                            ));
+                        }
+                    }
+                }
+            }
+            ConcreteVar::Int(expected_value) => {
+                // Verify single value was stored correctly
+                match self.state.memory.read_value(
+                    pointer_offset_concrete,
+                    data_size_bits,
+                    &mut self.state.logger.clone(),
+                ) {
+                    Ok(stored_value) => {
+                        // Convert ConcreteVar to u64 for comparison
+                        let stored_concrete_value = match stored_value.concrete {
+                            ConcreteVar::Int(val) => val,
+                            ConcreteVar::LargeInt(ref values) => {
+                                if values.is_empty() {
+                                    0
+                                } else {
+                                    values[0]
+                                }
+                            }
+                            _ => 0,
+                        };
+
+                        log!(
+                            self.state.logger.clone(),
+                            "Verified single value at 0x{:x}: stored=0x{:x}, expected=0x{:x}",
+                            pointer_offset_concrete,
+                            stored_concrete_value,
+                            expected_value
+                        );
+
+                        if stored_concrete_value != *expected_value {
+                            return Err(format!(
+                                "Single value verification failed: expected 0x{:x}, got 0x{:x}",
+                                expected_value, stored_concrete_value
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                            "Failed to verify single value at address 0x{:x}: {:?}",
+                            pointer_offset_concrete, e
+                        ));
+                    }
+                }
+            }
+            _ => {}
         }
 
         // Checks if the used variable has been initialized in the current scope (C code vulnerability)
@@ -2249,7 +2431,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         //     log!(self.state.logger.clone(), "No function frame found at address 0x{:x}", pointer_offset_concrete);
         // }
 
-        // update CPU register if the address maps to one
+        // Update CPU register if the address maps to one
         let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
         if let Some(_register_value) =
             cpu_state_guard.get_register_by_offset(pointer_offset_concrete, data_size_bits)
@@ -2260,7 +2442,12 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 data_size_bits,
             ) {
                 Ok(_) => {
-                    log!(self.state.logger.clone(), "Updated register at offset 0x{:x} with value 0x{:x} and symbolic part {:?}", pointer_offset_concrete, data_to_store_concrete, data_to_store_symbolic.simplify());
+                    log!(
+                        self.state.logger.clone(),
+                        "Updated register at offset 0x{:x} with symbolic part {:?}",
+                        pointer_offset_concrete,
+                        data_to_store_symbolic.simplify()
+                    );
                 }
                 Err(e) => {
                     let error_msg = format!(
@@ -2274,16 +2461,49 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         }
         drop(cpu_state_guard);
 
-        // Record the operation for traceability (if needed in your context)
+        // Record the operation for traceability
         let current_addr_hex = self
             .current_address
             .map_or_else(|| "unknown".to_string(), |addr| format!("{:x}", addr));
-        let result_var_name = format!("{}-{:02}-store", current_addr_hex, self.instruction_counter);
-        self.state.create_or_update_concolic_variable_int(
-            &result_var_name,
-            data_to_store_concrete,
-            SymbolicVar::Int(data_to_store_symbolic.clone()),
-        );
+
+        match &full_concrete_value {
+            ConcreteVar::LargeInt(chunks) => {
+                // Create traceability entries for each chunk
+                for (i, &chunk) in chunks.iter().enumerate() {
+                    let chunk_var_name = format!(
+                        "{}-{:02}-store-chunk-{}",
+                        current_addr_hex, self.instruction_counter, i
+                    );
+                    let chunk_symbolic = if data_size_bits <= 64 {
+                        data_to_store_symbolic.clone()
+                    } else {
+                        let start_bit = i as u32 * 64;
+                        let end_bit = std::cmp::min(start_bit + 64, data_size_bits);
+                        if start_bit >= data_size_bits {
+                            BV::from_u64(self.context, 0, 64)
+                        } else {
+                            data_to_store_symbolic.extract(end_bit - 1, start_bit)
+                        }
+                    };
+
+                    self.state.create_or_update_concolic_variable_int(
+                        &chunk_var_name,
+                        chunk,
+                        SymbolicVar::Int(chunk_symbolic),
+                    );
+                }
+            }
+            ConcreteVar::Int(value) => {
+                let result_var_name =
+                    format!("{}-{:02}-store", current_addr_hex, self.instruction_counter);
+                self.state.create_or_update_concolic_variable_int(
+                    &result_var_name,
+                    *value,
+                    SymbolicVar::Int(data_to_store_symbolic.clone()),
+                );
+            }
+            _ => {}
+        }
 
         Ok(())
     }
@@ -2360,11 +2580,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
             }
             SymbolicVar::Bool(b) => {
-                let bv_int = b.ite(
-                    &BV::from_u64(self.context, 1, output_size_bits),
-                    &BV::from_u64(self.context, 0, output_size_bits),
-                );
-                SymbolicVar::Int(bv_int)
+                // Convert Bool to Int using concrete value (no ITE needed)
+                let concrete_bool = match &source_concolic.concrete {
+                    ConcreteVar::Bool(b_val) => *b_val,
+                    _ => false, // fallback
+                };
+                let concrete_as_bv = if concrete_bool { 1u64 } else { 0u64 };
+                SymbolicVar::Int(BV::from_u64(self.context, concrete_as_bv, output_size_bits))
             }
             _ => return Err("[ERROR] Unsupported symbolic type in COPY".to_string()),
         };
@@ -2422,6 +2644,19 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                             );
                         }
                         SymbolicVar::Int(bv_vec[0].clone())
+                    }
+                    SymbolicVar::Bool(b) => {
+                        // Convert Bool to Int for final result
+                        let concrete_bool = match &source_concolic.concrete {
+                            ConcreteVar::Bool(b_val) => *b_val,
+                            _ => false,
+                        };
+                        let concrete_as_bv = if concrete_bool { 1u64 } else { 0u64 };
+                        SymbolicVar::Int(BV::from_u64(
+                            self.context,
+                            concrete_as_bv,
+                            output_size_bits,
+                        ))
                     }
                     _ => return Err("[ERROR] Unexpected symbolic type for small COPY".to_string()),
                 },
@@ -2575,7 +2810,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         );
 
         // Parse the truncation offset (in bytes) from the constant input.
-        let offset_value = if let Var::Const(value) = &instruction.inputs[1].var {
+        let offset_bytes = if let Var::Const(value) = &instruction.inputs[1].var {
             u32::from_str_radix(value.trim_start_matches("0x"), 16)
                 .map_err(|e| format!("Failed to parse offset value: {}", e))?
         } else {
@@ -2588,28 +2823,23 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             .unwrap()
             .size
             .to_bitvector_size() as u32;
-        let bit_offset = offset_value * 8; // Convert byte offset to bits
+        let bit_offset = offset_bytes * 8; // Convert byte offset to bits
+
+        log!(
+            self.state.logger.clone(),
+            "SUBPIECE: extracting {} bits starting at byte offset {} (bit offset {})",
+            output_size_bits,
+            offset_bytes,
+            bit_offset
+        );
 
         // --- Handle Concrete Value Extraction ---
         let truncated_concrete = match source_concrete {
             ConcreteVar::Int(value) => {
-                let total_bits = 64;
-                let shifted = if bit_offset >= total_bits {
-                    0u64
-                } else {
-                    *value >> bit_offset
-                };
-                let mask = if output_size_bits >= 64 {
-                    u64::MAX
-                } else {
-                    (1u64 << output_size_bits) - 1
-                };
-                ConcreteVar::Int(shifted & mask)
+                Self::subpiece_concrete_int(*value, bit_offset, output_size_bits)
             }
             ConcreteVar::LargeInt(values) => {
-                let shifted_values = Self::lshr_largeint(values, bit_offset);
-                let masked_values = Self::mask_largeint(&shifted_values, output_size_bits);
-                ConcreteVar::LargeInt(masked_values)
+                Self::subpiece_concrete_largeint(values, bit_offset, output_size_bits)
             }
             _ => return Err("Unsupported concrete variable type in SUBPIECE".to_string()),
         };
@@ -2617,18 +2847,30 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         // --- Handle Symbolic Value Extraction ---
         let truncated_symbolic = match source_symbolic {
             SymbolicVar::Int(bv) => {
-                // Perform logical shift right on the BV then extract the desired bits.
                 let safe_bv = Self::subpiece_bv(self.context, bv, bit_offset, output_size_bits);
-                SymbolicVar::Int(safe_bv)
+                if output_size_bits <= 64 {
+                    SymbolicVar::Int(safe_bv)
+                } else {
+                    // Split into chunks for large outputs
+                    let chunk_count = (output_size_bits + 63) / 64;
+                    let splitted =
+                        Self::split_largeint(self.context, &safe_bv, chunk_count as usize);
+                    SymbolicVar::LargeInt(splitted)
+                }
             }
             SymbolicVar::LargeInt(bv_vec) => {
                 let combined = Self::combine_largeint(self.context, bv_vec);
                 let safe_bv =
                     Self::subpiece_bv(self.context, &combined, bit_offset, output_size_bits);
-                // Now, if the output_size_bits is multiple of 64, you can split back:
-                let chunk_count = (output_size_bits + 63) / 64;
-                let splitted = Self::split_largeint(self.context, &safe_bv, chunk_count as usize);
-                SymbolicVar::LargeInt(splitted)
+
+                if output_size_bits <= 64 {
+                    SymbolicVar::Int(safe_bv)
+                } else {
+                    let chunk_count = (output_size_bits + 63) / 64;
+                    let splitted =
+                        Self::split_largeint(self.context, &safe_bv, chunk_count as usize);
+                    SymbolicVar::LargeInt(splitted)
+                }
             }
             _ => return Err("Unsupported symbolic variable type in SUBPIECE".to_string()),
         };
@@ -2639,6 +2881,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             symbolic: truncated_symbolic,
             ctx: self.context,
         };
+
+        log!(
+            self.state.logger.clone(),
+            "SUBPIECE result: concrete={:?}, output_size_bits={}",
+            result_value.concrete,
+            output_size_bits
+        );
 
         // Output the result to the destination.
         self.handle_output(instruction.output.as_ref(), result_value.clone())?;
@@ -2651,12 +2900,14 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             "{}-{:02}-subpiece",
             current_addr_hex, self.instruction_counter
         );
-        // If the result is wide (>64 bits), use the largeint update; otherwise, use the int update.
+
+        // Choose appropriate storage method based on output size
         if output_size_bits > 64 {
             self.state.create_or_update_concolic_variable_largeint(
                 &result_var_name,
                 match result_value.concrete {
                     ConcreteVar::LargeInt(ref vec) => vec.clone(),
+                    ConcreteVar::Int(val) => vec![val],
                     _ => vec![result_value.concrete.to_u64()],
                 },
                 result_value.symbolic.clone(),
@@ -2676,51 +2927,143 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         Ok(())
     }
 
-    // Logical shift right on Vec<u64>
-    fn lshr_largeint(values: &Vec<u64>, shift: u32) -> Vec<u64> {
-        let total_bits = (values.len() * 64) as u32;
-        if shift >= total_bits {
-            return vec![0; values.len()];
-        }
-
-        let mut result = vec![0; values.len()];
-        let full_shifts = (shift / 64) as usize;
-        let bit_shift = shift % 64;
-
-        for i in 0..(values.len() - full_shifts) {
-            let src_index = i + full_shifts;
-            let lower = values[src_index] >> bit_shift;
-            let upper = if bit_shift > 0 && src_index + 1 < values.len() {
-                values[src_index + 1] << (64 - bit_shift)
+    // Improved concrete integer subpiece
+    fn subpiece_concrete_int(value: u64, bit_offset: u32, output_size_bits: u32) -> ConcreteVar {
+        if bit_offset >= 64 {
+            // Offset beyond the 64-bit value, return 0
+            if output_size_bits <= 64 {
+                ConcreteVar::Int(0)
             } else {
-                0
+                let chunk_count = (output_size_bits + 63) / 64;
+                ConcreteVar::LargeInt(vec![0; chunk_count as usize])
+            }
+        } else {
+            let shifted = value >> bit_offset;
+            let masked = if output_size_bits >= 64 {
+                shifted
+            } else {
+                shifted & ((1u64 << output_size_bits) - 1)
             };
-            result[i] = lower | upper;
+
+            if output_size_bits <= 64 {
+                ConcreteVar::Int(masked)
+            } else {
+                // For outputs > 64 bits, create a LargeInt with the value in the first chunk
+                let chunk_count = (output_size_bits + 63) / 64;
+                let mut result = vec![0; chunk_count as usize];
+                result[0] = masked;
+                ConcreteVar::LargeInt(result)
+            }
         }
+    }
+
+    // Improved concrete LargeInt subpiece
+    fn subpiece_concrete_largeint(
+        values: &Vec<u64>,
+        bit_offset: u32,
+        output_size_bits: u32,
+    ) -> ConcreteVar {
+        let total_input_bits = (values.len() * 64) as u32;
+
+        if bit_offset >= total_input_bits {
+            // Offset beyond input, return 0
+            if output_size_bits <= 64 {
+                return ConcreteVar::Int(0);
+            } else {
+                let chunk_count = (output_size_bits + 63) / 64;
+                return ConcreteVar::LargeInt(vec![0; chunk_count as usize]);
+            }
+        }
+
+        // Calculate how many complete 64-bit chunks to skip
+        let chunk_offset = (bit_offset / 64) as usize;
+        let bit_offset_in_chunk = bit_offset % 64;
+
+        // Calculate output size
+        let output_chunk_count = (output_size_bits + 63) / 64;
+        let mut result = vec![0u64; output_chunk_count as usize];
+
+        // Extract the required bits
+        let mut remaining_bits = output_size_bits;
+        let mut result_index = 0;
+
+        for i in chunk_offset..values.len() {
+            if remaining_bits == 0 || result_index >= result.len() {
+                break;
+            }
+
+            let source_chunk = values[i];
+            let shifted_chunk = source_chunk >> bit_offset_in_chunk;
+
+            // If we need bits from the next chunk due to bit offset
+            let combined_chunk = if bit_offset_in_chunk > 0 && i + 1 < values.len() {
+                let next_chunk = values[i + 1];
+                let high_bits = next_chunk << (64 - bit_offset_in_chunk);
+                shifted_chunk | high_bits
+            } else {
+                shifted_chunk
+            };
+
+            // Mask if this is the last chunk and we don't need all 64 bits
+            if remaining_bits < 64 {
+                result[result_index] = combined_chunk & ((1u64 << remaining_bits) - 1);
+                remaining_bits = 0;
+            } else {
+                result[result_index] = combined_chunk;
+                remaining_bits -= 64;
+            }
+
+            result_index += 1;
+        }
+
+        if output_size_bits <= 64 {
+            ConcreteVar::Int(result[0])
+        } else {
+            ConcreteVar::LargeInt(result)
+        }
+    }
+
+    // Improved BV combination (fix the concatenation order)
+    fn combine_largeint(ctx: &'ctx Context, bv_vec: &Vec<BV<'ctx>>) -> BV<'ctx> {
+        if bv_vec.is_empty() {
+            return BV::from_u64(ctx, 0, 64);
+        }
+
+        // bv_vec[0] = low 64 bits, bv_vec[1] = next 64, etc.
+        // We need to concatenate in reverse order: high bits first
+        let mut result = bv_vec[0].clone();
+
+        for i in 1..bv_vec.len() {
+            // Concatenate: high_bits . low_bits
+            result = bv_vec[i].concat(&result);
+        }
+
         result
     }
 
-    // Mask the lower 'num_bits' bits of Vec<u64>
-    fn mask_largeint(values: &Vec<u64>, num_bits: u32) -> Vec<u64> {
-        let total_bits = (values.len() * 64) as u32;
-        if num_bits >= total_bits {
-            return values.clone();
-        }
+    // Improved BV splitting
+    fn split_largeint(ctx: &'ctx Context, bv: &BV<'ctx>, total_chunks: usize) -> Vec<BV<'ctx>> {
+        let total_bits = bv.get_size();
+        let mut result = Vec::with_capacity(total_chunks);
 
-        let mut result = values.clone();
-        let bits_to_clear = total_bits - num_bits;
-        let bits_in_partial_word = bits_to_clear % 64;
+        for chunk_idx in 0..total_chunks {
+            let start_bit = chunk_idx * 64;
+            let end_bit = std::cmp::min(start_bit + 64, total_bits as usize);
 
-        // Zero out the higher words
-        for i in ((num_bits / 64) as usize + 1)..values.len() {
-            result[i] = 0;
-        }
+            if start_bit >= total_bits as usize {
+                // Beyond the source, add zero chunk
+                result.push(BV::from_u64(ctx, 0, 64));
+            } else {
+                let chunk_size = end_bit - start_bit;
+                let extracted = bv.extract((end_bit - 1) as u32, start_bit as u32);
 
-        // Mask the partial word
-        if bits_in_partial_word > 0 && ((num_bits / 64) as usize) < values.len() {
-            let idx = (num_bits / 64) as usize;
-            let mask = (1u64 << (64 - bits_in_partial_word)) - 1;
-            result[idx] &= mask;
+                // Zero-extend to 64 bits if needed
+                if chunk_size < 64 {
+                    result.push(extracted.zero_ext((64 - chunk_size) as u32));
+                } else {
+                    result.push(extracted);
+                }
+            }
         }
 
         result
@@ -2774,143 +3117,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         } else {
             extracted
         }
-    }
-
-    /// Combine a Vec<BV<ctx>> into a single BV (lowest index = least significant 64 bits).
-    fn combine_largeint(ctx: &'ctx Context, bv_vec: &Vec<BV<'ctx>>) -> BV<'ctx> {
-        // Assume bv_vec[0] = low 64 bits, bv_vec[1] = next 64, etc.
-        let mut iter = bv_vec.iter().rev(); // Start from the highest chunk
-        if let Some(first) = iter.next() {
-            let mut combined = first.clone();
-            for chunk in iter {
-                // Shift combined left 64 bits, then OR in the next chunk
-                combined = combined.bvshl(&BV::from_u64(ctx, 64, combined.get_size()));
-                combined = combined.concat(chunk);
-            }
-            combined
-        } else {
-            // If empty, return a 1-bit zero
-            BV::from_u64(ctx, 0, 1)
-        }
-    }
-
-    fn split_largeint(ctx: &'ctx Context, bv: &BV<'ctx>, total_chunks: usize) -> Vec<BV<'ctx>> {
-        let total_bits = bv.get_size();
-        let chunk_bits = 64;
-        let mut result = Vec::with_capacity(total_chunks);
-        let mut offset = 0;
-        for _ in 0..total_chunks {
-            let high_bit = std::cmp::min(offset + chunk_bits, total_bits) - 1;
-            let extracted = bv.extract(high_bit, offset);
-            // Next chunk
-            offset += chunk_bits;
-            result.push(extracted);
-            if offset >= total_bits {
-                // Zero-extend or fill the rest with 0 if needed
-                while result.len() < total_chunks {
-                    result.push(BV::from_u64(ctx, 0, 64));
-                }
-                break;
-            }
-        }
-        result
-    }
-
-    // Helper function to extend the size of a Bool when there is an operation between a Bool (size 1) and an Integer (usually size 8)
-    fn adapt_var(
-        &self,
-        var: ConcolicEnum<'ctx>,
-        bit_size: u32,
-        ctx: &'ctx Context,
-    ) -> Result<ConcolicEnum<'ctx>, String> {
-        let concolic_var = var.to_concolic_var().unwrap();
-        match &concolic_var.symbolic {
-            SymbolicVar::Bool(b) => {
-                log!(
-                    self.state.logger.clone(),
-                    "Adapting Bool to size {}",
-                    bit_size
-                );
-                // Convert Bool to BV of bit_size
-                let bv = b.ite(
-                    &BV::from_u64(ctx, 1, bit_size),
-                    &BV::from_u64(ctx, 0, bit_size),
-                );
-                // Convert concrete Bool to u64
-                let concrete_value = match concolic_var.concrete {
-                    ConcreteVar::Bool(b_val) => {
-                        if b_val {
-                            1u64
-                        } else {
-                            0u64
-                        }
-                    }
-                    _ => return Err("Expected ConcreteVar::Bool".to_string()),
-                };
-                // Resize concrete value
-                let mask = if bit_size >= 64 {
-                    u64::MAX
-                } else {
-                    (1u64 << bit_size) - 1
-                };
-                let resized_concrete = concrete_value & mask;
-                Ok(ConcolicEnum::ConcolicVar(ConcolicVar {
-                    concrete: ConcreteVar::Int(resized_concrete),
-                    symbolic: SymbolicVar::Int(bv),
-                    ctx,
-                }))
-            }
-            SymbolicVar::Int(bv) => {
-                log!(
-                    self.state.logger.clone(),
-                    "Adapting Int to size {}",
-                    bit_size
-                );
-                // Resize BV to bit_size if necessary
-                let current_size = bv.get_size();
-                let resized_bv = if current_size < bit_size {
-                    bv.zero_ext(bit_size - current_size)
-                } else if current_size > bit_size {
-                    bv.extract(bit_size - 1, 0)
-                } else {
-                    bv.clone()
-                };
-                // Resize concrete value
-                let concrete_value = match concolic_var.concrete {
-                    ConcreteVar::Int(value) => value,
-                    _ => return Err("Expected ConcreteVar::Int".to_string()),
-                };
-                let mask = if bit_size >= 64 {
-                    u64::MAX
-                } else {
-                    (1u64 << bit_size) - 1
-                };
-                let resized_concrete = concrete_value & mask;
-                Ok(ConcolicEnum::ConcolicVar(ConcolicVar {
-                    concrete: ConcreteVar::Int(resized_concrete),
-                    symbolic: SymbolicVar::Int(resized_bv),
-                    ctx,
-                }))
-            }
-            _ => {
-                // Return the original variable without modification
-                Ok(ConcolicEnum::ConcolicVar(concolic_var))
-            }
-        }
-    }
-
-    pub fn adapt_types(
-        &self,
-        var1: ConcolicEnum<'ctx>,
-        var2: ConcolicEnum<'ctx>,
-        bit_size: u32,
-    ) -> Result<(ConcolicEnum<'ctx>, ConcolicEnum<'ctx>), String> {
-        let ctx = self.context;
-
-        let adapted_var1 = self.adapt_var(var1, bit_size, ctx)?;
-        let adapted_var2 = self.adapt_var(var2, bit_size, ctx)?;
-
-        Ok((adapted_var1, adapted_var2))
     }
 
     // Push a new function frame onto the call stack

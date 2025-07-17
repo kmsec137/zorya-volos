@@ -562,9 +562,10 @@ fn execute_instructions_from(
                 let negate_path_flag = std::env::var("NEGATE_PATH_FLAG")
                     .expect("NEGATE_PATH_FLAG environment variable is not set");
 
+                // This block is for find fast a SAT state for the negated path exploration
                 if negate_path_flag == "true" {
-                    // broken-calculator 22f068 // omni-vuln4 0x2300b7
-                    if current_rip == 0x2300b7 {
+                    // broken-calculator 22f068 // omni-vuln4 0x2300b7 0x2300d7// crashme: 0x22b21a
+                    if current_rip == 0x22f068 {
                         log!(
                             executor.state.logger,
                             ">>> Evaluating arguments for the negated path exploration."
@@ -914,8 +915,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x202 - PF is {:x}",
-                register0x202.concrete
+                "The value of register at offset 0x202 - PF is {:x} and symbolic {:?}",
+                register0x202.concrete,
+                register0x202.symbolic.simplify()
             );
             let register0x206 = executor
                 .state
@@ -939,8 +941,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x207 - SF is {:x}",
-                register0x207.concrete
+                "The value of register at offset 0x207 - SF is {:x} and symbolic {:?}",
+                register0x207.concrete,
+                register0x207.symbolic.simplify()
             );
             let register0x20b = executor
                 .state
@@ -951,8 +954,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x20b - OF is {:x}",
-                register0x20b.concrete
+                "The value of register at offset 0x20b - OF is {:x} and symbolic {:?}",
+                register0x20b.concrete,
+                register0x20b.symbolic.simplify()
             );
             let register0x110 = executor
                 .state
@@ -1296,9 +1300,18 @@ pub fn initialize_symbolic_part_args(
 ) -> Result<(), Box<dyn Error>> {
     // Read os.Args slice header (Pointer, Len, Cap)
     let mem = &executor.state.memory;
-    let slice_ptr = mem.read_u64(args_addr)?.concrete.to_u64(); // Pointer to backing array
-    let slice_len = mem.read_u64(args_addr + 8)?.concrete.to_u64(); // Length (number of arguments)
-    let _slice_cap = mem.read_u64(args_addr + 16)?.concrete.to_u64(); // Capacity (not used)
+    let slice_ptr = mem
+        .read_u64(args_addr, &mut executor.state.logger.clone())?
+        .concrete
+        .to_u64(); // Pointer to backing array
+    let slice_len = mem
+        .read_u64(args_addr + 8, &mut executor.state.logger.clone())?
+        .concrete
+        .to_u64(); // Length (number of arguments)
+    let _slice_cap = mem
+        .read_u64(args_addr + 16, &mut executor.state.logger.clone())?
+        .concrete
+        .to_u64(); // Capacity (not used)
 
     log!(
         executor.state.logger,
@@ -1311,8 +1324,14 @@ pub fn initialize_symbolic_part_args(
     // Iterate through each argument
     for i in 0..slice_len {
         let string_struct_addr = slice_ptr + i * 16; // Each Go string struct is 16 bytes
-        let str_data_ptr = mem.read_u64(string_struct_addr)?.concrete.to_u64(); // Pointer to actual string data
-        let str_data_len = mem.read_u64(string_struct_addr + 8)?.concrete.to_u64(); // Length of the string
+        let str_data_ptr = mem
+            .read_u64(string_struct_addr, &mut executor.state.logger.clone())?
+            .concrete
+            .to_u64(); // Pointer to actual string data
+        let str_data_len = mem
+            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone())?
+            .concrete
+            .to_u64(); // Length of the string
 
         log!(
             executor.state.logger,

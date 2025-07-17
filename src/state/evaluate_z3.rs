@@ -3,8 +3,10 @@ use std::{env, error::Error, process::Command};
 
 use super::explore_ast::explore_ast_for_panic;
 use crate::concolic::{ConcolicExecutor, ConcolicVar, SymbolicVar};
+use crate::state::simplify_z3::add_constraints_from_vector;
 use parser::parser::Inst;
 use z3::ast::{Ast, BV};
+use z3::SatResult;
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
@@ -12,16 +14,255 @@ macro_rules! log {
     }};
 }
 
-pub fn evaluate_args_z3(
-    executor: &mut ConcolicExecutor,
+pub fn evaluate_args_z3<'ctx>(
+    executor: &mut ConcolicExecutor<'ctx>,
     inst: &Inst,
     binary_path: &str,
     address_of_negated_path_exploration: u64,
-    conditional_flag: ConcolicVar,
+    conditional_flag: ConcolicVar<'ctx>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use std::env;
+
     let mode = env::var("MODE").expect("MODE environment variable is not set");
 
-    if mode == "start" || mode == "main" {
+    if mode == "function" {
+        let ast_panic_result =
+            explore_ast_for_panic(executor, address_of_negated_path_exploration, binary_path);
+
+        if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
+            if let Some(panic_addr_str) = ast_panic_result.trim().split_whitespace().last() {
+                if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
+                    if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
+                        log!(executor.state.logger, ">>> The speculative AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
+                    } else {
+                        log!(
+                            executor.state.logger,
+                            "Could not parse panic address from AST result: '{}'",
+                            panic_addr_str
+                        );
+                    }
+                }
+            }
+
+            executor.solver.push();
+
+            let negative_conditional_flag_u64 = conditional_flag.concrete.to_u64() ^ 1;
+            let conditional_flag_symbolic = conditional_flag.symbolic.simplify();
+
+            // Handle both Bool and BV types
+            let (condition, conditional_flag_for_display) = match &conditional_flag.symbolic {
+                SymbolicVar::Bool(bool_expr) => {
+                    log!(
+                        executor.state.logger,
+                        "Conditional flag Bool simplified: {:?}",
+                        bool_expr.simplify()
+                    );
+
+                    let condition = if negative_conditional_flag_u64 == 0 {
+                        // We want the condition to be false
+                        bool_expr.not()
+                    } else {
+                        // We want the condition to be true
+                        bool_expr.clone()
+                    };
+
+                    // For display purposes, convert to string representation
+                    (condition, format!("{:?}", bool_expr.simplify()))
+                }
+                SymbolicVar::Int(bv) => {
+                    log!(
+                        executor.state.logger,
+                        "Conditional flag BV simplified: {:?}",
+                        bv.simplify()
+                    );
+
+                    let bit_width = bv.get_size();
+                    let expected_val =
+                        BV::from_u64(executor.context, negative_conditional_flag_u64, bit_width);
+                    let condition = bv._eq(&expected_val);
+
+                    // For display purposes, use the BV representation
+                    (condition, format!("{:?}", bv.simplify()))
+                }
+                _ => {
+                    return Err("Unsupported symbolic variable type for conditional flag"
+                        .to_string()
+                        .into());
+                }
+            };
+
+            // Debug constraints and assert them to solver (now void function)
+            add_constraints_from_vector(&executor, conditional_flag_symbolic);
+
+            // Assert the new condition
+            log!(
+                executor.state.logger,
+                "Asserting branch condition: {:?}",
+                condition.simplify()
+            );
+            executor.solver.assert(&condition);
+
+            match executor.solver.check() {
+                SatResult::Sat => {
+                    log!(executor.state.logger, "~~~~~~~~~~~");
+                    log!(
+                        executor.state.logger,
+                        "SATISFIABLE: Symbolic execution can lead to a panic function."
+                    );
+                    log!(executor.state.logger, "~~~~~~~~~~~");
+
+                    let model = executor.solver.get_model().unwrap();
+
+                    // Print symbolic lengths before final condition summary
+                    for (arg_name, sym) in executor.function_symbolic_arguments.iter() {
+                        if let SymbolicVar::Slice(slice) = sym {
+                            if let Some(len_val) = model.eval(&slice.length, true) {
+                                log!(
+                                    executor.state.logger,
+                                    "Slice '{}' has symbolic length = {}",
+                                    arg_name,
+                                    len_val
+                                );
+                            } else {
+                                log!(
+                                    executor.state.logger,
+                                    "Slice '{}' length could not be evaluated in the model",
+                                    arg_name
+                                );
+                            }
+                        }
+                    }
+
+                    log!(
+                        executor.state.logger,
+                        "To enter a panic function, the following conditions must be satisfied:"
+                    );
+
+                    let all_constraints_str = executor
+                        .solver
+                        .get_assertions()
+                        .iter()
+                        .map(|c| format!("{:?}", c))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+
+                    // Use the string representation we created above
+                    let cond_str = conditional_flag_for_display;
+                    let combined_constraints_str = format!("{} {}", all_constraints_str, cond_str);
+
+                    for (arg_name, sym_var) in executor.function_symbolic_arguments.iter() {
+                        match sym_var {
+                            SymbolicVar::Int(bv_var) => {
+                                // Skip duplicate capacity keys
+                                if arg_name.ends_with("_cap") {
+                                    continue;
+                                }
+
+                                let z3_name = bv_var.to_string();
+                                let is_constrained = combined_constraints_str.contains(&z3_name);
+                                let val = model
+                                    .eval(bv_var, true)
+                                    .map(|v| format!("{:?}", v))
+                                    .unwrap_or_else(|| "<?>".to_string());
+                                if is_constrained {
+                                    log!(executor.state.logger, "  {}: {}", arg_name, val);
+                                } else {
+                                    log!(
+                                        executor.state.logger,
+                                        "  {}: {} (unconstrained)",
+                                        arg_name,
+                                        val
+                                    );
+                                }
+                            }
+                            SymbolicVar::Slice(slice) => {
+                                let ptr_name = slice.pointer.to_string();
+                                let len_name = slice.length.to_string();
+                                let cap_name = slice.capacity.to_string();
+
+                                let is_ptr_constrained =
+                                    combined_constraints_str.contains(&ptr_name);
+                                let is_len_constrained =
+                                    combined_constraints_str.contains(&len_name);
+                                let is_cap_constrained =
+                                    combined_constraints_str.contains(&cap_name);
+
+                                let ptr_val = model
+                                    .eval(&slice.pointer, true)
+                                    .map(|v| format!("{:?}", v))
+                                    .unwrap_or_else(|| "<?>".to_string());
+                                let len_val = model
+                                    .eval(&slice.length, true)
+                                    .map(|v| format!("{:?}", v))
+                                    .unwrap_or_else(|| "<?>".to_string());
+                                let cap_val = model
+                                    .eval(&slice.capacity, true)
+                                    .map(|v| format!("{:?}", v))
+                                    .unwrap_or_else(|| "<?>".to_string());
+
+                                if is_ptr_constrained {
+                                    log!(executor.state.logger, "  {}__ptr: {}", arg_name, ptr_val);
+                                } else {
+                                    log!(
+                                        executor.state.logger,
+                                        "  {}__ptr: {} (unconstrained)",
+                                        arg_name,
+                                        ptr_val
+                                    );
+                                }
+
+                                if is_len_constrained {
+                                    log!(executor.state.logger, "  {}__len: {}", arg_name, len_val);
+                                } else {
+                                    log!(
+                                        executor.state.logger,
+                                        "  {}__len: {} (unconstrained)",
+                                        arg_name,
+                                        len_val
+                                    );
+                                }
+
+                                if is_cap_constrained {
+                                    log!(executor.state.logger, "  {}_cap: {}", arg_name, cap_val);
+                                } else {
+                                    log!(
+                                        executor.state.logger,
+                                        "  {}_cap: {} (unconstrained)",
+                                        arg_name,
+                                        cap_val
+                                    );
+                                }
+                            }
+                            _ => {
+                                log!(
+                                    executor.state.logger,
+                                    "  {}: <unsupported symbolic type>",
+                                    arg_name
+                                );
+                            }
+                        }
+                    }
+
+                    log!(executor.state.logger, "~~~~~~~~~~~");
+                }
+                SatResult::Unsat => {
+                    log!(executor.state.logger, "~~~~~~~~~~~");
+                    log!(
+                        executor.state.logger,
+                        "Branch to panic is UNSAT => no input can make that branch lead to panic"
+                    );
+                    log!(executor.state.logger, "~~~~~~~~~~~");
+                }
+                SatResult::Unknown => {
+                    log!(executor.state.logger, "Solver => Unknown feasibility");
+                }
+            }
+
+            executor.solver.pop(1);
+        } else {
+            log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
+        }
+    } else if mode == "start" || mode == "main" {
         let cf_reg = executor
             .state
             .cpu_state
@@ -75,7 +316,7 @@ pub fn evaluate_args_z3(
                     let slice_ptr_bv = executor
                         .state
                         .memory
-                        .read_u64(os_args_addr)
+                        .read_u64(os_args_addr, &mut executor.state.logger.clone())
                         .unwrap()
                         .symbolic
                         .to_bv(executor.context);
@@ -84,7 +325,7 @@ pub fn evaluate_args_z3(
                     let slice_len_bv = executor
                         .state
                         .memory
-                        .read_u64(os_args_addr + 8)
+                        .read_u64(os_args_addr + 8, &mut executor.state.logger.clone())
                         .unwrap()
                         .symbolic
                         .to_bv(executor.context);
@@ -104,7 +345,7 @@ pub fn evaluate_args_z3(
                         let str_data_ptr_bv = executor
                             .state
                             .memory
-                            .read_u64(string_struct_addr)
+                            .read_u64(string_struct_addr, &mut executor.state.logger.clone())
                             .unwrap()
                             .symbolic
                             .to_bv(executor.context);
@@ -117,7 +358,7 @@ pub fn evaluate_args_z3(
                         let str_data_len_bv = executor
                             .state
                             .memory
-                            .read_u64(string_struct_addr + 8)
+                            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone())
                             .unwrap()
                             .symbolic
                             .to_bv(executor.context);
@@ -171,164 +412,6 @@ pub fn evaluate_args_z3(
         }
         // 6) pop the solver context
         executor.solver.pop(1);
-    } else if mode == "function" {
-        // CALL TO THE AST EXPLORATION FOR A PANIC FUNCTION
-        let ast_panic_result =
-            explore_ast_for_panic(executor, address_of_negated_path_exploration, binary_path);
-
-        // If the AST exploration indicates a potential panic function...
-        if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
-            if let Some(panic_addr_str) = ast_panic_result.trim().split_whitespace().last() {
-                if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
-                    if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
-                        log!(executor.state.logger, ">>> The speculative AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
-                    } else {
-                        log!(
-                            executor.state.logger,
-                            "Could not parse panic address from AST result: '{}'",
-                            panic_addr_str
-                        );
-                    }
-                }
-            }
-
-            // 1) Push the solver context.
-            executor.solver.push();
-
-            // 2) Define the condition to explore the path not taken.
-            let negative_conditional_flag_u64 = conditional_flag.concrete.to_u64() ^ 1;
-            let conditional_flag_bv = conditional_flag.symbolic.to_bv(executor.context);
-            log!(
-                executor.state.logger,
-                "Conditional flag BV simplified: {:?}",
-                conditional_flag_bv.simplify()
-            );
-
-            let bit_width = conditional_flag_bv.get_size();
-            let expected_val =
-                BV::from_u64(executor.context, negative_conditional_flag_u64, bit_width);
-            let condition = conditional_flag_bv._eq(&expected_val);
-
-            // 3) Assert the condition in the solver.
-            executor.solver.assert(&condition);
-
-            // 4) check feasibility
-            match executor.solver.check() {
-                z3::SatResult::Sat => {
-                    log!(executor.state.logger, "~~~~~~~~~~~");
-                    log!(
-                        executor.state.logger,
-                        "SATISFIABLE: Symbolic execution can lead to a panic function."
-                    );
-                    log!(executor.state.logger, "~~~~~~~~~~~");
-
-                    let model = executor.solver.get_model().unwrap();
-
-                    for (arg_name, sym) in executor.function_symbolic_arguments.iter() {
-                        if let SymbolicVar::Slice(slice) = sym {
-                            if let Some(len_val) = model.eval(&slice.length, true) {
-                                log!(
-                                    executor.state.logger,
-                                    "Slice '{}' has symbolic length = {}",
-                                    arg_name,
-                                    len_val
-                                );
-                            } else {
-                                log!(
-                                    executor.state.logger,
-                                    "Slice '{}' length could not be evaluated in the model",
-                                    arg_name
-                                );
-                            }
-                        }
-                    }
-
-                    log!(
-                        executor.state.logger,
-                        "To enter a panic function, the following conditions must be satisfied:"
-                    );
-
-                    // Stringify the simplified conditional flag to detect which arguments are constrained
-                    let cond_str = format!("{:?}", conditional_flag_bv.simplify());
-
-                    for (arg_name, sym_var) in executor.function_symbolic_arguments.iter() {
-                        let is_constrained = cond_str.contains(arg_name);
-                        match sym_var {
-                            SymbolicVar::Int(bv_var) => {
-                                let val = model
-                                    .eval(bv_var, true)
-                                    .map(|v| format!("{:?}", v))
-                                    .unwrap_or_else(|| "<?>".to_string());
-                                if is_constrained {
-                                    log!(executor.state.logger, "  {}: {}", arg_name, val);
-                                } else {
-                                    log!(
-                                        executor.state.logger,
-                                        "  {}: {} (unconstrained)",
-                                        arg_name,
-                                        val
-                                    );
-                                }
-                            }
-
-                            SymbolicVar::Slice(slice) => {
-                                let ptr_val = model
-                                    .eval(&slice.pointer, true)
-                                    .map(|v| format!("{:?}", v))
-                                    .unwrap_or_else(|| "<?>".to_string());
-                                let len_val = model
-                                    .eval(&slice.length, true)
-                                    .map(|v| format!("{:?}", v))
-                                    .unwrap_or_else(|| "<?>".to_string());
-                                if is_constrained {
-                                    log!(executor.state.logger, "  {}__ptr: {}", arg_name, ptr_val);
-                                    log!(executor.state.logger, "  {}__len: {}", arg_name, len_val);
-                                } else {
-                                    log!(
-                                        executor.state.logger,
-                                        "  {}__ptr: {} (unconstrained)",
-                                        arg_name,
-                                        ptr_val
-                                    );
-                                    log!(
-                                        executor.state.logger,
-                                        "  {}__len: {} (unconstrained)",
-                                        arg_name,
-                                        len_val
-                                    );
-                                }
-                            }
-
-                            _ => {
-                                log!(
-                                    executor.state.logger,
-                                    "  {}: <unsupported symbolic type>",
-                                    arg_name
-                                );
-                            }
-                        }
-                    }
-
-                    log!(executor.state.logger, "~~~~~~~~~~~");
-                }
-
-                z3::SatResult::Unsat => {
-                    log!(executor.state.logger, "~~~~~~~~~~~");
-                    log!(
-                        executor.state.logger,
-                        "Branch to panic is UNSAT => no input can make that branch lead to panic"
-                    );
-                    log!(executor.state.logger, "~~~~~~~~~~~");
-                }
-                z3::SatResult::Unknown => {
-                    log!(executor.state.logger, "Solver => Unknown feasibility");
-                }
-            }
-            // 6) pop the solver context
-            executor.solver.pop(1);
-        } else {
-            log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
-        }
     } else {
         log!(
             executor.state.logger,

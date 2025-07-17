@@ -182,7 +182,7 @@ mod tests {
         let stored_value = executor
             .state
             .memory
-            .read_u32(0x1000)
+            .read_u32(0x1000, &mut executor.state.logger.clone())
             .expect("Failed to read memory value");
         assert_eq!(stored_value.concrete, ConcreteVar::Int(0xDEADBEEF));
 

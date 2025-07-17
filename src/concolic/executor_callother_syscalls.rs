@@ -465,7 +465,11 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
 
             // Handle act_ptr: Read and install new action if valid
             if act_ptr != 0 && executor.state.memory.is_valid_address(act_ptr) {
-                match executor.state.memory.read_sigaction(act_ptr) {
+                match executor
+                    .state
+                    .memory
+                    .read_sigaction(act_ptr, &mut executor.state.logger.clone())
+                {
                     Ok(new_action) => {
                         if new_action.handler.concrete == 0 {
                             log!(
@@ -562,7 +566,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let new_mask = executor
                     .state
                     .memory
-                    .read_u64(set_ptr)
+                    .read_u64(set_ptr, &mut executor.state.logger.clone())
                     .map_err(|e| format!("Failed to read new signal mask from memory: {}", e))?
                     .concrete
                     .to_u64();
@@ -834,7 +838,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let arg_ptr = executor
                     .state
                     .memory
-                    .read_u64(argv_ptr + (i * 8))
+                    .read_u64(argv_ptr + (i * 8), &mut executor.state.logger.clone())
                     .map_err(|e| format!("Failed to read argv_ptr at index {}: {}", i, e))?
                     .concrete;
                 if arg_ptr == ConcreteVar::Int(0) {
@@ -857,7 +861,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let env_ptr = executor
                     .state
                     .memory
-                    .read_u64(envp_ptr + (j * 8))
+                    .read_u64(envp_ptr + (j * 8), &mut executor.state.logger.clone())
                     .map_err(|e| format!("Failed to read envp_ptr at index {}: {}", j, e))?
                     .concrete;
                 if env_ptr == ConcreteVar::Int(0) {
@@ -1083,7 +1087,11 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
 
             if ss_ptr != 0 {
                 // If ss_ptr is not null, read the new signal stack structure from memory
-                let ss_sp = match executor.state.memory.read_u64(ss_ptr) {
+                let ss_sp = match executor
+                    .state
+                    .memory
+                    .read_u64(ss_ptr, &mut executor.state.logger.clone())
+                {
                     Ok(value) => value.concrete,
                     Err(e) => {
                         log!(
@@ -1096,7 +1104,11 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 };
                 log!(executor.state.logger.clone(), "Read ss_sp: 0x{:x}", ss_sp);
 
-                let ss_flags = match executor.state.memory.read_u32(ss_ptr + 8) {
+                let ss_flags = match executor
+                    .state
+                    .memory
+                    .read_u32(ss_ptr + 8, &mut executor.state.logger.clone())
+                {
                     Ok(value) => value.concrete.to_i32(),
                     Err(e) => {
                         log!(
@@ -1113,7 +1125,11 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     ss_flags
                 );
 
-                let ss_size = match executor.state.memory.read_u64(ss_ptr + 16) {
+                let ss_size = match executor
+                    .state
+                    .memory
+                    .read_u64(ss_ptr + 16, &mut executor.state.logger.clone())
+                {
                     Ok(value) => value.concrete,
                     Err(e) => {
                         log!(

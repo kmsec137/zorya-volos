@@ -616,7 +616,16 @@ impl<'ctx> CpuState<'ctx> {
                 if let SymbolicVar::LargeInt(ref mut large_symbolic) = reg.symbolic {
                     let mut remaining_bits = new_size as u64;
                     let mut current_bit_offset = bit_offset;
-                    let new_symbolic_bv = new_value.symbolic.to_bv_of_size(self.ctx, new_size);
+                    let new_symbolic_bv = new_value.symbolic.to_bv(self.ctx);
+
+                    // Then resize if needed:
+                    let new_symbolic_bv = if new_symbolic_bv.get_size() == new_size {
+                        new_symbolic_bv
+                    } else if new_symbolic_bv.get_size() > new_size {
+                        new_symbolic_bv.extract(new_size - 1, 0)
+                    } else {
+                        new_symbolic_bv.zero_ext(new_size - new_symbolic_bv.get_size())
+                    };
 
                     while remaining_bits > 0 {
                         let idx = (current_bit_offset / 64) as usize;
@@ -677,7 +686,16 @@ impl<'ctx> CpuState<'ctx> {
                     }
                 } else {
                     // Get the symbolic value as BV of the appropriate size
-                    let new_symbolic_bv = new_value.symbolic.to_bv_of_size(self.ctx, new_size);
+                    let new_symbolic_bv = new_value.symbolic.to_bv(self.ctx);
+
+                    // Then resize if needed
+                    let new_symbolic_bv = if new_symbolic_bv.get_size() == new_size {
+                        new_symbolic_bv
+                    } else if new_symbolic_bv.get_size() > new_size {
+                        new_symbolic_bv.extract(new_size - 1, 0)
+                    } else {
+                        new_symbolic_bv.zero_ext(new_size - new_symbolic_bv.get_size())
+                    };
 
                     // Ensure small symbolic values remain as Int
                     let new_symbolic_value = new_symbolic_bv
@@ -694,15 +712,19 @@ impl<'ctx> CpuState<'ctx> {
                         (1u64 << new_size) - 1
                     };
 
-                    let combined_symbolic = reg
-                        .symbolic
-                        .to_bv(self.ctx)
+                    let reg_symbolic_bv = reg.symbolic.to_bv_with_concrete(
+                        self.ctx,
+                        reg.concrete.to_u64(),
+                        full_reg_size as u32,
+                    );
+
+                    let combined_symbolic = reg_symbolic_bv
                         .bvand(&BV::from_u64(
                             self.ctx,
                             !(mask << bit_offset),
                             full_reg_size as u32,
-                        )) // Clear target bits
-                        .bvor(&new_symbolic_value); // Set the new symbolic value for those bits
+                        ))
+                        .bvor(&new_symbolic_value);
 
                     if combined_symbolic.get_z3_ast().is_null() {
                         println!("Error: Combined symbolic value is null");
