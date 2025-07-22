@@ -94,14 +94,28 @@ pub fn handle_float_nan(executor: &mut ConcolicExecutor, inst: Inst) -> Result<(
         // 2) CPU-concolic
         ConcolicEnum::CpuConcolicValue(ref cpu) => {
             let concrete_bits = cpu.concrete.to_u64();
-            let symbolic_bv = cpu.symbolic.to_bv(executor.context);
+            let symbolic_bv = match &cpu.symbolic {
+                SymbolicVar::Float(_f) => {
+                    // For float NaN detection, we need bit-level operations
+                    // Use the concrete bit representation as a BV
+                    BV::from_u64(executor.context, concrete_bits, cpu.concrete.get_size())
+                }
+                _ => cpu.symbolic.to_bv(executor.context),
+            };
             let size_bits = cpu.concrete.get_size();
             float_nan_check_simple(executor.context, concrete_bits, &symbolic_bv, size_bits)?
         }
         // 3) ConcolicVar
         ConcolicEnum::ConcolicVar(ref var) => {
             let concrete_bits = var.concrete.to_u64();
-            let symbolic_bv = var.symbolic.to_bv(executor.context);
+            let symbolic_bv = match &var.symbolic {
+                SymbolicVar::Float(_f) => {
+                    // For float NaN detection, we need bit-level operations
+                    // Use the concrete bit representation as a BV
+                    BV::from_u64(executor.context, concrete_bits, var.concrete.get_size())
+                }
+                _ => var.symbolic.to_bv(executor.context),
+            };
             let size_bits = var.concrete.get_size();
             float_nan_check_simple(executor.context, concrete_bits, &symbolic_bv, size_bits)?
         }

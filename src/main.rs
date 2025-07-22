@@ -22,7 +22,6 @@ use zorya::state::function_signatures::{
     GoFunctionArg, TypeDesc,
 };
 use zorya::state::memory_x86_64::MemoryValue;
-use zorya::state::{CpuState, MemoryX86_64};
 use zorya::target_info::GLOBAL_TARGET_INFO;
 
 macro_rules! log {
@@ -565,7 +564,7 @@ fn execute_instructions_from(
                 // This block is for find fast a SAT state for the negated path exploration
                 if negate_path_flag == "true" {
                     // broken-calculator 22f068 // omni-vuln4 0x2300b7 0x2300d7// crashme: 0x22b21a
-                    if current_rip == 0x22f068 {
+                    if current_rip == 0x22b21a {
                         log!(
                             executor.state.logger,
                             ">>> Evaluating arguments for the negated path exploration."
@@ -1780,24 +1779,56 @@ fn initialize_slice_argument<'a>(
             solver.assert(&slice.length.bvuge(&BV::from_u64(ctx, 1, 64)));
         }
 
-        // Handle CPU state writes
+        // Handle CPU state writes - Use EXISTING slice variables instead of creating new ones
         {
             let cpu = &mut executor.state.cpu_state.lock().unwrap();
-            let memory = &mut executor.state.memory;
-            write_value_to_reg_or_stack(ptr_reg, arg_name, "uintptr", cpu, conc, memory, ctx);
-            write_value_to_reg_or_stack(
-                len_reg,
-                &format!("{}_len", arg_name),
-                "int",
-                cpu,
-                conc,
-                memory,
-                ctx,
-            );
+
+            // Write pointer to ptr_reg using EXISTING slice.pointer variable
+            if let Some(ptr_offset) = cpu.resolve_offset_from_register_name(ptr_reg) {
+                let ptr_bit_width = cpu
+                    .register_map
+                    .get(&ptr_offset)
+                    .map(|(_, w)| *w)
+                    .unwrap_or(64);
+                if let Some(ptr_original) = cpu.get_register_by_offset(ptr_offset, ptr_bit_width) {
+                    conc.push(ptr_original.concrete.clone());
+
+                    // Use the EXISTING slice.pointer variable, don't create new one!
+                    let ptr_conc_var = ConcolicVar {
+                        concrete: ptr_original.concrete.clone(),
+                        symbolic: SymbolicVar::Int(slice.pointer.clone()), // <-- Use existing!
+                        ctx,
+                    };
+                    cpu.set_register_value_by_offset(ptr_offset, ptr_conc_var, ptr_bit_width)
+                        .ok();
+                }
+            }
+
+            // Write length to len_reg using EXISTING slice.length variable
+            if let Some(len_offset) = cpu.resolve_offset_from_register_name(len_reg) {
+                let len_bit_width = cpu
+                    .register_map
+                    .get(&len_offset)
+                    .map(|(_, w)| *w)
+                    .unwrap_or(64);
+                if let Some(len_original) = cpu.get_register_by_offset(len_offset, len_bit_width) {
+                    conc.push(len_original.concrete.clone());
+
+                    // Use the EXISTING slice.length variable, don't create new one!
+                    let len_conc_var = ConcolicVar {
+                        concrete: len_original.concrete.clone(),
+                        symbolic: SymbolicVar::Int(slice.length.clone()), // <-- Use existing!
+                        ctx,
+                    };
+                    cpu.set_register_value_by_offset(len_offset, len_conc_var, len_bit_width)
+                        .ok();
+                }
+            }
         }
 
         // Handle capacity register if present
         if regs.len() >= 3 {
+            // For capacity, we can create a new variable since it's separate from the main slice
             let cap_bv = BV::fresh_const(ctx, &format!("{}_cap", arg_name), 64);
             {
                 let solver = &mut executor.solver;
@@ -1805,16 +1836,28 @@ fn initialize_slice_argument<'a>(
             }
             {
                 let cpu = &mut executor.state.cpu_state.lock().unwrap();
-                let memory = &mut executor.state.memory;
-                write_value_to_reg_or_stack(
-                    regs[2],
-                    &format!("{}_cap", arg_name),
-                    "int",
-                    cpu,
-                    conc,
-                    memory,
-                    ctx,
-                );
+
+                // Write capacity to cap_reg using the NEW cap_bv variable
+                if let Some(cap_offset) = cpu.resolve_offset_from_register_name(regs[2]) {
+                    let cap_bit_width = cpu
+                        .register_map
+                        .get(&cap_offset)
+                        .map(|(_, w)| *w)
+                        .unwrap_or(64);
+                    if let Some(cap_original) =
+                        cpu.get_register_by_offset(cap_offset, cap_bit_width)
+                    {
+                        conc.push(cap_original.concrete.clone());
+
+                        let cap_conc_var = ConcolicVar {
+                            concrete: cap_original.concrete.clone(),
+                            symbolic: SymbolicVar::Int(cap_bv.clone()),
+                            ctx,
+                        };
+                        cpu.set_register_value_by_offset(cap_offset, cap_conc_var, cap_bit_width)
+                            .ok();
+                    }
+                }
             }
             executor
                 .function_symbolic_arguments
@@ -1823,7 +1866,7 @@ fn initialize_slice_argument<'a>(
 
         log!(
             executor.state.logger,
-            "Initialized slice '{}' ptr:{} len:{}",
+            "Initialized slice '{}' ptr:{} len:{} with UNIFIED variables",
             arg_name,
             ptr_reg,
             len_reg
@@ -1884,113 +1927,6 @@ fn initialize_single_register_slice<'a>(
                     arg_name
                 );
             }
-        }
-    }
-}
-
-fn write_value_to_reg_or_stack<'ctx>(
-    reg: &str,
-    arg_name: &str,
-    arg_type: &str,
-    cpu: &mut CpuState<'ctx>,
-    conc: &mut Vec<ConcreteVar>,
-    memory: &mut MemoryX86_64<'ctx>,
-    ctx: &'ctx z3::Context,
-) {
-    if reg.starts_with("STACK+") {
-        let offset_str = reg.trim_start_matches("STACK+0x");
-        if let Ok(offset) = u64::from_str_radix(offset_str, 16) {
-            let rsp_reg = cpu.resolve_offset_from_register_name("RSP");
-            if let Some(rsp_offset) = rsp_reg {
-                if let Some(rsp_val) = cpu.get_register_by_offset(rsp_offset, 64) {
-                    let rsp = rsp_val.concrete.to_u64();
-                    let addr = rsp + offset;
-
-                    // Create fresh symbolic constant based on the argument type
-                    let (concrete_val, symbolic_bv) = match arg_type {
-                        t if t == "int" || t == "int64" || t.contains("int") => {
-                            let fresh_bv =
-                                BV::fresh_const(ctx, &format!("{}_{}", arg_name, reg), 64);
-                            let concrete = fresh_bv.as_u64().unwrap_or(0x1337_1337_1337_1337); // default concrete value
-                            (concrete, fresh_bv)
-                        }
-                        t if t == "int32" => {
-                            let fresh_bv =
-                                BV::fresh_const(ctx, &format!("{}_{}", arg_name, reg), 32);
-                            let concrete = fresh_bv.as_u64().unwrap_or(0x13371337); // default concrete value
-                            (concrete, fresh_bv.zero_ext(32)) // extend to 64-bit for storage
-                        }
-                        t if t == "uint64" || t == "uintptr" => {
-                            let fresh_bv =
-                                BV::fresh_const(ctx, &format!("{}_{}", arg_name, reg), 64);
-                            let concrete = fresh_bv.as_u64().unwrap_or(0x1337_1337_1337_1337);
-                            (concrete, fresh_bv)
-                        }
-                        t if t == "uint32" => {
-                            let fresh_bv =
-                                BV::fresh_const(ctx, &format!("{}_{}", arg_name, reg), 32);
-                            let concrete = fresh_bv.as_u64().unwrap_or(0x13371337);
-                            (concrete, fresh_bv.zero_ext(32))
-                        }
-                        _ => {
-                            // Default to 64-bit integer for unknown types
-                            let fresh_bv =
-                                BV::fresh_const(ctx, &format!("{}_{}", arg_name, reg), 64);
-                            let concrete = fresh_bv.as_u64().unwrap_or(0x1337_1337_1337_1337);
-                            (concrete, fresh_bv)
-                        }
-                    };
-
-                    // Convert to bytes for memory storage
-                    let bytes = concrete_val.to_le_bytes();
-
-                    // Create symbolic representation for each byte
-                    let symbolic: Vec<Option<Arc<BV>>> = bytes
-                        .iter()
-                        .enumerate()
-                        .map(|(i, _)| {
-                            Some(Arc::new(
-                                symbolic_bv.extract(((i + 1) * 8 - 1) as u32, (i * 8) as u32),
-                            ))
-                        })
-                        .collect();
-
-                    // Write to memory at the calculated stack address
-                    memory
-                        .write_memory(addr, &bytes, &symbolic)
-                        .expect("Failed to write symbolic memory");
-                }
-            }
-        }
-    } else if let Some(off) = cpu.resolve_offset_from_register_name(reg) {
-        let width = cpu.register_map.get(&off).map(|(_, w)| *w).unwrap_or(64);
-        let orig = cpu.get_register_by_offset(off, width);
-        if let Some(orig_val) = orig {
-            conc.push(orig_val.concrete.clone());
-
-            // Create fresh symbolic constant for this register based on type
-            let symbolic_bv = match arg_type {
-                t if t == "int" || t == "int64" || t.contains("int") => {
-                    BV::fresh_const(ctx, &format!("{}_{}", arg_name, reg), 64)
-                }
-                t if t == "int32" => {
-                    BV::fresh_const(ctx, &format!("{}_{}", arg_name, reg), 32).zero_ext(32)
-                }
-                t if t == "uint64" || t == "uintptr" => {
-                    BV::fresh_const(ctx, &format!("{}_{}", arg_name, reg), 64)
-                }
-                t if t == "uint32" => {
-                    BV::fresh_const(ctx, &format!("{}_{}", arg_name, reg), 32).zero_ext(32)
-                }
-                _ => BV::fresh_const(ctx, &format!("{}_{}", arg_name, reg), 64),
-            };
-
-            let cv = ConcolicVar {
-                concrete: orig_val.concrete.clone(),
-                symbolic: SymbolicVar::Int(symbolic_bv),
-                ctx,
-            };
-            cpu.set_register_value_by_offset(off, cv, width).ok();
         }
     }
 }

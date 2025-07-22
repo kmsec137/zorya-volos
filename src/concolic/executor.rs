@@ -502,7 +502,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                             SymbolicVar::LargeInt(vec![combined_bv])
                         }
                     }
-                    _ => return Err("Unexpected symbolic type for Unique variable".to_string()),
+                    SymbolicVar::Float(f) => SymbolicVar::Float(f.clone()),
+                    SymbolicVar::Slice(s) => SymbolicVar::Slice(s.clone()),
                 };
 
                 let final_var = ConcolicVar {

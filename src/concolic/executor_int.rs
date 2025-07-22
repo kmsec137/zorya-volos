@@ -1337,8 +1337,8 @@ pub fn handle_int_sborrow(
     let bv0 = input0_var.get_symbolic_value_bv(executor.context);
     let bv1 = input1_var.get_symbolic_value_bv(executor.context);
 
-    // Correct signed overflow check explicitly:
-    let borrow_symbolic_bool = bv0.bvsub_no_overflow(&bv1).not(); // true for signed check
+    // For signed borrow/underflow, use bvsub_no_underflow and negate it
+    let borrow_symbolic_bool = bv0.bvsub_no_underflow(&bv1, true).not();
 
     // Explicitly convert the symbolic bool to a bitvector (0/1)
     let borrow_bv = borrow_symbolic_bool.ite(
@@ -1346,9 +1346,9 @@ pub fn handle_int_sborrow(
         &BV::from_u64(executor.context, 0, output_size_bits),
     );
 
-    // Concrete computation explicitly:
-    let input0_concrete = input0_var.get_concrete_value_signed().unwrap();
-    let input1_concrete = input1_var.get_concrete_value_signed().unwrap();
+    // Concrete computation - use signed arithmetic
+    let input0_concrete = input0_var.get_concrete_value() as i64;
+    let input1_concrete = input1_var.get_concrete_value() as i64;
     let (_, overflow_concrete) = input0_concrete.overflowing_sub(input1_concrete);
 
     let result_value = ConcolicVar::new_concrete_and_symbolic_int(

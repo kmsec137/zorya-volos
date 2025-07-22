@@ -380,17 +380,17 @@ pub fn add_constraints_from_vector<'ctx>(
 
     let assertions = executor.constraint_vector.clone();
 
-    log!(logger, "=== Z3 SIMPLIFIED CONSTRAINTS ===");
+    //log!(logger, "=== Z3 SIMPLIFIED CONSTRAINTS ===");
     // Display and collect Z3 simplified constraints
     let mut z3_simplified_constraints = Vec::new();
     for (i, constraint) in assertions.iter().enumerate() {
         let z3_simplified = constraint.simplify();
-        log!(
-            logger,
-            "Constraint #{} (Bool) Simplified with Z3: {:?}",
-            i + 1,
-            z3_simplified
-        );
+        // log!(
+        //     logger,
+        //     "Constraint #{} (Bool) Simplified with Z3: {:?}",
+        //     i + 1,
+        //     z3_simplified
+        // );
         z3_simplified_constraints.push(z3_simplified);
     }
 

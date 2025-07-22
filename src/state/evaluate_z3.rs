@@ -50,7 +50,7 @@ pub fn evaluate_args_z3<'ctx>(
             let conditional_flag_symbolic = conditional_flag.symbolic.simplify();
 
             // Handle both Bool and BV types
-            let (condition, conditional_flag_for_display) = match &conditional_flag.symbolic {
+            let (condition, _conditional_flag_for_display) = match &conditional_flag.symbolic {
                 SymbolicVar::Bool(bool_expr) => {
                     log!(
                         executor.state.logger,
@@ -113,44 +113,25 @@ pub fn evaluate_args_z3<'ctx>(
 
                     let model = executor.solver.get_model().unwrap();
 
-                    // Print symbolic lengths before final condition summary
-                    for (arg_name, sym) in executor.function_symbolic_arguments.iter() {
-                        if let SymbolicVar::Slice(slice) = sym {
-                            if let Some(len_val) = model.eval(&slice.length, true) {
-                                log!(
-                                    executor.state.logger,
-                                    "Slice '{}' has symbolic length = {}",
-                                    arg_name,
-                                    len_val
-                                );
-                            } else {
-                                log!(
-                                    executor.state.logger,
-                                    "Slice '{}' length could not be evaluated in the model",
-                                    arg_name
-                                );
-                            }
-                        }
-                    }
-
                     log!(
                         executor.state.logger,
                         "To enter a panic function, the following conditions must be satisfied:"
                     );
 
-                    let all_constraints_str = executor
-                        .solver
-                        .get_assertions()
-                        .iter()
-                        .map(|c| format!("{:?}", c))
-                        .collect::<Vec<_>>()
-                        .join(" ");
+                    // Skip constraint formatting entirely and go directly to Z3 variable evaluation
+                    log!(
+                        executor.state.logger,
+                        "=== EVALUATING TRACKED Z3 VARIABLES ==="
+                    );
 
-                    // Use the string representation we created above
-                    let cond_str = conditional_flag_for_display;
-                    let combined_constraints_str = format!("{} {}", all_constraints_str, cond_str);
-
+                    // Extract and evaluate the actual Z3 variables from symbolic arguments
                     for (arg_name, sym_var) in executor.function_symbolic_arguments.iter() {
+                        log!(
+                            executor.state.logger,
+                            "Processing symbolic argument '{}':",
+                            arg_name
+                        );
+
                         match sym_var {
                             SymbolicVar::Int(bv_var) => {
                                 // Skip duplicate capacity keys
@@ -158,91 +139,173 @@ pub fn evaluate_args_z3<'ctx>(
                                     continue;
                                 }
 
-                                let z3_name = bv_var.to_string();
-                                let is_constrained = combined_constraints_str.contains(&z3_name);
-                                let val = model
-                                    .eval(bv_var, true)
-                                    .map(|v| format!("{:?}", v))
-                                    .unwrap_or_else(|| "<?>".to_string());
-                                if is_constrained {
-                                    log!(executor.state.logger, "  {}: {}", arg_name, val);
-                                } else {
-                                    log!(
-                                        executor.state.logger,
-                                        "  {}: {} (unconstrained)",
-                                        arg_name,
-                                        val
-                                    );
+                                // Get the actual Z3 variable name
+                                let z3_var_name = bv_var.to_string();
+                                log!(executor.state.logger, "  Z3 Int variable: {}", z3_var_name);
+
+                                // Evaluate it directly (no constraint checking)
+                                match model.eval(bv_var, true) {
+                                    Some(val) => {
+                                        log!(
+                                            executor.state.logger,
+                                            "    {} = {}",
+                                            z3_var_name,
+                                            val
+                                        );
+
+                                        // Also show hex for potential addresses/pointers
+                                        if let Some(u64_val) = val.as_u64() {
+                                            if z3_var_name.contains("ptr")
+                                                || z3_var_name.contains("R8")
+                                            {
+                                                log!(
+                                                    executor.state.logger,
+                                                    "      (hex: 0x{:x})",
+                                                    u64_val
+                                                );
+                                            } else {
+                                                log!(
+                                                    executor.state.logger,
+                                                    "      (decimal: {})",
+                                                    u64_val
+                                                );
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        log!(
+                                            executor.state.logger,
+                                            "    {} = <could not evaluate>",
+                                            z3_var_name
+                                        );
+                                    }
                                 }
                             }
                             SymbolicVar::Slice(slice) => {
-                                let ptr_name = slice.pointer.to_string();
-                                let len_name = slice.length.to_string();
-                                let cap_name = slice.capacity.to_string();
+                                // Get the actual Z3 variable names for each component
+                                let ptr_var_name = slice.pointer.to_string();
+                                let len_var_name = slice.length.to_string();
+                                let cap_var_name = slice.capacity.to_string();
 
-                                let is_ptr_constrained =
-                                    combined_constraints_str.contains(&ptr_name);
-                                let is_len_constrained =
-                                    combined_constraints_str.contains(&len_name);
-                                let is_cap_constrained =
-                                    combined_constraints_str.contains(&cap_name);
+                                log!(executor.state.logger, "  Z3 Slice variables:");
+                                log!(executor.state.logger, "    pointer: {}", ptr_var_name);
+                                log!(executor.state.logger, "    length:  {}", len_var_name);
+                                log!(executor.state.logger, "    capacity: {}", cap_var_name);
 
-                                let ptr_val = model
-                                    .eval(&slice.pointer, true)
-                                    .map(|v| format!("{:?}", v))
-                                    .unwrap_or_else(|| "<?>".to_string());
-                                let len_val = model
-                                    .eval(&slice.length, true)
-                                    .map(|v| format!("{:?}", v))
-                                    .unwrap_or_else(|| "<?>".to_string());
-                                let cap_val = model
-                                    .eval(&slice.capacity, true)
-                                    .map(|v| format!("{:?}", v))
-                                    .unwrap_or_else(|| "<?>".to_string());
-
-                                if is_ptr_constrained {
-                                    log!(executor.state.logger, "  {}__ptr: {}", arg_name, ptr_val);
-                                } else {
-                                    log!(
-                                        executor.state.logger,
-                                        "  {}__ptr: {} (unconstrained)",
-                                        arg_name,
-                                        ptr_val
-                                    );
+                                // Evaluate each component directly (no constraint checking)
+                                match model.eval(&slice.pointer, true) {
+                                    Some(val) => {
+                                        log!(
+                                            executor.state.logger,
+                                            "    {} = {}",
+                                            ptr_var_name,
+                                            val
+                                        );
+                                        if let Some(u64_val) = val.as_u64() {
+                                            log!(
+                                                executor.state.logger,
+                                                "      (hex: 0x{:x})",
+                                                u64_val
+                                            );
+                                        }
+                                    }
+                                    None => {
+                                        log!(
+                                            executor.state.logger,
+                                            "    {} = <could not evaluate>",
+                                            ptr_var_name
+                                        );
+                                    }
                                 }
 
-                                if is_len_constrained {
-                                    log!(executor.state.logger, "  {}__len: {}", arg_name, len_val);
-                                } else {
-                                    log!(
-                                        executor.state.logger,
-                                        "  {}__len: {} (unconstrained)",
-                                        arg_name,
-                                        len_val
-                                    );
+                                match model.eval(&slice.length, true) {
+                                    Some(val) => {
+                                        log!(
+                                            executor.state.logger,
+                                            "    {} = {}",
+                                            len_var_name,
+                                            val
+                                        );
+                                        if let Some(u64_val) = val.as_u64() {
+                                            log!(
+                                                executor.state.logger,
+                                                "      (decimal: {})",
+                                                u64_val
+                                            );
+                                        }
+                                    }
+                                    None => {
+                                        log!(
+                                            executor.state.logger,
+                                            "    {} = <could not evaluate>",
+                                            len_var_name
+                                        );
+                                    }
                                 }
 
-                                if is_cap_constrained {
-                                    log!(executor.state.logger, "  {}_cap: {}", arg_name, cap_val);
-                                } else {
-                                    log!(
-                                        executor.state.logger,
-                                        "  {}_cap: {} (unconstrained)",
-                                        arg_name,
-                                        cap_val
-                                    );
+                                match model.eval(&slice.capacity, true) {
+                                    Some(val) => {
+                                        log!(
+                                            executor.state.logger,
+                                            "    {} = {}",
+                                            cap_var_name,
+                                            val
+                                        );
+                                        if let Some(u64_val) = val.as_u64() {
+                                            log!(
+                                                executor.state.logger,
+                                                "      (decimal: {})",
+                                                u64_val
+                                            );
+                                        }
+                                    }
+                                    None => {
+                                        log!(
+                                            executor.state.logger,
+                                            "    {} = <could not evaluate>",
+                                            cap_var_name
+                                        );
+                                    }
+                                }
+                            }
+                            SymbolicVar::Bool(bool_var) => {
+                                let z3_var_name = bool_var.to_string();
+                                log!(executor.state.logger, "  Z3 Bool variable: {}", z3_var_name);
+
+                                match model.eval(bool_var, true) {
+                                    Some(val) => {
+                                        log!(
+                                            executor.state.logger,
+                                            "    {} = {}",
+                                            z3_var_name,
+                                            val
+                                        );
+                                    }
+                                    None => {
+                                        log!(
+                                            executor.state.logger,
+                                            "    {} = <could not evaluate>",
+                                            z3_var_name
+                                        );
+                                    }
                                 }
                             }
                             _ => {
                                 log!(
                                     executor.state.logger,
-                                    "  {}: <unsupported symbolic type>",
+                                    "  <unsupported symbolic type for: {}>",
                                     arg_name
                                 );
                             }
                         }
+
+                        log!(executor.state.logger, ""); // Empty line for readability
                     }
 
+                    log!(
+                        executor.state.logger,
+                        "=== END TRACKED Z3 VARIABLE EVALUATION ==="
+                    );
                     log!(executor.state.logger, "~~~~~~~~~~~");
                 }
                 SatResult::Unsat => {

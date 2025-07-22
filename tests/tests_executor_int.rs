@@ -17,7 +17,7 @@ mod tests {
             },
             ConcolicVar, Logger,
         },
-        executor::SymbolicVar,
+        executor::{ConcreteVar, SymbolicVar},
     };
 
     use super::*;
@@ -262,8 +262,8 @@ mod tests {
         let result_var = executor.unique_variables.get("Unique(0x11c)").unwrap();
         assert_eq!(
             result_var.concrete,
-            zorya::concolic::ConcreteVar::Int(0),
-            "The result of 10 == 20 should be 0."
+            ConcreteVar::Bool(false),
+            "The result of 10 == 20 should be false."
         );
     }
 
@@ -368,7 +368,7 @@ mod tests {
         let result_var = executor.unique_variables.get("Unique(0x122)").unwrap();
         assert_eq!(
             result_var.concrete,
-            zorya::concolic::ConcreteVar::Int(1),
+            ConcreteVar::Bool(true),
             "The result of 10 < 20 should be true."
         );
 
@@ -415,7 +415,7 @@ mod tests {
         let result_var = executor.unique_variables.get("Unique(0x125)").unwrap();
         assert_eq!(
             result_var.concrete,
-            zorya::concolic::ConcreteVar::Int(0),
+            zorya::concolic::ConcreteVar::Bool(false),
             "The result of 30 < 10 should be false."
         );
 
@@ -462,7 +462,7 @@ mod tests {
         let result_var = executor.unique_variables.get("Unique(0x128)").unwrap();
         assert_eq!(
             result_var.concrete,
-            zorya::concolic::ConcreteVar::Int(0),
+            zorya::concolic::ConcreteVar::Bool(false),
             "The result of 5 < 3 should be false."
         );
     }
@@ -736,17 +736,18 @@ mod tests {
     fn test_handle_int_sborrow() {
         let mut executor = setup_executor();
 
-        // Test case 1: 10 - 20 underflows
-        let symbolic_var0 = SymbolicVar::Int(BV::from_u64(&executor.context, 10, 64));
-        let symbolic_var1 = SymbolicVar::Int(BV::from_u64(&executor.context, 20, 64));
+        // Test case 1: INT64_MIN - 1 should underflow (signed underflow)
+        let min_value = i64::MIN as u64; // -9223372036854775808
+        let symbolic_var0 = SymbolicVar::Int(BV::from_u64(&executor.context, min_value, 64));
+        let symbolic_var1 = SymbolicVar::Int(BV::from_u64(&executor.context, 1, 64));
         let input0 = ConcolicVar::new_concrete_and_symbolic_int(
-            10,
+            min_value,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
             64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
-            20,
+            1,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
             64,
@@ -780,20 +781,22 @@ mod tests {
         assert_eq!(
             result_var.concrete,
             zorya::concolic::ConcreteVar::Int(1),
-            "The result of 10 - 20 should underflow."
+            "The result of INT64_MIN - 1 should underflow."
         );
 
-        // Test case 2: 20 - 10 does not underflow
-        let symbolic_var0 = SymbolicVar::Int(BV::from_u64(&executor.context, 20, 64));
-        let symbolic_var1 = SymbolicVar::Int(BV::from_u64(&executor.context, 10, 64));
+        // Test case 2: INT64_MAX - (-1) should underflow (signed overflow in positive direction)
+        let max_value = i64::MAX as u64; // 9223372036854775807
+        let neg_one = (-1i64) as u64; // 18446744073709551615 (as unsigned representation)
+        let symbolic_var0 = SymbolicVar::Int(BV::from_u64(&executor.context, max_value, 64));
+        let symbolic_var1 = SymbolicVar::Int(BV::from_u64(&executor.context, neg_one, 64));
         let input0 = ConcolicVar::new_concrete_and_symbolic_int(
-            20,
+            max_value,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
             64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
-            10,
+            neg_one,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
             64,
@@ -824,6 +827,53 @@ mod tests {
         let result = handle_int_sborrow(&mut executor, instruction);
         assert!(result.is_ok(), "The signed borrow check should succeed.");
         let result_var = executor.unique_variables.get("Unique(0x13d)").unwrap();
+        assert_eq!(
+            result_var.concrete,
+            zorya::concolic::ConcreteVar::Int(1),
+            "The result of INT64_MAX - (-1) should overflow."
+        );
+
+        // Test case 3: 20 - 10 does not underflow (normal case)
+        let symbolic_var0 = SymbolicVar::Int(BV::from_u64(&executor.context, 20, 64));
+        let symbolic_var1 = SymbolicVar::Int(BV::from_u64(&executor.context, 10, 64));
+        let input0 = ConcolicVar::new_concrete_and_symbolic_int(
+            20,
+            symbolic_var0.to_bv(&executor.context),
+            &executor.context,
+            64,
+        );
+        let input1 = ConcolicVar::new_concrete_and_symbolic_int(
+            10,
+            symbolic_var1.to_bv(&executor.context),
+            &executor.context,
+            64,
+        );
+        executor
+            .unique_variables
+            .insert("Unique(0x13e)".to_string(), input0);
+        executor
+            .unique_variables
+            .insert("Unique(0x13f)".to_string(), input1);
+        let instruction = Inst {
+            opcode: Opcode::IntSBorrow,
+            output: Some(Varnode {
+                var: Var::Unique(0x140),
+                size: Size::Byte,
+            }),
+            inputs: vec![
+                Varnode {
+                    var: Var::Unique(0x13e),
+                    size: Size::Quad,
+                },
+                Varnode {
+                    var: Var::Unique(0x13f),
+                    size: Size::Quad,
+                },
+            ],
+        };
+        let result = handle_int_sborrow(&mut executor, instruction);
+        assert!(result.is_ok(), "The signed borrow check should succeed.");
+        let result_var = executor.unique_variables.get("Unique(0x140)").unwrap();
         assert_eq!(
             result_var.concrete,
             zorya::concolic::ConcreteVar::Int(0),
