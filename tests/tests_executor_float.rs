@@ -7,7 +7,7 @@ use zorya::state::State;
 mod tests {
     use parser::parser::Size;
     use std::collections::BTreeMap;
-    use z3::ast::{Float, BV};
+    use z3::ast::Float;
     use zorya::concolic::executor_float::{
         handle_float_equal, handle_float_less, handle_float_nan,
     };
@@ -21,7 +21,7 @@ mod tests {
         let logger = Logger::new("execution_log.txt", false).expect("Failed to create logger");
         let trace_logger =
             Logger::new("trace_log.txt", true).expect("Failed to create trace logger");
-        let mut state = State::default_for_tests(ctx, logger).expect("Failed to create state.");
+        let state = State::default_for_tests(ctx, logger).expect("Failed to create state.");
 
         // Initialize memory regions for float tests if needed
         let test_regions = vec![

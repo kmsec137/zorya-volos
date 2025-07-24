@@ -127,7 +127,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 bytes_read as u64,
                 BV::from_u64(executor.context, bytes_read as u64, 64),
                 executor.context,
-                64,
             );
             cpu_state_guard
                 .set_register_value_by_offset(rax_offset, bytes_read_concolic, 64)
@@ -206,7 +205,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 bytes_written as u64,
                 BV::from_u64(executor.context, bytes_written as u64, 64),
                 executor.context,
-                64,
             );
             cpu_state_guard
                 .set_register_value_by_offset(rax_offset, bytes_written_concolic, 64)
@@ -259,7 +257,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 fd as u64,
                 BV::from_u64(executor.context, fd as u64, 64),
                 executor.context,
-                64,
             );
             cpu_state_guard
                 .set_register_value_by_offset(rax_offset, fd_concolic, 64)
@@ -303,7 +300,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 0,
                 BV::from_u64(executor.context, 0, 64),
                 executor.context,
-                64,
             );
             cpu_state_guard
                 .set_register_value_by_offset(rax_offset, success_concolic, 64)
@@ -379,7 +375,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     SymbolicVar::new_int(result_addr.try_into().unwrap(), executor.context, 64)
                         .to_bv(executor.context),
                     executor.context,
-                    64,
                 ),
                 64,
             )?;
@@ -503,7 +498,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         0,
                         BV::from_u64(executor.context, 0, 64),
                         executor.context,
-                        64,
                     ),
                     64,
                 )
@@ -592,7 +586,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         0,
                         BV::from_u64(executor.context, 0, 64),
                         executor.context,
-                        64,
                     ),
                     64,
                 )
@@ -736,7 +729,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     0,
                     SymbolicVar::new_int(0, executor.context, 64).to_bv(executor.context),
                     executor.context,
-                    64,
                 ),
                 64,
             )?;
@@ -770,7 +762,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 pid as u64,
                 BV::from_u64(executor.context, pid as u64, 64),
                 executor.context,
-                64,
             );
             cpu_state_guard
                 .set_register_value_by_offset(rax_offset, pid_concolic, 64)
@@ -997,7 +988,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 0,
                 BV::from_u64(executor.context, 0, 64),
                 executor.context,
-                64,
             );
             cpu_state_guard
                 .set_register_value_by_offset(rax_offset, rax_value, 64)
@@ -1244,7 +1234,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     0,
                     SymbolicVar::new_int(0, executor.context, 64).to_bv(executor.context),
                     executor.context,
-                    64,
                 ),
                 64,
             )?;
@@ -1287,9 +1276,15 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 .get_concrete_value()
                 .map_err(|e| e.to_string())?;
 
-            let addr_concolic = cpu_state_guard
-                .get_concolic_register_by_offset(0x30, 64)
+            let addr_concolic_reg = cpu_state_guard
+                .get_register_by_offset(0x30, 64)
                 .ok_or("Failed to retrieve address from register")?;
+
+            let addr_concolic = ConcolicVar::new_concrete_and_symbolic_int(
+                addr_concolic_reg.concrete.to_u64(),
+                addr_concolic_reg.symbolic.to_bv(executor.context),
+                executor.context,
+            );
 
             log!(
                 executor.state.logger.clone(),
@@ -1373,7 +1368,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     tid,
                     SymbolicVar::new_int(tid as i64, executor.context, 64).to_bv(executor.context),
                     executor.context,
-                    64,
                 ),
                 64,
             )?;
@@ -1468,10 +1462,10 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     let futex_uaddr = uaddr as u64;
                     let futex_val = val as usize;
 
-                    executor
-                        .state
-                        .futex_manager
-                        .futex_wake(futex_uaddr, futex_val)?;
+                    executor.state.futex_manager.futex_wake(
+                        futex_uaddr,
+                        futex_val.try_into().map_err(|_| "Invalid futex_val")?,
+                    )?;
 
                     drop(cpu_state_guard);
 
@@ -1744,7 +1738,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                             -1i64 as u64,
                             BV::from_u64(executor.context, (-1i64) as u64, 64),
                             executor.context,
-                            64,
                         );
                         cpu_state_guard
                             .set_register_value_by_offset(rax_offset, rax_value, 64)
@@ -1780,7 +1773,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 0,
                 BV::from_u64(executor.context, 0, 64),
                 executor.context,
-                64,
             );
             cpu_state_guard
                 .set_register_value_by_offset(rax_offset, rax_value, 64)

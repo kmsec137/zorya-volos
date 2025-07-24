@@ -59,13 +59,11 @@ mod tests {
             10,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             20,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -115,13 +113,11 @@ mod tests {
             30,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             10,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -169,13 +165,11 @@ mod tests {
             5,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             3,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -223,13 +217,11 @@ mod tests {
             10,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             20,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -277,13 +269,11 @@ mod tests {
             10,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             20,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -332,13 +322,11 @@ mod tests {
             10,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             20,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -379,13 +367,11 @@ mod tests {
             30,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             10,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -426,13 +412,11 @@ mod tests {
             5,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             3,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -478,13 +462,11 @@ mod tests {
             10,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             20,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -527,13 +509,11 @@ mod tests {
             10,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             5,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -580,13 +560,11 @@ mod tests {
             10,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             20,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -634,13 +612,11 @@ mod tests {
             10,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             20,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -691,13 +667,11 @@ mod tests {
             10000000000000000000,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             10000000000000000000,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -744,13 +718,11 @@ mod tests {
             min_value,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             1,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -793,13 +765,11 @@ mod tests {
             max_value,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             neg_one,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -840,13 +810,11 @@ mod tests {
             20,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             10,
             symbolic_var1.to_bv(&executor.context),
             &executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -891,7 +859,6 @@ mod tests {
             255,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            8,
         );
         executor
             .unique_variables
@@ -922,7 +889,6 @@ mod tests {
             65535,
             symbolic_var0.to_bv(&executor.context),
             &executor.context,
-            16,
         );
         executor
             .unique_variables

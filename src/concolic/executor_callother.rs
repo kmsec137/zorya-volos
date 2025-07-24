@@ -1,6 +1,6 @@
 /// Focuses on implementing the execution of the CALLOTHER opcode from Ghidra's Pcode specification
 /// This implementation relies on Ghidra 11.0.1 with the specfiles in /specfiles
-use crate::{executor::ConcolicExecutor, state::memory_x86_64::MemoryValue};
+use crate::{concolic::ConcreteVar, executor::ConcolicExecutor, state::memory_x86_64::MemoryValue};
 use parser::parser::{Inst, Opcode, Var, Varnode};
 use std::{
     io::Write,
@@ -327,7 +327,6 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
             )
             .to_bv(executor.context),
             executor.context,
-            64,
         ),
     )?;
 
@@ -380,19 +379,8 @@ pub fn handle_aesenc(executor: &mut ConcolicExecutor, instruction: Inst) -> Resu
     let result_concrete =
         state_after_mixcolumns.concrete.to_u64() ^ round_key_var.get_concrete_value();
 
-    // Create a new concolic variable for the result state
-    let result_size_bits = instruction
-        .output
-        .as_ref()
-        .unwrap()
-        .size
-        .to_bitvector_size() as u32;
-    let result_value = ConcolicVar::new_concrete_and_symbolic_int(
-        result_concrete,
-        result_state,
-        executor.context,
-        result_size_bits,
-    );
+    let result_value =
+        ConcolicVar::new_concrete_and_symbolic_int(result_concrete, result_state, executor.context);
 
     // Set the result in the CPU state
     executor.handle_output(instruction.output.as_ref(), result_value)?;
@@ -403,34 +391,134 @@ pub fn handle_aesenc(executor: &mut ConcolicExecutor, instruction: Inst) -> Resu
 // Mock function to simulate the ShiftRows step in AES
 fn shift_rows<'a>(input: ConcolicEnum<'a>, executor: &mut ConcolicExecutor<'a>) -> ConcolicVar<'a> {
     // Typically, this would permute the bytes in the state matrix
-    let symbolic = rotate_left(input.get_symbolic_value_bv(executor.context), 8); // Rotate left for simplicity
-    let concrete = input.get_concrete_value().rotate_left(8);
-    ConcolicVar::new_concrete_and_symbolic_int(concrete, symbolic, executor.context, 128)
+    let symbolic_bv = rotate_left(input.get_symbolic_value_bv(executor.context), 8); // Rotate left for simplicity
+    let concrete_u64 = input.get_concrete_value().rotate_left(8);
+
+    // Convert single BV to Vec<BV> for large int representation
+    // For AES, we typically work with 128-bit values, so we can split into 2x64-bit chunks
+    let symbolic_vec = if symbolic_bv.get_size() > 64 {
+        vec![
+            symbolic_bv.extract(63, 0),   // Lower 64 bits
+            symbolic_bv.extract(127, 64), // Upper 64 bits
+        ]
+    } else {
+        vec![symbolic_bv] // Single 64-bit value
+    };
+
+    // Convert single u64 to Vec<u64> for large int representation
+    // Since concrete_u64 is a single u64, we can't extract upper bits
+    let concrete_vec = vec![concrete_u64]; // Just use the single 64-bit value
+
+    ConcolicVar::new_concrete_and_symbolic_large_int(concrete_vec, symbolic_vec, executor.context)
 }
 
 // Mock function to simulate the SubBytes step in AES
 fn sub_bytes<'a>(input: ConcolicVar<'a>, executor: &mut ConcolicExecutor<'a>) -> ConcolicVar<'a> {
-    // Typically, this would apply a non-linear byte substitution using an S-box
-    let symbolic = input.symbolic.to_bv(executor.context).bvnot(); // Not operation for simplicity
-    let concrete = !input.concrete.to_u64();
-    ConcolicVar::new_concrete_and_symbolic_int(concrete, symbolic, input.ctx, 128)
+    match (&input.concrete, &input.symbolic) {
+        (ConcreteVar::LargeInt(concrete_vec), SymbolicVar::LargeInt(symbolic_vec)) => {
+            // Apply operation to each chunk
+            let new_concrete: Vec<u64> = concrete_vec.iter().map(|&val| !val).collect();
+            let new_symbolic: Vec<BV> = symbolic_vec.iter().map(|bv| bv.bvnot()).collect();
+
+            ConcolicVar::new_concrete_and_symbolic_large_int(
+                new_concrete,
+                new_symbolic,
+                executor.context,
+            )
+        }
+        _ => {
+            // Handle case where input is not a LargeInt - convert it first
+            let symbolic_bv = input.symbolic.to_bv(executor.context).bvnot();
+            let concrete_u64 = !input.concrete.to_u64();
+
+            // Convert to large int format
+            let symbolic_vec = if symbolic_bv.get_size() <= 64 {
+                vec![symbolic_bv]
+            } else {
+                vec![
+                    symbolic_bv.extract(63, 0),   // Lower 64 bits
+                    symbolic_bv.extract(127, 64), // Upper 64 bits
+                ]
+            };
+
+            // For a single u64, we only have one chunk
+            let concrete_vec = vec![concrete_u64];
+
+            ConcolicVar::new_concrete_and_symbolic_large_int(
+                concrete_vec,
+                symbolic_vec,
+                executor.context,
+            )
+        }
+    }
 }
 
 // Mock function to simulate the MixColumns step in AES
 fn mix_columns<'a>(input: ConcolicVar<'a>, executor: &mut ConcolicExecutor<'a>) -> ConcolicVar<'a> {
-    // Typically, this would perform matrix multiplication in GF(2^8)
-    let symbolic = input
-        .symbolic
-        .to_bv(executor.context)
-        .bvmul(&BV::from_u64(input.ctx, 0x02, 128)); // Multiply for simplicity
-    let concrete = input.concrete.to_u64() * 2;
-    ConcolicVar::new_concrete_and_symbolic_int(concrete, symbolic, input.ctx, 128)
+    match (&input.concrete, &input.symbolic) {
+        (ConcreteVar::LargeInt(concrete_vec), SymbolicVar::LargeInt(symbolic_vec)) => {
+            // Apply multiplication to each chunk
+            let new_concrete: Vec<u64> = concrete_vec
+                .iter()
+                .map(|&val| val.wrapping_mul(2))
+                .collect();
+            let new_symbolic: Vec<BV> = symbolic_vec
+                .iter()
+                .map(|bv| bv.bvmul(&BV::from_u64(executor.context, 2, bv.get_size())))
+                .collect();
+
+            ConcolicVar::new_concrete_and_symbolic_large_int(
+                new_concrete,
+                new_symbolic,
+                executor.context,
+            )
+        }
+        _ => {
+            // Handle case where input is not a LargeInt - convert it first
+            let symbolic_bv = input.symbolic.to_bv(executor.context).bvmul(&BV::from_u64(
+                executor.context,
+                2,
+                input.symbolic.to_bv(executor.context).get_size(),
+            ));
+            let concrete_u64 = input.concrete.to_u64().wrapping_mul(2);
+
+            // Convert to large int format
+            let symbolic_vec = if symbolic_bv.get_size() <= 64 {
+                vec![symbolic_bv]
+            } else {
+                vec![
+                    symbolic_bv.extract(63, 0),   // Lower 64 bits
+                    symbolic_bv.extract(127, 64), // Upper 64 bits
+                ]
+            };
+
+            // For a single u64, we only have one chunk
+            let concrete_vec = vec![concrete_u64];
+
+            ConcolicVar::new_concrete_and_symbolic_large_int(
+                concrete_vec,
+                symbolic_vec,
+                executor.context,
+            )
+        }
+    }
 }
 
-// Helper functions for bit manipulations
-fn rotate_left(bv: BV, bits: u32) -> BV {
-    let size = bv.get_size() as u32;
-    bv.extract(size - 1, bits).concat(&bv.extract(bits - 1, 0))
+// Enhanced rotate_left function that works with large integers
+fn rotate_left<'a>(bv: BV<'a>, positions: u32) -> BV<'a> {
+    let bit_width = bv.get_size();
+    let actual_positions = positions % bit_width; // Handle cases where positions > bit_width
+
+    if actual_positions == 0 {
+        return bv;
+    }
+
+    // Extract the parts to rotate
+    let upper_part = bv.extract(bit_width - 1, bit_width - actual_positions);
+    let lower_part = bv.extract(bit_width - actual_positions - 1, 0);
+
+    // Concatenate: lower_part || upper_part
+    lower_part.concat(&upper_part)
 }
 
 pub fn handle_cpuid_basic_info(
@@ -593,7 +681,6 @@ pub fn handle_rdtscp(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 SymbolicVar::new_int(edx_value.try_into().unwrap(), executor.context, 32)
                     .to_bv(executor.context),
                 executor.context,
-                32,
             ),
             32,
         )
@@ -606,7 +693,6 @@ pub fn handle_rdtscp(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 SymbolicVar::new_int(eax_value.try_into().unwrap(), executor.context, 32)
                     .to_bv(executor.context),
                 executor.context,
-                32,
             ),
             32,
         )
@@ -619,7 +705,6 @@ pub fn handle_rdtscp(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 SymbolicVar::new_int(ecx_value.try_into().unwrap(), executor.context, 32)
                     .to_bv(executor.context),
                 executor.context,
-                32,
             ),
             32,
         )
@@ -671,7 +756,6 @@ pub fn handle_rdtsc(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 SymbolicVar::new_int(edx_value.try_into().unwrap(), executor.context, 32)
                     .to_bv(executor.context),
                 executor.context,
-                32,
             ),
             32,
         )
@@ -684,7 +768,6 @@ pub fn handle_rdtsc(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 SymbolicVar::new_int(eax_value.try_into().unwrap(), executor.context, 32)
                     .to_bv(executor.context),
                 executor.context,
-                32,
             ),
             32,
         )

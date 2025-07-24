@@ -5,7 +5,7 @@ use z3::{
     DeclKind, SatResult, Solver,
 };
 
-use crate::concolic::{ConcolicExecutor, Logger, SymbolicVar};
+use crate::concolic::{ConcolicExecutor, Logger};
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
@@ -203,8 +203,6 @@ pub fn extract_underlying_condition_from_flag_ast<'ctx>(
     branch_taken: bool,
     logger: &mut Logger,
 ) -> Bool<'ctx> {
-    let ctx = flag_bv.get_ctx();
-
     // Case 1: Handle ITE expressions
     if is_ite(flag_bv) {
         let children = flag_bv.children();
@@ -339,8 +337,6 @@ pub fn bool_to_bv_smart<'ctx>(bool_expr: &Bool<'ctx>, target_size: u32) -> BV<'c
 
 /// Simplify a BV condition by extracting the underlying boolean condition
 pub fn simplify_bv_condition<'ctx>(bv: &BV<'ctx>) -> Dynamic<'ctx> {
-    let ctx = bv.get_ctx();
-
     // Use the same simplification technique as your existing code
     if is_ite(bv) && is_eq(bv) {
         let children = bv.children();
@@ -371,10 +367,7 @@ pub fn simplify_bv_condition<'ctx>(bv: &BV<'ctx>) -> Dynamic<'ctx> {
 }
 
 /// Displays constraints and simplifies them with Z3 and custom simplifier
-pub fn add_constraints_from_vector<'ctx>(
-    executor: &ConcolicExecutor<'ctx>,
-    conditional_flag_symbolic: SymbolicVar<'ctx>,
-) {
+pub fn add_constraints_from_vector<'ctx>(executor: &ConcolicExecutor<'ctx>) {
     let logger = &mut executor.state.logger.clone();
     log!(logger, "=== CONSTRAINT ANALYSIS ===");
 
@@ -383,7 +376,7 @@ pub fn add_constraints_from_vector<'ctx>(
     //log!(logger, "=== Z3 SIMPLIFIED CONSTRAINTS ===");
     // Display and collect Z3 simplified constraints
     let mut z3_simplified_constraints = Vec::new();
-    for (i, constraint) in assertions.iter().enumerate() {
+    for (_i, constraint) in assertions.iter().enumerate() {
         let z3_simplified = constraint.simplify();
         // log!(
         //     logger,
@@ -430,30 +423,6 @@ pub fn add_constraints_from_vector<'ctx>(
                     }
                 }
             }
-        }
-    }
-
-    log!(logger, "=== CONDITIONAL FLAG ANALYSIS ===");
-
-    // Simplify the conditional flag
-    match &conditional_flag_symbolic {
-        SymbolicVar::Bool(bool_expr) => {
-            let z3_simplified = bool_expr.simplify();
-            let custom_simplified = simplify_dynamic(&z3_simplified.clone().into());
-            log!(logger, "Bool - Z3 Simplified: {:?}", z3_simplified);
-            log!(logger, "Bool - Custom Simplified: {:?}", custom_simplified);
-        }
-        SymbolicVar::Int(bv) => {
-            let z3_simplified = bv.simplify();
-            let custom_simplified = simplify_dynamic(&z3_simplified.clone().into());
-            log!(logger, "BV - Z3 Simplified: {:?}", z3_simplified);
-            log!(logger, "BV - Custom Simplified: {:?}", custom_simplified);
-        }
-        _ => {
-            log!(
-                logger,
-                "Unsupported conditional flag type for simplification"
-            );
         }
     }
 

@@ -16,6 +16,7 @@ pub use super::ConcreteVar;
 pub use super::SymbolicVar;
 use crate::concolic::ConcolicVar;
 use crate::state::cpu_state::CpuConcolicValue;
+use crate::state::evaluate_args_z3;
 use crate::state::memory_x86_64::MemoryValue;
 use crate::state::simplify_z3::extract_underlying_condition_from_flag_ast;
 use crate::state::state_manager::FunctionFrame;
@@ -193,9 +194,12 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             // Reset the instruction counter for the new address
             self.instruction_counter = 1; // Start counting from 1 for each address block
 
-            // Check if the current address corresponds to the "runtime.nilPanic" function
-            if let Some(symbol_name) = self.symbol_table.get(&current_addr_hex) {
+            // Check if the current address corresponds to a runtime panic function
+            if let Some(symbol_name) = self.symbol_table.get(&current_addr_hex).cloned() {
                 if symbol_name == "runtime.nilPanic" {
+                    // Log all the constraints accumulated in the solver until that point
+                    evaluate_args_z3(self, &instruction, current_addr, None)
+                        .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -210,6 +214,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     process::exit(0);
                 }
                 if symbol_name == "runtime.nilMapPanic" {
+                    // Log all the constraints accumulated in the solver until that point
+                    evaluate_args_z3(self, &instruction, current_addr, None)
+                        .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -224,6 +231,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     process::exit(0);
                 }
                 if symbol_name == "runtime._panic" {
+                    // Log all the constraints accumulated in the solver until that point
+                    evaluate_args_z3(self, &instruction, current_addr, None)
+                        .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -234,6 +244,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     process::exit(0);
                 }
                 if symbol_name == "runtime.recordForPanic" {
+                    // Log all the constraints accumulated in the solver until that point
+                    evaluate_args_z3(self, &instruction, current_addr, None)
+                        .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -244,6 +257,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     process::exit(0);
                 }
                 if symbol_name == "runtime.slicePanic" {
+                    // Log all the constraints accumulated in the solver until that point
+                    evaluate_args_z3(self, &instruction, current_addr, None)
+                        .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -254,6 +270,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     process::exit(0);
                 }
                 if symbol_name == "runtime.lookupPanic" {
+                    // Log all the constraints accumulated in the solver until that point
+                    evaluate_args_z3(self, &instruction, current_addr, None)
+                        .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -268,6 +287,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     process::exit(0);
                 }
                 if symbol_name == "runtime.runtimePanic" {
+                    // Log all the constraints accumulated in the solver until that point
+                    evaluate_args_z3(self, &instruction, current_addr, None)
+                        .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -278,6 +300,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     process::exit(0);
                 }
                 if symbol_name == "runtime.chanMakePanic" {
+                    // Log all the constraints accumulated in the solver until that point
+                    evaluate_args_z3(self, &instruction, current_addr, None)
+                        .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -292,6 +317,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     process::exit(0);
                 }
                 if symbol_name == "runtime.negativeShiftPanic" {
+                    // Log all the constraints accumulated in the solver until that point
+                    evaluate_args_z3(self, &instruction, current_addr, None)
+                        .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -857,7 +885,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             branch_target_address,
             symbolic_var,
             &self.context,
-            64,
         );
 
         // Update the instruction counter
@@ -1008,7 +1035,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         *addr,
                         SymbolicVar::from_u64(&self.context, *addr, 64).to_bv(&self.context),
                         &self.context,
-                        64,
                     );
                     dereferenced_value
                 };
@@ -1124,7 +1150,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                             concrete_value,
                             symbolic_value.clone(),
                             &self.context,
-                            expected_bit_size,
                         ),
                         expected_bit_size,
                     )?;
@@ -1179,7 +1204,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                             concrete_value,
                             symbolic_value.clone(),
                             &self.context,
-                            64,
                         ),
                         64,
                     )?;
@@ -1228,7 +1252,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             branch_target_address,
             symbolic_var,
             &self.context,
-            64,
         );
 
         // Update the instruction counter
@@ -1387,7 +1410,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         *addr,
                         BV::from_u64(self.context, *addr, 64),
                         self.context,
-                        64,
                     );
                     cpu_state_guard
                         .set_register_value_by_offset(0x288, target.clone(), 64)
@@ -1408,7 +1430,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         next_inst_in_map,
                         BV::from_u64(self.context, next_inst_in_map, 64),
                         self.context,
-                        64,
                     )
                 };
 
@@ -1457,7 +1478,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         value_u64,
                         BV::from_u64(self.context, value_u64, 64),
                         self.context,
-                        64,
                     )
                 } else {
                     log!(
@@ -1468,7 +1488,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         next_inst_in_map,
                         BV::from_u64(self.context, next_inst_in_map, 64),
                         self.context,
-                        64,
                     )
                 };
 
@@ -1536,7 +1555,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             data_to_call_concrete,
             data_to_call_symbolic,
             self.context,
-            64,
         );
 
         log!(
@@ -1598,7 +1616,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 target_address_concrete,
                 target_address_symbolic,
                 self.context,
-                64,
             );
             cpu_state_guard
                 .set_register_value_by_offset(0x288, target_address_concolic.clone(), 64)
@@ -1659,7 +1676,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             branch_target_concrete,
             branch_target_symbolic.to_bv(&self.context),
             self.context,
-            64,
         );
 
         // Update the RIP register to the branch target address
@@ -1808,7 +1824,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     mem_value.concrete.to_u64(),
                     mem_value.symbolic.to_bv(&self.context),
                     &self.context,
-                    load_size_bits,
                 );
             }
             if load_size_bits < mem_size {
@@ -1826,7 +1841,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     mem_value.concrete.to_u64(),
                     extracted_symbolic,
                     &self.context,
-                    load_size_bits,
                 );
             }
         }
@@ -1907,7 +1921,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     mem_value.concrete.to_u64(),
                     mem_value.symbolic.clone().to_bv(&self.context),
                     self.context,
-                    load_size_bits,
                 )
             }
         } else {
@@ -1945,7 +1958,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     mem_value.concrete.to_u64(),
                     mem_value.symbolic.clone().to_bv(&self.context),
                     self.context,
-                    load_size_bits,
                 )
             }
         };
@@ -2581,13 +2593,11 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
             }
             SymbolicVar::Bool(b) => {
-                // Convert Bool to Int using concrete value (no ITE needed)
-                let concrete_bool = match &source_concolic.concrete {
-                    ConcreteVar::Bool(b_val) => *b_val,
-                    _ => false, // fallback
-                };
-                let concrete_as_bv = if concrete_bool { 1u64 } else { 0u64 };
-                SymbolicVar::Int(BV::from_u64(self.context, concrete_as_bv, output_size_bits))
+                let bv_int = b.ite(
+                    &BV::from_u64(self.context, 1, output_size_bits),
+                    &BV::from_u64(self.context, 0, output_size_bits),
+                );
+                SymbolicVar::Int(bv_int)
             }
             _ => return Err("[ERROR] Unsupported symbolic type in COPY".to_string()),
         };
@@ -2647,17 +2657,11 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         SymbolicVar::Int(bv_vec[0].clone())
                     }
                     SymbolicVar::Bool(b) => {
-                        // Convert Bool to Int for final result
-                        let concrete_bool = match &source_concolic.concrete {
-                            ConcreteVar::Bool(b_val) => *b_val,
-                            _ => false,
-                        };
-                        let concrete_as_bv = if concrete_bool { 1u64 } else { 0u64 };
-                        SymbolicVar::Int(BV::from_u64(
-                            self.context,
-                            concrete_as_bv,
-                            output_size_bits,
-                        ))
+                        let bv_int = b.ite(
+                            &BV::from_u64(self.context, 1, output_size_bits),
+                            &BV::from_u64(self.context, 0, output_size_bits),
+                        );
+                        SymbolicVar::Int(bv_int)
                     }
                     _ => return Err("[ERROR] Unexpected symbolic type for small COPY".to_string()),
                 },
@@ -2765,7 +2769,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             result_concrete as u64,
             result_symbolic,
             self.context,
-            output_size_bits,
         );
 
         self.handle_output(instruction.output.as_ref(), popcount_result.clone())?;

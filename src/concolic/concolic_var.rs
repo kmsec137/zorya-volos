@@ -21,7 +21,6 @@ impl<'ctx> ConcolicVar<'ctx> {
         concrete: u64,
         symbolic: BV<'ctx>,
         ctx: &'ctx Context,
-        size: u32,
     ) -> Self {
         let var = ConcolicVar {
             concrete: ConcreteVar::Int(concrete),
@@ -50,7 +49,6 @@ impl<'ctx> ConcolicVar<'ctx> {
         concrete: f64,
         symbolic: Float<'ctx>,
         ctx: &'ctx Context,
-        size: u32,
     ) -> Self {
         let var = ConcolicVar {
             concrete: ConcreteVar::Float(concrete),

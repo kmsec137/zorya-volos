@@ -1,0 +1,56 @@
+* Fetching instruction.input[0] for INT_CARRY
+Converting Varnode to concolic type: Unique(0x132)
+Varnode is of type 'unique' with ID: 0x132 and size: 64 bits
+Retrieved unique variable: Int(10) with symbolic size: 64
+* Fetching instruction.input[1] for INT_CARRY
+Converting Varnode to concolic type: Unique(0x133)
+Varnode is of type 'unique' with ID: 0x133 and size: 64 bits
+Retrieved unique variable: Int(20) with symbolic size: 64
+*** INT_CARRY concrete result: false
+Writing 0 to the unique variable with ID: 0x134
+Updated unique variable: Unique(0x134) with concrete part : 0, concrete size 8 bits and symbolic size 8 bits
+ymbolic size 64 bits
+c size 64 bits
+and symbolic size 8 bits
+te size 8 bits and symbolic size 1 bits
+* Fetching instruction.input[0] for INT_LESS
+Converting Varnode to concolic type: Unique(0x123)
+Varnode is of type 'unique' with ID: 0x123 and size: 64 bits
+Retrieved unique variable: Int(30) with symbolic size: 64
+* Fetching instruction.input[1] for INT_LESS
+Converting Varnode to concolic type: Unique(0x124)
+Varnode is of type 'unique' with ID: 0x124 and size: 64 bits
+Retrieved unique variable: Int(10) with symbolic size: 64
+input0_var symbolic : #x000000000000001e, input1_var symbolic: #x000000000000000a
+Output size in bits: 8
+*** INT_LESS concrete result: false
+Writing 0 to the unique variable with ID: 0x125
+Updated unique variable: Unique(0x125) with concrete part : 0, concrete size 8 bits and symbolic size 1 bits
+* Fetching instruction.input[0] for INT_LESS
+Converting Varnode to concolic type: Unique(0x126)
+Varnode is of type 'unique' with ID: 0x126 and size: 64 bits
+Retrieved unique variable: Int(5) with symbolic size: 64
+* Fetching instruction.input[1] for INT_LESS
+Converting Varnode to concolic type: Unique(0x127)
+Varnode is of type 'unique' with ID: 0x127 and size: 64 bits
+Retrieved unique variable: Int(3) with symbolic size: 64
+input0_var symbolic : #x0000000000000005, input1_var symbolic: #x0000000000000003
+Output size in bits: 8
+*** INT_LESS concrete result: false
+Writing 0 to the unique variable with ID: 0x128
+Updated unique variable: Unique(0x128) with concrete part : 0, concrete size 8 bits and symbolic size 1 bits
+tching instruction.input[1] for INT_SBORROW
+Converting Varnode to concolic type: Unique(0x13f)
+Varnode is of type 'unique' with ID: 0x13f and size: 64 bits
+Retrieved unique variable: Int(10) with symbolic size: 64
+Output size in bits: 8
+input0_var concrete: 20, input1_var concrete: 10
+input0 bit width: 64, input1 bit width: 64
+borrow_symbolic (Bool): false
+Signed subtraction: 20 - 10 = overflow: false
+result_value symbolic (BV): #x00
+*** The result of INT_SBORROW is: 0
+=== CALLING handle_output ===
+Writing 0 to the unique variable with ID: 0x140
+Updated unique variable: Unique(0x140) with concrete part : 0, concrete size 8 bits and symbolic size 8 bits
+=== END INT_SBORROW DEBUG ===

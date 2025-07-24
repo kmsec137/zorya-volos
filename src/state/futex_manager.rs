@@ -41,6 +41,9 @@ impl FutexManager {
             })
             .clone();
 
+        // Drop the futexes lock to avoid holding it during wait
+        drop(futexes);
+
         let mut futex_guard = futex.lock().unwrap();
         if futex_guard.count != val {
             return Err("EWOULDBLOCK".to_string());
@@ -48,44 +51,78 @@ impl FutexManager {
 
         futex_guard.waiters += 1;
 
-        let result = if let Some(to) = timeout {
-            let condvar = &futex_guard.condvar;
-            let futex = Arc::clone(&futex);
-            let mut futex_guard = futex.lock().unwrap();
-            let (guard, timeout_result) = condvar
-                .wait_timeout_while(futex_guard, to, |futex| futex.count == val)
-                .unwrap();
-            futex_guard = guard;
-            if timeout_result.timed_out() {
-                Err("ETIMEDOUT".to_string())
-            } else {
-                Ok(())
+        // The key insight: we need to temporarily take ownership of the condvar
+        // to avoid the borrow checker issues
+        let condvar = std::mem::replace(&mut futex_guard.condvar, Condvar::new());
+
+        let (mut final_guard, result) = if let Some(to) = timeout {
+            // For timeout case
+            match condvar.wait_timeout_while(futex_guard, to, |futex| futex.count == val) {
+                Ok((new_guard, timeout_result)) => {
+                    let result = if timeout_result.timed_out() {
+                        Err("ETIMEDOUT".to_string())
+                    } else {
+                        Ok(())
+                    };
+                    (new_guard, result)
+                }
+                Err(_) => {
+                    // If wait fails, we need to get the guard back somehow
+                    // This is tricky - let's re-acquire the lock
+                    let guard = futex.lock().unwrap();
+                    (guard, Err("WAIT_ERROR".to_string()))
+                }
             }
         } else {
-            let condvar = &futex_guard.condvar;
-            let futex = Arc::clone(&futex);
-            let mut futex_guard = futex.lock().unwrap();
-            futex_guard = condvar
-                .wait_while(futex_guard, |futex| futex.count == val)
-                .unwrap();
-            Ok(())
+            // For no timeout case
+            match condvar.wait_while(futex_guard, |futex| futex.count == val) {
+                Ok(new_guard) => (new_guard, Ok(())),
+                Err(_) => {
+                    // If wait fails, re-acquire the lock
+                    let guard = futex.lock().unwrap();
+                    (guard, Err("WAIT_ERROR".to_string()))
+                }
+            }
         };
 
-        futex_guard.waiters -= 1;
+        // Restore the condvar back to the futex
+        final_guard.condvar = condvar;
+        final_guard.waiters -= 1;
         result
     }
 
-    pub fn futex_wake(&self, uaddr: u64, val: usize) -> Result<usize, String> {
+    pub fn futex_wake(&self, uaddr: u64, nr_wake: i32) -> Result<i32, String> {
         let futexes = self.futexes.lock().unwrap();
+
         if let Some(futex) = futexes.get(&uaddr) {
-            let mut futex_guard = futex.lock().unwrap();
-            let to_wake = std::cmp::min(val, futex_guard.waiters);
-            for _ in 0..to_wake {
+            let futex_guard = futex.lock().unwrap();
+            let woken = std::cmp::min(nr_wake, futex_guard.waiters as i32);
+
+            // Notify the appropriate number of waiters
+            for _ in 0..woken {
                 futex_guard.condvar.notify_one();
             }
-            futex_guard.waiters -= to_wake;
-            Ok(to_wake)
+
+            Ok(woken)
         } else {
+            // No futex at this address, so no waiters to wake
+            Ok(0)
+        }
+    }
+
+    pub fn futex_wake_all(&self, uaddr: u64) -> Result<i32, String> {
+        let futexes = self.futexes.lock().unwrap();
+
+        if let Some(futex) = futexes.get(&uaddr) {
+            let futex_guard = futex.lock().unwrap();
+            let woken = futex_guard.waiters as i32;
+
+            // Notify all waiters
+            futex_guard.condvar.notify_all();
+
+            Ok(woken)
+        } else {
+            // No futex at this address, so no waiters to wake
             Ok(0)
         }
     }

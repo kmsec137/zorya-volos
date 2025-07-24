@@ -112,7 +112,6 @@ pub fn handle_bool_and(executor: &mut ConcolicExecutor, instruction: Inst) -> Re
         result_concrete as u64,
         result_symbolic_bv,
         executor.context,
-        output_size_bits,
     );
 
     log!(
@@ -204,7 +203,6 @@ pub fn handle_bool_negate(
         result_concrete as u64,
         result_symbolic_bv,
         executor.context,
-        output_size_bits,
     );
 
     log!(
@@ -313,7 +311,6 @@ pub fn handle_bool_or(executor: &mut ConcolicExecutor, instruction: Inst) -> Res
         result_concrete as u64,
         result_symbolic_bv,
         executor.context,
-        output_size_bits,
     );
 
     log!(
@@ -422,7 +419,6 @@ pub fn handle_bool_xor(executor: &mut ConcolicExecutor, instruction: Inst) -> Re
         result_concrete as u64,
         result_symbolic_bv,
         executor.context,
-        output_size_bits,
     );
 
     log!(

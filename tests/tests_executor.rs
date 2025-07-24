@@ -21,7 +21,7 @@ mod tests {
         let logger = Logger::new("execution_log.txt", false).expect("Failed to create logger");
         let trace_logger =
             Logger::new("trace_log.txt", true).expect("Failed to create trace logger");
-        let mut state = State::default_for_tests(ctx, logger).expect("Failed to create state.");
+        let state = State::default_for_tests(ctx, logger).expect("Failed to create state.");
 
         // Initialize memory regions properly using the memory system's mmap API
         // Store the actual addresses returned by mmap for use in tests
@@ -63,7 +63,7 @@ mod tests {
         }
 
         let current_lines_number = 0;
-        let mut executor = ConcolicExecutor {
+        let executor = ConcolicExecutor {
             context: ctx,
             solver: Solver::new(ctx),
             state,
@@ -457,7 +457,6 @@ mod tests {
             0xDEADBEEFDEADBEEF,
             symbolic.to_bv(&executor.context),
             executor.context,
-            64,
         );
         executor
             .unique_variables
@@ -819,7 +818,6 @@ mod tests {
             source_value,
             symbolic.to_bv(&executor.context),
             executor.context,
-            64,
         );
         executor
             .unique_variables

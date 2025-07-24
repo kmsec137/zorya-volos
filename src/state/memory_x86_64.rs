@@ -8,7 +8,6 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use regex::Regex;
-use z3::ast::Ast;
 use z3::{ast::BV, Context};
 
 use super::VirtualFileSystem;
@@ -498,7 +497,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
             .enumerate()
             .rev()
         {
-            let byte_addr = address + byte_index as u64;
+            let _byte_addr = address + byte_index as u64;
 
             let byte_bv = match sym_opt {
                 Some(symbolic_ref) => {

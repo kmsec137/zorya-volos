@@ -456,7 +456,6 @@ impl<'ctx> CpuState<'ctx> {
                         value_concrete,
                         value_symbolic,
                         &self.ctx,
-                        *size,
                     );
                     self.set_register_value_by_offset(offset, value_concolic, *size)
                         .map_err(|e| {
@@ -493,7 +492,6 @@ impl<'ctx> CpuState<'ctx> {
                             flag_concrete,
                             flag_symbolic,
                             &self.ctx,
-                            *size,
                         );
                         self.set_register_value_by_offset(offset, flag_concolic, *size)
                             .map_err(|e| anyhow!("Failed to set flag value for {}: {}", flag, e))?;
@@ -1093,16 +1091,12 @@ impl<'ctx> CpuState<'ctx> {
     }
 
     /// Gets the concolic value of a register identified by its offset.
-    pub fn get_concolic_register_by_offset(
-        &self,
-        offset: u64,
-        size: u32,
-    ) -> Option<ConcolicVar<'ctx>> {
+    pub fn get_concolic_register_by_offset(&self, offset: u64) -> Option<ConcolicVar<'ctx>> {
         if let Some(reg) = self.registers.get(&offset) {
             let concrete = reg.concrete.to_u64();
             let symbolic = reg.symbolic.to_bv(self.ctx);
             Some(ConcolicVar::new_concrete_and_symbolic_int(
-                concrete, symbolic, self.ctx, size,
+                concrete, symbolic, self.ctx,
             ))
         } else {
             None

@@ -46,13 +46,11 @@ mod tests {
             1,
             symbolic0.to_bv(&executor.context),
             executor.context,
-            1,
         ); // true
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             0,
             symbolic1.to_bv(&executor.context),
             executor.context,
-            1,
         ); // false
         executor
             .unique_variables
@@ -108,7 +106,6 @@ mod tests {
             1,
             symbolic.to_bv(&executor.context),
             executor.context,
-            1,
         );
         executor
             .unique_variables
@@ -160,13 +157,11 @@ mod tests {
             1,
             symbolic0.to_bv(&executor.context),
             executor.context,
-            1,
         ); // true
         let input1 = ConcolicVar::new_concrete_and_symbolic_int(
             0,
             symbolic1.to_bv(&executor.context),
             executor.context,
-            1,
         ); // false
         executor
             .unique_variables
