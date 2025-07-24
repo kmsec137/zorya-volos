@@ -1,5 +1,5 @@
 use parser::parser::{Inst, Opcode, Var, Varnode};
-use z3::{Config, Context, Solver};
+use z3::{Config, Context, Optimize};
 use zorya::concolic::ConcolicExecutor;
 use zorya::state::State;
 
@@ -50,7 +50,7 @@ mod tests {
         let current_lines_number = 0;
         ConcolicExecutor {
             context: ctx,
-            solver: Solver::new(ctx),
+            solver: Optimize::new(ctx),
             state,
             symbol_table: BTreeMap::new(),
             current_address: Some(0x123),

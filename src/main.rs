@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         pcode_file_path_str
     );
     // Preprocess the p-code file to get a map of addresses to instructions
-    let instructions_map = preprocess_pcode_file(pcode_file_path_str, &mut executor.clone())
+    let instructions_map = preprocess_pcode_file(pcode_file_path_str, &mut executor)
         .expect("Failed to preprocess the p-code file.");
 
     // Get the tables of cross references of potential panics in the programs (for bug detetcion)

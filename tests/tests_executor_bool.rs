@@ -4,7 +4,7 @@ mod tests {
 
     use parser::parser::{Inst, Opcode, Size, Var, Varnode};
     use z3::ast::BV;
-    use z3::{Config, Context, Solver};
+    use z3::{Config, Context, Optimize};
     use zorya::concolic::executor_bool::{handle_bool_and, handle_bool_negate, handle_bool_xor};
     use zorya::concolic::{ConcolicExecutor, ConcolicVar, Logger};
     use zorya::executor::SymbolicVar;
@@ -20,7 +20,7 @@ mod tests {
         let current_lines_number = 0;
         ConcolicExecutor {
             context: ctx,
-            solver: Solver::new(ctx),
+            solver: Optimize::new(ctx),
             state,
             symbol_table: BTreeMap::new(),
             current_address: Some(0x123),

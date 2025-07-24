@@ -28,7 +28,7 @@ use parser::parser::{Inst, Opcode, Var, Varnode};
 use z3::ast::Ast;
 use z3::ast::Bool;
 use z3::ast::BV;
-use z3::{Context, Solver};
+use z3::{Context, Optimize};
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
@@ -36,10 +36,10 @@ macro_rules! log {
     }};
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ConcolicExecutor<'ctx> {
     pub context: &'ctx Context,
-    pub solver: Solver<'ctx>,
+    pub solver: Optimize<'ctx>, // Use Optimize instead of Solver to get symbolic variables minimization
     pub state: State<'ctx>,
     pub current_address: Option<u64>,
     pub symbol_table: BTreeMap<String, String>,
@@ -59,7 +59,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         logger: Logger,
         trace_logger: Logger,
     ) -> Result<Self, Box<dyn Error>> {
-        let solver = Solver::new(context);
+        let solver = Optimize::new(context);
         let state = State::new(context, logger)?;
         Ok(ConcolicExecutor {
             context,

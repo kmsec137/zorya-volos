@@ -55,7 +55,7 @@ pub fn evaluate_args_z3<'ctx>(
             if let Some(conditional_flag) = conditional_flag {
                 let panic_causing_flag_u64 = conditional_flag.concrete.to_u64().clone();
                 // Handle both Bool and BV types
-                let (condition, _conditional_flag_for_display) = match &conditional_flag.symbolic {
+                let condition = match &conditional_flag.symbolic {
                     SymbolicVar::Bool(bool_expr) => {
                         log!(
                             executor.state.logger,
@@ -63,7 +63,7 @@ pub fn evaluate_args_z3<'ctx>(
                             bool_expr.simplify()
                         );
 
-                        // FIXED: Assert the condition that actually causes the panic
+                        // Assert the condition that actually causes the panic
                         let condition = if panic_causing_flag_u64 == 0 {
                             // We want the condition to be false
                             bool_expr.not()
@@ -71,9 +71,7 @@ pub fn evaluate_args_z3<'ctx>(
                             // We want the condition to be true
                             bool_expr.clone()
                         };
-
-                        // For display purposes, convert to string representation
-                        (condition, format!("{:?}", bool_expr.simplify()))
+                        condition
                     }
                     SymbolicVar::Int(bv) => {
                         log!(
@@ -83,13 +81,15 @@ pub fn evaluate_args_z3<'ctx>(
                         );
 
                         let bit_width = bv.get_size();
-                        // Use the actual panic-causing value
-                        let expected_val =
-                            BV::from_u64(executor.context, panic_causing_flag_u64, bit_width);
-                        let condition = bv._eq(&expected_val);
+                        let expected_val = BV::from_u64(executor.context, panic_causing_flag_u64, bit_width);
 
-                        // For display purposes, use the BV representation
-                        (condition, format!("{:?}", bv.simplify()))
+                        // We need to convert the BV in Bool form to assert the condition
+                        let condition = if panic_causing_flag_u64 == 0 {
+                            bv._eq(&expected_val).not()  // Negate the condition
+                        } else {
+                            bv._eq(&expected_val)  // Keep original
+                        };
+                        condition
                     }
                     _ => {
                         return Err("Unsupported symbolic variable type for conditional flag"
@@ -115,7 +115,33 @@ pub fn evaluate_args_z3<'ctx>(
             // List constraints and assert them to solver
             add_constraints_from_vector(&executor);
 
-            match executor.solver.check() {
+            // Minimize symbolic variables to prefer smaller values
+            for symbolic_var in executor.function_symbolic_arguments.values() {
+                match symbolic_var {
+                    SymbolicVar::Int(bv_var) => {
+                        executor.solver.minimize(bv_var); // minimizing so that z3 givess us the smallest values possible
+                    }
+                    SymbolicVar::Slice(slice) => {
+                        for elem in &slice.elements {
+                            match elem {
+                                SymbolicVar::Int(bv_elem) => {
+                                    executor.solver.minimize(bv_elem); 
+                                }
+                                _ => {
+                                    log!(executor.state.logger, "Skipping non-Int slice element during minimize");
+                                }
+                            }
+                        }
+                        executor.solver.minimize(&slice.length);
+                    }
+                    _ => {
+                        log!(executor.state.logger, "Skipping non-minimizable symbolic var");
+                    }
+                }
+            }
+
+
+            match executor.solver.check(&[]) {
                 SatResult::Sat => {
                     log!(executor.state.logger, "~~~~~~~~~~~");
                     log!(
@@ -153,7 +179,7 @@ pub fn evaluate_args_z3<'ctx>(
                 }
             }
 
-            executor.solver.pop(1);
+            executor.solver.pop();
         } else {
             log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
         }
@@ -192,7 +218,7 @@ pub fn evaluate_args_z3<'ctx>(
         executor.solver.assert(&branch_condition);
 
         // 4) check feasibility
-        match executor.solver.check() {
+        match executor.solver.check(&[]) {
             z3::SatResult::Sat => {
                 log!(executor.state.logger, "~~~~~~~~~~~");
                 log!(
@@ -313,7 +339,7 @@ pub fn evaluate_args_z3<'ctx>(
             }
         }
         // 6) pop the solver context
-        executor.solver.pop(1);
+        executor.solver.pop();
     } else {
         log!(
             executor.state.logger,
