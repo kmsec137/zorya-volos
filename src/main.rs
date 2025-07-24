@@ -9,20 +9,23 @@ use std::process::Command;
 use std::sync::Arc;
 
 use parser::parser::{Inst, Opcode};
-use regex::Regex;
 use z3::{
-    ast::{Ast, Int, BV},
+    ast::{Int, BV},
     Config, Context,
 };
 use zorya::concolic::{ConcolicVar, Logger};
-use zorya::executor::{ConcolicExecutor, ConcreteVar, SymbolicVar};
+use zorya::executor::{ConcolicExecutor, SymbolicVar};
 use zorya::state::evaluate_z3::{evaluate_args_z3, get_os_args_address};
 use zorya::state::function_signatures::{
     load_function_args_map, load_go_function_args_map, precompute_function_signatures_via_ghidra,
-    GoFunctionArg, TypeDesc,
+    GoFunctionArg,
 };
 use zorya::state::memory_x86_64::MemoryValue;
 use zorya::target_info::GLOBAL_TARGET_INFO;
+use zorya::concolic::symbolic_initialization::{
+    initialize_single_register_argument, initialize_single_register_slice,
+    initialize_slice_argument, initialize_string_argument, initialize_slice_memory_contents
+};
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
@@ -263,8 +266,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 start_address
             );
 
-            // This line creates the immutable borrow of `executor` that lasts for the scope of `cpu`
             let mut concrete_values_of_args = Vec::new();
+
+            // Phase 1: Initialize slice/string/argument structures
+            log!(
+                executor.state.logger,
+                "=== PHASE 1: Initializing argument structures ==="
+            );
 
             for (arg_name, reg_name, arg_type) in args {
                 log!(
@@ -279,7 +287,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if arg_type == "string" && reg_name.contains(',') {
                     let regs: Vec<&str> = reg_name.split(',').collect();
                     if regs.len() == 2 {
-                        // Pass the specific fields, not `&mut executor`
                         initialize_string_argument(
                             arg_name,
                             &regs,
@@ -331,6 +338,44 @@ fn main() -> Result<(), Box<dyn Error>> {
                     &mut executor,
                 );
             }
+
+            // Phase 2: Initialize memory contents pointed to by slices
+            log!(
+                executor.state.logger,
+                "=== PHASE 2: Initializing slice memory contents ==="
+            );
+            
+            let slice_args: Vec<_> = args.iter()
+                .filter(|(_, _, arg_type)| arg_type.starts_with("[]"))
+                .collect();
+            
+            if !slice_args.is_empty() {
+                log!(
+                    executor.state.logger,
+                    "Found {} slice arguments to initialize memory for",
+                    slice_args.len()
+                );
+                
+                // Convert to the format expected by initialize_slice_memory_contents
+                let slice_args_owned: Vec<(String, String, String)> = slice_args
+                    .into_iter()
+                    .map(|(name, reg, typ)| (name.clone(), reg.clone(), typ.clone()))
+                    .collect();
+                    
+                initialize_slice_memory_contents(&mut executor, &slice_args_owned);
+            } else {
+                log!(
+                    executor.state.logger,
+                    "No slice arguments found, skipping memory initialization"
+                );
+            }
+
+            log!(
+                executor.state.logger,
+                "=== INITIALIZATION COMPLETE: {} total arguments processed ===",
+                args.len()
+            );
+
         } else {
             log!(
                 executor.state.logger,
@@ -1588,336 +1633,3 @@ fn update_argc_argv(
     Ok(())
 }
 
-// Helper function for single-register argument initialization
-fn initialize_single_register_argument<'a>(
-    arg_name: &str,
-    reg_name: &str,
-    arg_type: &str,
-    concrete_values: &mut Vec<ConcreteVar>,
-    executor: &mut ConcolicExecutor<'a>,
-) {
-    let cpu = &mut executor.state.cpu_state.lock().unwrap();
-    if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-        let bit_width = cpu.register_map.get(&offset).map(|(_, w)| *w).unwrap_or(64);
-        if let Some(original) = cpu.get_register_by_offset(offset, bit_width) {
-            let orig_conc = original.concrete.clone();
-            concrete_values.push(orig_conc.clone());
-
-            let bv = BV::fresh_const(
-                executor.context,
-                &format!("{}_{}", arg_name, reg_name),
-                bit_width,
-            );
-            executor
-                .function_symbolic_arguments
-                .insert(arg_name.to_string(), SymbolicVar::Int(bv.clone()));
-
-            let sym = SymbolicVar::Int(bv.clone());
-            let conc = ConcolicVar {
-                concrete: orig_conc,
-                symbolic: sym,
-                ctx: executor.context,
-            };
-
-            match cpu.set_register_value_by_offset(offset, conc, bit_width) {
-                Ok(()) => log!(
-                    executor.state.logger,
-                    "Initialized '{}' => {} (0x{:x}) as symbolic {}",
-                    arg_name,
-                    reg_name,
-                    offset,
-                    arg_type
-                ),
-                Err(e) => log!(executor.state.logger, "Failed to set {}: {}", reg_name, e),
-            }
-        }
-    } else {
-        log!(
-            executor.state.logger,
-            "WARNING: unknown register '{}' for arg {}",
-            reg_name,
-            arg_name
-        );
-    }
-}
-// ────────────────────────────────────────────────────────────
-//  String   (two regs)
-// ────────────────────────────────────────────────────────────
-fn initialize_string_argument<'a>(
-    arg_name: &str,
-    regs: &[&str], // exactly 2 regs
-    conc: &mut Vec<ConcreteVar>,
-    exec: &mut ConcolicExecutor<'a>,
-) {
-    let ctx = exec.context;
-    let cpu = &mut exec.state.cpu_state.lock().unwrap();
-    let log = &mut exec.state.logger;
-    let solver = &mut exec.solver;
-
-    // Go swap: if first reg is RDX/R8/R10 → (len,ptr)
-    let (ptr_reg, len_reg) = match regs {
-        [r1, r2] if *r1 == "RDX" || *r1 == "R8" || *r1 == "R10" => (*r2, *r1),
-        [r1, r2] => (*r1, *r2),
-        _ => {
-            log!(log, "BAD string reg list {:?}", regs);
-            return;
-        }
-    };
-
-    let bv_ptr = BV::fresh_const(ctx, &format!("{}__ptr", arg_name), 64);
-    let bv_len = BV::fresh_const(ctx, &format!("{}__len", arg_name), 64);
-
-    exec.function_symbolic_arguments.insert(
-        format!("{}__ptr", arg_name),
-        SymbolicVar::Int(bv_ptr.clone()),
-    );
-    exec.function_symbolic_arguments.insert(
-        format!("{}__len", arg_name),
-        SymbolicVar::Int(bv_len.clone()),
-    );
-
-    // ptr ≠ 0, 8-byte aligned  |  len ≥ 1
-    solver.assert(
-        &bv_ptr
-            .bvand(&BV::from_u64(ctx, 7, 64))
-            ._eq(&BV::from_u64(ctx, 0, 64)),
-    );
-    solver.assert(&bv_ptr._eq(&BV::from_u64(ctx, 0, 64)).not());
-    solver.assert(&bv_len.bvuge(&BV::from_u64(ctx, 1, 64)));
-
-    // helper: write symbolic BV into a register
-    let mut write = |reg: &str, bv: &BV<'a>| {
-        if let Some(off) = cpu.resolve_offset_from_register_name(reg) {
-            let w = cpu.register_map.get(&off).map(|(_, w)| *w).unwrap_or(64);
-            if let Some(orig) = cpu.get_register_by_offset(off, w) {
-                conc.push(orig.concrete.clone());
-                let cv = ConcolicVar {
-                    concrete: orig.concrete.clone(),
-                    symbolic: SymbolicVar::Int(bv.clone()),
-                    ctx,
-                };
-                cpu.set_register_value_by_offset(off, cv, w).ok();
-            }
-        } else {
-            log!(log, "WARN: unknown reg {}", reg);
-        }
-    };
-
-    write(ptr_reg, &bv_ptr);
-    write(len_reg, &bv_len);
-    log!(
-        log,
-        "Init Go string '{}'  ptr:{} len:{}",
-        arg_name,
-        ptr_reg,
-        len_reg
-    );
-}
-
-// ────────────────────────────────────────────────────────────
-//  Multi-register slice ([]T)
-// ────────────────────────────────────────────────────────────
-fn initialize_slice_argument<'a>(
-    arg_name: &str,
-    arg_type: &str,
-    regs: &[&str],
-    conc: &mut Vec<ConcreteVar>,
-    executor: &mut ConcolicExecutor<'a>,
-) {
-    if regs.len() < 2 {
-        log!(
-            executor.state.logger,
-            "Slice '{}' has <2 registers: {:?}",
-            arg_name,
-            regs
-        );
-        return;
-    }
-
-    let ctx = executor.context;
-    let ptr_reg = regs[0];
-    let len_reg = regs[1];
-
-    let inner_ty = &arg_type[2..];
-    let elem_desc = if inner_ty.starts_with('[') {
-        // Handle array type, e.g., "[3]byte" or "[4]int"
-        if let Some(caps) = Regex::new(r"^\[(\d+)\](.+)$").unwrap().captures(inner_ty) {
-            TypeDesc::Array {
-                element: Box::new(TypeDesc::Primitive(caps[2].trim().into())),
-                count: Some(caps[1].parse::<u64>().unwrap()),
-            }
-        } else {
-            TypeDesc::Unknown(inner_ty.into())
-        }
-    } else {
-        TypeDesc::Primitive(inner_ty.to_string())
-    };
-
-    let default_len = 3;
-    let slice_sv = SymbolicVar::make_symbolic_slice(ctx, arg_name, &elem_desc, default_len);
-    executor
-        .function_symbolic_arguments
-        .insert(arg_name.into(), slice_sv.clone());
-
-    if let SymbolicVar::Slice(slice) = &slice_sv {
-        // Handle solver assertions
-        {
-            let solver = &mut executor.solver;
-            solver.assert(&slice.pointer._eq(&BV::from_u64(ctx, 0, 64)).not());
-            solver.assert(
-                &slice
-                    .pointer
-                    .bvand(&BV::from_u64(ctx, 7, 64))
-                    ._eq(&BV::from_u64(ctx, 0, 64)),
-            );
-            solver.assert(&slice.length.bvuge(&BV::from_u64(ctx, 1, 64)));
-        }
-
-        // Handle CPU state writes - Use EXISTING slice variables instead of creating new ones
-        {
-            let cpu = &mut executor.state.cpu_state.lock().unwrap();
-
-            // Write pointer to ptr_reg using EXISTING slice.pointer variable
-            if let Some(ptr_offset) = cpu.resolve_offset_from_register_name(ptr_reg) {
-                let ptr_bit_width = cpu
-                    .register_map
-                    .get(&ptr_offset)
-                    .map(|(_, w)| *w)
-                    .unwrap_or(64);
-                if let Some(ptr_original) = cpu.get_register_by_offset(ptr_offset, ptr_bit_width) {
-                    conc.push(ptr_original.concrete.clone());
-
-                    // Use the EXISTING slice.pointer variable, don't create new one!
-                    let ptr_conc_var = ConcolicVar {
-                        concrete: ptr_original.concrete.clone(),
-                        symbolic: SymbolicVar::Int(slice.pointer.clone()), // <-- Use existing!
-                        ctx,
-                    };
-                    cpu.set_register_value_by_offset(ptr_offset, ptr_conc_var, ptr_bit_width)
-                        .ok();
-                }
-            }
-
-            // Write length to len_reg using EXISTING slice.length variable
-            if let Some(len_offset) = cpu.resolve_offset_from_register_name(len_reg) {
-                let len_bit_width = cpu
-                    .register_map
-                    .get(&len_offset)
-                    .map(|(_, w)| *w)
-                    .unwrap_or(64);
-                if let Some(len_original) = cpu.get_register_by_offset(len_offset, len_bit_width) {
-                    conc.push(len_original.concrete.clone());
-
-                    // Use the EXISTING slice.length variable, don't create new one!
-                    let len_conc_var = ConcolicVar {
-                        concrete: len_original.concrete.clone(),
-                        symbolic: SymbolicVar::Int(slice.length.clone()), // <-- Use existing!
-                        ctx,
-                    };
-                    cpu.set_register_value_by_offset(len_offset, len_conc_var, len_bit_width)
-                        .ok();
-                }
-            }
-        }
-
-        // Handle capacity register if present
-        if regs.len() >= 3 {
-            // For capacity, we can create a new variable since it's separate from the main slice
-            let cap_bv = BV::fresh_const(ctx, &format!("{}_cap", arg_name), 64);
-            {
-                let solver = &mut executor.solver;
-                solver.assert(&cap_bv.bvuge(&slice.length));
-            }
-            {
-                let cpu = &mut executor.state.cpu_state.lock().unwrap();
-
-                // Write capacity to cap_reg using the NEW cap_bv variable
-                if let Some(cap_offset) = cpu.resolve_offset_from_register_name(regs[2]) {
-                    let cap_bit_width = cpu
-                        .register_map
-                        .get(&cap_offset)
-                        .map(|(_, w)| *w)
-                        .unwrap_or(64);
-                    if let Some(cap_original) =
-                        cpu.get_register_by_offset(cap_offset, cap_bit_width)
-                    {
-                        conc.push(cap_original.concrete.clone());
-
-                        let cap_conc_var = ConcolicVar {
-                            concrete: cap_original.concrete.clone(),
-                            symbolic: SymbolicVar::Int(cap_bv.clone()),
-                            ctx,
-                        };
-                        cpu.set_register_value_by_offset(cap_offset, cap_conc_var, cap_bit_width)
-                            .ok();
-                    }
-                }
-            }
-        }
-
-        log!(
-            executor.state.logger,
-            "Initialized slice '{}' ptr:{} len:{} with UNIFIED variables",
-            arg_name,
-            ptr_reg,
-            len_reg
-        );
-    }
-}
-
-// ────────────────────────────────────────────────────────────
-//  Single-register slice (rare)
-// ────────────────────────────────────────────────────────────
-fn initialize_single_register_slice<'a>(
-    arg_name: &str,
-    arg_type: &str,
-    reg: &str,
-    conc: &mut Vec<ConcreteVar>,
-    exec: &mut ConcolicExecutor<'a>,
-) {
-    let ctx = exec.context;
-
-    let elem_td = TypeDesc::Primitive(arg_type[2..].to_string());
-    let sv = SymbolicVar::make_symbolic_slice(ctx, arg_name, &elem_td, 2);
-    exec.function_symbolic_arguments
-        .insert(arg_name.into(), sv.clone());
-
-    if let SymbolicVar::Slice(slice) = &sv {
-        // Handle solver assertions
-        {
-            let solver = &mut exec.solver;
-            solver.assert(
-                &slice
-                    .pointer
-                    .bvand(&BV::from_u64(ctx, 7, 64))
-                    ._eq(&BV::from_u64(ctx, 0, 64)),
-            );
-            solver.assert(&slice.pointer._eq(&BV::from_u64(ctx, 0, 64)).not());
-            solver.assert(&slice.length.bvuge(&BV::from_u64(ctx, 1, 64)));
-        }
-
-        // Handle CPU state
-        {
-            let cpu = &mut exec.state.cpu_state.lock().unwrap();
-            if let Some(off) = cpu.resolve_offset_from_register_name(reg) {
-                let w = cpu.register_map.get(&off).map(|(_, w)| *w).unwrap_or(64);
-                if let Some(orig) = cpu.get_register_by_offset(off, w) {
-                    conc.push(orig.concrete.clone());
-                    let cv = ConcolicVar {
-                        concrete: orig.concrete.clone(),
-                        symbolic: SymbolicVar::Int(slice.pointer.clone()),
-                        ctx,
-                    };
-                    cpu.set_register_value_by_offset(off, cv, w).ok();
-                }
-            } else {
-                log!(
-                    exec.state.logger,
-                    "WARN: unknown reg '{}' for '{}'",
-                    reg,
-                    arg_name
-                );
-            }
-        }
-    }
-}
