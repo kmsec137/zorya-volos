@@ -44,6 +44,21 @@ const IGNORED_TINYGO_FUNCS: &[&str] = &[
 ];
 
 fn main() -> Result<(), Box<dyn Error>> {
+
+    // Clean up previous SAT state file before starting new execution
+    let sat_state_file = "results/FOUND_SAT_STATE.txt";
+    if Path::new(sat_state_file).exists() {
+        match fs::remove_file(sat_state_file) {
+            Ok(()) => {
+                println!("Cleaned up previous SAT state file: {}", sat_state_file);
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to remove previous SAT state file {}: {}", sat_state_file, e);
+                eprintln!("Continuing with execution, new results will be appended...");
+            }
+        }
+    }
+
     let config = Config::new();
     let context = Context::new(&config);
     let logger = Logger::new("results/execution_log.txt", false).expect("Failed to create logger"); // get the instruction handling detailed log, log to the file only
