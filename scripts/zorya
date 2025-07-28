@@ -27,7 +27,8 @@ ZORYA_DIR="__ZORYA_DIR__"
 
 PCODE_GENERATOR_DIR="$ZORYA_DIR/external/pcode-generator"
 INIT_DATA_DIR="$ZORYA_DIR/results/initialization_data"
-[[ ! -d "$PCODE_GENERATOR_DIR" || ! -d "$INIT_DATA_DIR" ]] && { echo "Run: make all"; exit 1; }
+[[ ! -d "$PCODE_GENERATOR_DIR" ]] && { echo "Missing pcode-generator – run make all"; exit 1; }
+mkdir -p "$INIT_DATA_DIR"
 
 ##############################################################################
 #                         HELPER FUNCTIONS
