@@ -626,7 +626,7 @@ fn execute_instructions_from(
                 if negate_path_flag == "true" {
                     // broken-calculator 22f068 // omni-vuln4 0x2300b7 0x2300d7// crashme: 0x22b21a
                     // invalidpubkey 22fc8b
-                    if current_rip == 0x22fc8b {
+                    if current_rip == 0x22f068 {
                         log!(
                             executor.state.logger,
                             ">>> Evaluating arguments for the negated path exploration."
@@ -650,30 +650,30 @@ fn execute_instructions_from(
                     log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");
                 }
 
-                // if panic_address_ints.contains(&z3::ast::Int::from_u64(
-                //     executor.context,
-                //     branch_target_address,
-                // )) {
-                //     log!(
-                //         executor.state.logger,
-                //         "Potential branching to a panic function at 0x{:x}",
-                //         branch_target_address
-                //     );
-                //     evaluate_args_z3(
-                //         executor,
-                //         inst,
-                //         address_of_negated_path_exploration,
-                //         Some(conditional_flag),
-                //     )
-                //     .unwrap_or_else(|e| {
-                //         log!(
-                //             executor.state.logger,
-                //             "Error evaluating arguments for branch at 0x{:x}: {}",
-                //             branch_target_address,
-                //             e
-                //         );
-                //     });
-                // }
+                if panic_address_ints.contains(&z3::ast::Int::from_u64(
+                    executor.context,
+                    branch_target_address,
+                )) {
+                    log!(
+                        executor.state.logger,
+                        "Potential branching to a panic function at 0x{:x}",
+                        branch_target_address
+                    );
+                    evaluate_args_z3(
+                        executor,
+                        inst,
+                        address_of_negated_path_exploration,
+                        Some(conditional_flag),
+                    )
+                    .unwrap_or_else(|e| {
+                        log!(
+                            executor.state.logger,
+                            "Error evaluating arguments for branch at 0x{:x}: {}",
+                            branch_target_address,
+                            e
+                        );
+                    });
+                }
             }
 
             // Calculate the potential next address taken by RIP, for the purpose of updating the symbolic part of CBRANCH
