@@ -13,6 +13,10 @@ use z3::{
     ast::{Int, BV},
     Config, Context,
 };
+use zorya::concolic::symbolic_initialization::{
+    initialize_single_register_argument, initialize_single_register_slice,
+    initialize_slice_argument, initialize_slice_memory_contents, initialize_string_argument,
+};
 use zorya::concolic::{ConcolicVar, Logger};
 use zorya::executor::{ConcolicExecutor, SymbolicVar};
 use zorya::state::evaluate_z3::{evaluate_args_z3, get_os_args_address};
@@ -22,10 +26,6 @@ use zorya::state::function_signatures::{
 };
 use zorya::state::memory_x86_64::MemoryValue;
 use zorya::target_info::GLOBAL_TARGET_INFO;
-use zorya::concolic::symbolic_initialization::{
-    initialize_single_register_argument, initialize_single_register_slice,
-    initialize_slice_argument, initialize_string_argument, initialize_slice_memory_contents
-};
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
@@ -44,7 +44,6 @@ const IGNORED_TINYGO_FUNCS: &[&str] = &[
 ];
 
 fn main() -> Result<(), Box<dyn Error>> {
-
     // Clean up previous SAT state file before starting new execution
     let sat_state_file = "results/FOUND_SAT_STATE.txt";
     if Path::new(sat_state_file).exists() {
@@ -53,7 +52,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 println!("Cleaned up previous SAT state file: {}", sat_state_file);
             }
             Err(e) => {
-                eprintln!("Warning: Failed to remove previous SAT state file {}: {}", sat_state_file, e);
+                eprintln!(
+                    "Warning: Failed to remove previous SAT state file {}: {}",
+                    sat_state_file, e
+                );
                 eprintln!("Continuing with execution, new results will be appended...");
             }
         }
@@ -359,24 +361,25 @@ fn main() -> Result<(), Box<dyn Error>> {
                 executor.state.logger,
                 "=== PHASE 2: Initializing slice memory contents ==="
             );
-            
-            let slice_args: Vec<_> = args.iter()
+
+            let slice_args: Vec<_> = args
+                .iter()
                 .filter(|(_, _, arg_type)| arg_type.starts_with("[]"))
                 .collect();
-            
+
             if !slice_args.is_empty() {
                 log!(
                     executor.state.logger,
                     "Found {} slice arguments to initialize memory for",
                     slice_args.len()
                 );
-                
+
                 // Convert to the format expected by initialize_slice_memory_contents
                 let slice_args_owned: Vec<(String, String, String)> = slice_args
                     .into_iter()
                     .map(|(name, reg, typ)| (name.clone(), reg.clone(), typ.clone()))
                     .collect();
-                    
+
                 initialize_slice_memory_contents(&mut executor, &slice_args_owned);
             } else {
                 log!(
@@ -390,7 +393,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "=== INITIALIZATION COMPLETE: {} total arguments processed ===",
                 args.len()
             );
-
         } else {
             log!(
                 executor.state.logger,
@@ -623,7 +625,8 @@ fn execute_instructions_from(
                 // This block is for find fast a SAT state for the negated path exploration
                 if negate_path_flag == "true" {
                     // broken-calculator 22f068 // omni-vuln4 0x2300b7 0x2300d7// crashme: 0x22b21a
-                    if current_rip == 0x22b21a {
+                    // invalidpubkey 22fc8b
+                    if current_rip == 0x22fc8b {
                         log!(
                             executor.state.logger,
                             ">>> Evaluating arguments for the negated path exploration."
@@ -647,30 +650,30 @@ fn execute_instructions_from(
                     log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");
                 }
 
-                if panic_address_ints.contains(&z3::ast::Int::from_u64(
-                    executor.context,
-                    branch_target_address,
-                )) {
-                    log!(
-                        executor.state.logger,
-                        "Potential branching to a panic function at 0x{:x}",
-                        branch_target_address
-                    );
-                    evaluate_args_z3(
-                        executor,
-                        inst,
-                        address_of_negated_path_exploration,
-                        Some(conditional_flag),
-                    )
-                    .unwrap_or_else(|e| {
-                        log!(
-                            executor.state.logger,
-                            "Error evaluating arguments for branch at 0x{:x}: {}",
-                            branch_target_address,
-                            e
-                        );
-                    });
-                }
+                // if panic_address_ints.contains(&z3::ast::Int::from_u64(
+                //     executor.context,
+                //     branch_target_address,
+                // )) {
+                //     log!(
+                //         executor.state.logger,
+                //         "Potential branching to a panic function at 0x{:x}",
+                //         branch_target_address
+                //     );
+                //     evaluate_args_z3(
+                //         executor,
+                //         inst,
+                //         address_of_negated_path_exploration,
+                //         Some(conditional_flag),
+                //     )
+                //     .unwrap_or_else(|e| {
+                //         log!(
+                //             executor.state.logger,
+                //             "Error evaluating arguments for branch at 0x{:x}: {}",
+                //             branch_target_address,
+                //             e
+                //         );
+                //     });
+                // }
             }
 
             // Calculate the potential next address taken by RIP, for the purpose of updating the symbolic part of CBRANCH
@@ -1646,4 +1649,3 @@ fn update_argc_argv(
 
     Ok(())
 }
-

@@ -7,7 +7,7 @@ use zorya::state::State;
 mod tests {
     use parser::parser::Size;
     use std::collections::BTreeMap;
-    use z3::{ast::BV};
+    use z3::ast::BV;
     use zorya::{
         concolic::{
             executor_int::{

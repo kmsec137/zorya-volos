@@ -1,9 +1,11 @@
-
 use std::{io::Write, sync::Arc};
 
+use crate::{
+    concolic::{ConcolicExecutor, ConcolicVar, ConcreteVar, SymbolicVar},
+    state::{function_signatures::TypeDesc, memory_x86_64::MemoryValue},
+};
 use regex::Regex;
 use z3::ast::{Ast, BV};
-use crate::{concolic::{ConcolicExecutor, ConcolicVar, ConcreteVar, SymbolicVar}, state::{function_signatures::TypeDesc, memory_x86_64::MemoryValue}};
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
@@ -19,11 +21,15 @@ pub fn is_stack_location(reg_spec: &str) -> bool {
 // Helper function to parse stack offset from "STACK+0x8" format
 pub fn parse_stack_offset(reg_spec: &str) -> Option<i64> {
     if let Some(offset_str) = reg_spec.strip_prefix("STACK+") {
-        if let Ok(offset) = i64::from_str_radix(offset_str.strip_prefix("0x").unwrap_or(offset_str), 16) {
+        if let Ok(offset) =
+            i64::from_str_radix(offset_str.strip_prefix("0x").unwrap_or(offset_str), 16)
+        {
             return Some(offset);
         }
     } else if let Some(offset_str) = reg_spec.strip_prefix("STACK-") {
-        if let Ok(offset) = i64::from_str_radix(offset_str.strip_prefix("0x").unwrap_or(offset_str), 16) {
+        if let Ok(offset) =
+            i64::from_str_radix(offset_str.strip_prefix("0x").unwrap_or(offset_str), 16)
+        {
             return Some(-offset);
         }
     }
@@ -184,10 +190,16 @@ pub fn initialize_stack_argument<'a>(
 ) {
     if let Some(stack_offset) = parse_stack_offset(stack_spec) {
         // Get current RSP value
-        if let Some(rsp_reg) = executor.state.cpu_state.lock().unwrap().get_register_by_offset(0x20, 64) {
+        if let Some(rsp_reg) = executor
+            .state
+            .cpu_state
+            .lock()
+            .unwrap()
+            .get_register_by_offset(0x20, 64)
+        {
             let rsp_value = rsp_reg.concrete.to_u64();
             let stack_address = (rsp_value as i64 + stack_offset) as u64;
-            
+
             log!(
                 executor.state.logger,
                 "Calculating stack address: RSP(0x{:x}) + offset({}) = 0x{:x}",
@@ -197,30 +209,39 @@ pub fn initialize_stack_argument<'a>(
             );
 
             // Read current value from stack
-            match executor.state.memory.read_u64(stack_address, &mut executor.state.logger) {
+            match executor
+                .state
+                .memory
+                .read_u64(stack_address, &mut executor.state.logger)
+            {
                 Ok(current_stack_value) => {
                     concrete_values.push(current_stack_value.concrete.clone());
 
                     // Create symbolic variable for stack location
                     let bv = BV::fresh_const(
                         executor.context,
-                        &format!("{}_{}", arg_name, stack_spec.replace("+", "plus").replace("-", "minus")),
+                        &format!(
+                            "{}_{}",
+                            arg_name,
+                            stack_spec.replace("+", "plus").replace("-", "minus")
+                        ),
                         64,
                     );
-                    
+
                     executor
                         .function_symbolic_arguments
                         .insert(arg_name.to_string(), SymbolicVar::Int(bv.clone()));
 
                     // Create concolic variable with original concrete value but new symbolic value
-                    let stack_concolic_mem = MemoryValue::new(
-                        current_stack_value.concrete.to_u64(),
-                        bv.clone(),
-                        64,
-                    );
+                    let stack_concolic_mem =
+                        MemoryValue::new(current_stack_value.concrete.to_u64(), bv.clone(), 64);
 
                     // Write symbolic value back to stack
-                    match executor.state.memory.write_u64(stack_address, &stack_concolic_mem) {
+                    match executor
+                        .state
+                        .memory
+                        .write_u64(stack_address, &stack_concolic_mem)
+                    {
                         Ok(()) => log!(
                             executor.state.logger,
                             "Initialized '{}' => {} (0x{:x}) as symbolic {} on stack",
@@ -236,7 +257,7 @@ pub fn initialize_stack_argument<'a>(
                             e
                         ),
                     }
-                },
+                }
                 Err(e) => log!(
                     executor.state.logger,
                     "Failed to read from stack address 0x{:x}: {}",
@@ -321,7 +342,7 @@ pub fn initialize_slice_argument<'a>(
 
         // Write pointer (can be register or stack)
         write_symbolic_to_location(ptr_spec, &slice.pointer, conc, executor, "ptr");
-        
+
         // Write length (can be register or stack)
         write_symbolic_to_location(len_spec, &slice.length, conc, executor, "len");
 
@@ -356,20 +377,31 @@ fn write_symbolic_to_location<'a>(
     if is_stack_location(location_spec) {
         // Handle stack location
         if let Some(stack_offset) = parse_stack_offset(location_spec) {
-            if let Some(rsp_reg) = executor.state.cpu_state.lock().unwrap().get_register_by_offset(0x20, 64) {
+            if let Some(rsp_reg) = executor
+                .state
+                .cpu_state
+                .lock()
+                .unwrap()
+                .get_register_by_offset(0x20, 64)
+            {
                 let rsp_value = rsp_reg.concrete.to_u64();
                 let stack_address = (rsp_value as i64 + stack_offset) as u64;
-                
-                if let Ok(current_val) = executor.state.memory.read_u64(stack_address, &mut executor.state.logger) {
+
+                if let Ok(current_val) = executor
+                    .state
+                    .memory
+                    .read_u64(stack_address, &mut executor.state.logger)
+                {
                     conc.push(current_val.concrete.clone());
 
-                    let stack_concolic_mem = MemoryValue::new(
-                        current_val.concrete.to_u64(),
-                        symbolic_bv.clone(),
-                        64,
-                    );
+                    let stack_concolic_mem =
+                        MemoryValue::new(current_val.concrete.to_u64(), symbolic_bv.clone(), 64);
 
-                    executor.state.memory.write_u64(stack_address, &stack_concolic_mem).ok();
+                    executor
+                        .state
+                        .memory
+                        .write_u64(stack_address, &stack_concolic_mem)
+                        .ok();
                     log!(
                         executor.state.logger,
                         "Wrote {} to stack location {} (0x{:x})",
@@ -387,14 +419,15 @@ fn write_symbolic_to_location<'a>(
             let bit_width = cpu.register_map.get(&offset).map(|(_, w)| *w).unwrap_or(64);
             if let Some(original) = cpu.get_register_by_offset(offset, bit_width) {
                 conc.push(original.concrete.clone());
-                
+
                 let reg_concolic = ConcolicVar {
                     concrete: original.concrete.clone(),
                     symbolic: SymbolicVar::Int(symbolic_bv.clone()),
                     ctx: executor.context,
                 };
-                
-                cpu.set_register_value_by_offset(offset, reg_concolic, bit_width).ok();
+
+                cpu.set_register_value_by_offset(offset, reg_concolic, bit_width)
+                    .ok();
                 log!(
                     executor.state.logger,
                     "Wrote {} to register {} (0x{:x})",
@@ -492,13 +525,13 @@ pub fn initialize_slice_memory_contents<'a>(
         if let Some(slice_sym_var) = executor.function_symbolic_arguments.get(arg_name) {
             if let SymbolicVar::Slice(_slice) = slice_sym_var {
                 // Get concrete values from registers to determine memory layout
-                let (ptr_concrete, len_concrete, _cap_concrete) = 
+                let (ptr_concrete, len_concrete, _cap_concrete) =
                     extract_slice_concrete_values(executor, reg_name);
 
                 if let (Some(ptr_addr), Some(slice_len)) = (ptr_concrete, len_concrete) {
                     // Determine element size and type
                     let (element_size, element_type) = parse_slice_element_info(arg_type);
-                    
+
                     log!(
                         executor.state.logger,
                         "Slice '{}': ptr=0x{:x}, len={}, element_size={}, element_type='{}'",
@@ -512,10 +545,10 @@ pub fn initialize_slice_memory_contents<'a>(
                     // Initialize memory for each element in the slice
                     for i in 0..slice_len {
                         let element_addr = ptr_addr + (i * element_size);
-                        
+
                         // Create symbolic variable for this element
                         let element_var_name = format!("{}[{}]", arg_name, i);
-                        
+
                         initialize_slice_element_memory(
                             executor,
                             &element_var_name,
@@ -548,34 +581,79 @@ fn extract_slice_concrete_values<'a>(
     executor: &ConcolicExecutor<'a>,
     reg_spec: &str,
 ) -> (Option<u64>, Option<u64>, Option<u64>) {
+    log!(
+        executor.state.logger.clone(),
+        "DEBUG: extract_slice_concrete_values called with reg_spec='{}'",
+        reg_spec
+    );
+
     if !reg_spec.contains(',') {
         // Single register case - only pointer available
         if let Some(ptr_val) = get_concrete_value_from_location(executor, reg_spec) {
+            log!(
+                executor.state.logger.clone(),
+                "DEBUG: Single register '{}' = 0x{:x}",
+                reg_spec,
+                ptr_val
+            );
             return (Some(ptr_val), None, None);
         }
         return (None, None, None);
     }
 
     let regs: Vec<&str> = reg_spec.split(',').collect();
-    
+    log!(
+        executor.state.logger.clone(),
+        "DEBUG: Split registers: {:?}",
+        regs
+    );
+
     let ptr_concrete = if regs.len() >= 1 {
-        get_concrete_value_from_location(executor, regs[0])
-    } else {
-        None
-    };
-    
-    let len_concrete = if regs.len() >= 2 {
-        get_concrete_value_from_location(executor, regs[1])
-    } else {
-        None
-    };
-    
-    let cap_concrete = if regs.len() >= 3 {
-        get_concrete_value_from_location(executor, regs[2])
+        let val = get_concrete_value_from_location(executor, regs[0]);
+        log!(
+            executor.state.logger.clone(),
+            "DEBUG: Register '{}' (ptr) = {:?}",
+            regs[0],
+            val
+        );
+        val
     } else {
         None
     };
 
+    let len_concrete = if regs.len() >= 2 {
+        let val = get_concrete_value_from_location(executor, regs[1]);
+        log!(
+            executor.state.logger.clone(),
+            "DEBUG: Register '{}' (len) = {:?}",
+            regs[1],
+            val
+        );
+        val
+    } else {
+        None
+    };
+
+    let cap_concrete = if regs.len() >= 3 {
+        let val = get_concrete_value_from_location(executor, regs[2]);
+        log!(
+            executor.state.logger.clone(),
+            "DEBUG: Register '{}' (cap) = {:?}",
+            regs[2],
+            val
+        );
+        val
+    } else {
+        None
+    };
+
+    log!(
+        executor.state.logger.clone(),
+        "DEBUG: Final values - ptr={:?}, len={:?}, cap={:?}",
+        ptr_concrete,
+        len_concrete,
+        cap_concrete
+    );
     (ptr_concrete, len_concrete, cap_concrete)
 }
 
@@ -584,49 +662,78 @@ fn get_concrete_value_from_location<'a>(
     executor: &ConcolicExecutor<'a>,
     location_spec: &str,
 ) -> Option<u64> {
+    log!(
+        executor.state.logger.clone(),
+        "DEBUG: get_concrete_value_from_location called with '{}'",
+        location_spec
+    );
+
     if is_stack_location(location_spec) {
         // Handle stack location
-        if let Some(stack_offset) = parse_stack_offset(location_spec) {
-            if let Some(rsp_reg) = executor.state.cpu_state.lock().unwrap().get_register_by_offset(0x20, 64) {
-                let rsp_value = rsp_reg.concrete.to_u64();
-                let stack_address = (rsp_value as i64 + stack_offset) as u64;
-                
-                if let Ok(stack_val) = executor.state.memory.read_u64(stack_address, &mut executor.state.logger.clone()) {
-                    return Some(stack_val.concrete.to_u64());
-                }
-            }
-        }
+        // ... existing code ...
     } else {
         // Handle register location
         let cpu = executor.state.cpu_state.lock().unwrap();
         if let Some(offset) = cpu.resolve_offset_from_register_name(location_spec) {
             let bit_width = cpu.register_map.get(&offset).map(|(_, w)| *w).unwrap_or(64);
+            log!(
+                executor.state.logger.clone(),
+                "DEBUG: Register '{}' resolved to offset 0x{:x}, bit_width={}",
+                location_spec,
+                offset,
+                bit_width
+            );
+
             if let Some(reg_val) = cpu.get_register_by_offset(offset, bit_width) {
-                return Some(reg_val.concrete.to_u64());
+                let concrete_val = reg_val.concrete.to_u64();
+                log!(
+                    executor.state.logger.clone(),
+                    "DEBUG: Register '{}' concrete value = 0x{:x}",
+                    location_spec,
+                    concrete_val
+                );
+                return Some(concrete_val);
+            } else {
+                log!(
+                    executor.state.logger.clone(),
+                    "DEBUG: Could not get register value for '{}'",
+                    location_spec
+                );
             }
+        } else {
+            log!(
+                executor.state.logger.clone(),
+                "DEBUG: Could not resolve register name '{}'",
+                location_spec
+            );
         }
     }
+    log!(
+        executor.state.logger.clone(),
+        "DEBUG: get_concrete_value_from_location returning None for '{}'",
+        location_spec
+    );
     None
 }
 
 /// Parse slice element information from type string
 fn parse_slice_element_info(slice_type: &str) -> (u64, String) {
     let inner_type = &slice_type[2..]; // Remove "[]" prefix
-    
+
     // Handle array types like "[32]byte"
     if inner_type.starts_with('[') {
         if let Some(caps) = Regex::new(r"^\[(\d+)\](.+)$").unwrap().captures(inner_type) {
             let array_size: u64 = caps[1].parse().unwrap_or(1);
             let element_type = caps[2].trim().to_string();
             let base_size = get_type_size(&element_type);
-            
+
             // For [][32]byte, this is an array of 32 bytes, so total size is 32 * 1 = 32
             let total_size = array_size * base_size;
-            
+
             return (total_size, inner_type.to_string());
         }
     }
-    
+
     // Handle primitive types
     let size = get_type_size(inner_type);
     (size, inner_type.to_string())
@@ -702,10 +809,14 @@ fn initialize_slice_element_memory<'a>(
 
     // Handle different element sizes - read_value only supports up to 128 bits (16 bytes)
     let bit_size = (element_size * 8) as u32;
-    
+
     if element_size <= 16 {
         // Use read_value for small elements (≤ 128 bits)
-        match executor.state.memory.read_value(element_addr, bit_size, &mut executor.state.logger.clone()) {
+        match executor.state.memory.read_value(
+            element_addr,
+            bit_size,
+            &mut executor.state.logger.clone(),
+        ) {
             Ok(current_value) => {
                 log!(
                     executor.state.logger,
@@ -717,7 +828,10 @@ fn initialize_slice_element_memory<'a>(
                 // Create fresh symbolic variable for this element
                 let element_bv = BV::fresh_const(
                     executor.context,
-                    &format!("slice_elem_{}", element_name.replace("[", "_").replace("]", "_")),
+                    &format!(
+                        "slice_elem_{}",
+                        element_name.replace("[", "_").replace("]", "_")
+                    ),
                     bit_size,
                 );
 
@@ -735,7 +849,11 @@ fn initialize_slice_element_memory<'a>(
                 );
 
                 // Write symbolic value back to memory
-                match executor.state.memory.write_value(element_addr, &symbolic_memory_value) {
+                match executor
+                    .state
+                    .memory
+                    .write_value(element_addr, &symbolic_memory_value)
+                {
                     Ok(()) => {
                         log!(
                             executor.state.logger,
@@ -743,7 +861,7 @@ fn initialize_slice_element_memory<'a>(
                             element_name,
                             element_addr
                         );
-                    },
+                    }
                     Err(e) => {
                         log!(
                             executor.state.logger,
@@ -754,7 +872,7 @@ fn initialize_slice_element_memory<'a>(
                         );
                     }
                 }
-            },
+            }
             Err(e) => {
                 log!(
                     executor.state.logger,
@@ -774,7 +892,11 @@ fn initialize_slice_element_memory<'a>(
             element_size
         );
 
-        match executor.state.memory.read_bytes(element_addr, element_size as usize) {
+        match executor
+            .state
+            .memory
+            .read_bytes(element_addr, element_size as usize)
+        {
             Ok(concrete_bytes) => {
                 log!(
                     executor.state.logger,
@@ -787,7 +909,10 @@ fn initialize_slice_element_memory<'a>(
                 // Create fresh symbolic variable for this element
                 let element_bv = BV::fresh_const(
                     executor.context,
-                    &format!("slice_elem_{}", element_name.replace("[", "_").replace("]", "_")),
+                    &format!(
+                        "slice_elem_{}",
+                        element_name.replace("[", "_").replace("]", "_")
+                    ),
                     bit_size,
                 );
 
@@ -809,7 +934,11 @@ fn initialize_slice_element_memory<'a>(
                     .collect();
 
                 // Write back to memory using the low-level write_memory function
-                match executor.state.memory.write_memory(element_addr, &concrete_bytes, &symbolic_bytes) {
+                match executor.state.memory.write_memory(
+                    element_addr,
+                    &concrete_bytes,
+                    &symbolic_bytes,
+                ) {
                     Ok(()) => {
                         log!(
                             executor.state.logger,
@@ -818,7 +947,7 @@ fn initialize_slice_element_memory<'a>(
                             element_addr,
                             element_size
                         );
-                    },
+                    }
                     Err(e) => {
                         log!(
                             executor.state.logger,
@@ -829,7 +958,7 @@ fn initialize_slice_element_memory<'a>(
                         );
                     }
                 }
-            },
+            }
             Err(e) => {
                 log!(
                     executor.state.logger,

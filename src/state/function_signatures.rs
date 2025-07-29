@@ -579,7 +579,7 @@ pub fn load_go_function_args_map(
                 .map(|arg| {
                     (
                         arg.name.clone(),
-                        vec![arg.registers.join(",")], // Convert to Vec<String> to match return type
+                        arg.registers.clone(),
                         arg.arg_type.clone(),
                     )
                 })

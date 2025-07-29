@@ -7,8 +7,8 @@ pub mod executor_callother;
 pub mod executor_callother_syscalls;
 pub mod executor_float;
 pub mod executor_int;
-pub mod symbolic_var;
 pub mod symbolic_initialization;
+pub mod symbolic_var;
 
 pub use concolic_enum::ConcolicEnum;
 pub use concolic_var::ConcolicVar;

@@ -3,7 +3,7 @@ use std::io::Write;
 use std::process::Command;
 use std::str;
 
-const MAX_AST_DEPTH: usize = 10;
+const MAX_AST_DEPTH: usize = 30;
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{

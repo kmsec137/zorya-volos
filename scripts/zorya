@@ -33,73 +33,93 @@ mkdir -p "$INIT_DATA_DIR"
 ##############################################################################
 #                         HELPER FUNCTIONS
 ##############################################################################
-get_entry_point() { readelf -h "$1" | awk '/Entry point address:/ {print $NF}'; }
 
-# Be abale to find main() in C/C++ binaries and main.main() in Go binaries
-get_main_addr() {
-  nm "$1" | awk '
-      / main.main$/     {print "0x"$1; found=1; exit}
-      / main$/          {m="0x"$1}
-      END{if(!found && m)print m}'
+# Get the binary entry point using readelf
+get_entry_point() {
+  readelf -h "$1" | awk '/Entry point address:/ {print $NF}'
 }
 
+# Try to find the Go or C-style main symbol address
+get_main_addr() {
+  nm "$1" | awk '
+    / main.main$/     {print "0x"$1; found=1; exit}
+    / main$/          {m="0x"$1}
+    END { if (!found && m) print m }'
+}
 
 ##############################################################################
 #                         BASIC ARG PARSER
 ##############################################################################
+
+# Binary must be provided as the first argument
 if [[ -z "$1" || "$1" == -* ]]; then
   echo "Usage: zorya <binary> [--lang go|c|c++] [--compiler tinygo|gc] \\"
   echo "                [--mode start|main|function|custom <addr>] [--arg …]"
   exit 1
 fi
+
 BIN_PATH="$1"; shift || true
 
-SOURCE_LANG=""; COMPILER=""; MODE=""; ADDR=""; ARGS="none"; NEGATE_PATH_FLAG=""
+# Initialize variables
+SOURCE_LANG=""
+COMPILER=""
+MODE=""
+ADDR=""
+ARGS="none"
+NEGATE_PATH_FLAG=""
 
+# Argument parsing loop
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --lang)      SOURCE_LANG="$2"; shift 2 ;;
-    --compiler)  COMPILER="$2";    shift 2 ;;
-    --mode)      MODE="$2";        shift 2
-                 if [[ "$MODE" =~ ^(function|custom)$ && $# -gt 0 && "$1" != "--"* ]]; then
-                     ADDR="$1"; shift
-                 fi ;;
-    --negate-path-exploration|--negate)       NEGATE_PATH_FLAG="true";  shift ;;
-    --no-negate-path-exploration|--no-negate) NEGATE_PATH_FLAG="false"; shift ;;
-    --arg)       shift; 
-                 # Collect remaining arguments, but stop at negation flags
-                 while [[ $# -gt 0 ]]; do
-                   if [[ "$1" == "--negate-path-exploration" || "$1" == "--negate" ]]; then
-                     NEGATE_PATH_FLAG="true"
-                     shift
-                     break
-                   elif [[ "$1" == "--no-negate-path-exploration" || "$1" == "--no-negate" ]]; then
-                     NEGATE_PATH_FLAG="false"
-                     shift
-                     break
-                   else
-                     if [[ "$ARGS" == "none" ]]; then
-                       ARGS="$1"
-                     else
-                       ARGS="$ARGS $1"
-                     fi
-                     shift
-                   fi
-                 done
-                 ;;
-    --help|-h)   exec "$0" -h ;;
-    *)           echo "Unknown flag: $1"; exit 1 ;;
+    --lang)
+      SOURCE_LANG="$2"; shift 2 ;;
+    --compiler)
+      COMPILER="$2"; shift 2 ;;
+    --mode)
+      MODE="$2"; shift 2
+      # Accept an address for *any* mode (main/function/custom)
+      if [[ $# -gt 0 && "$1" != "--"* && "$1" =~ ^0x[0-9a-fA-F]+$ ]]; then
+        ADDR="$1"; shift
+      fi
+      ;;
+    --negate-path-exploration|--negate)
+      NEGATE_PATH_FLAG="true"; shift ;;
+    --no-negate-path-exploration|--no-negate)
+      NEGATE_PATH_FLAG="false"; shift ;;
+    --arg)
+      shift
+      while [[ $# -gt 0 ]]; do
+        if [[ "$1" == --negate* ]]; then
+          NEGATE_PATH_FLAG="true"
+          shift
+          break
+        elif [[ "$1" == --no-negate* ]]; then
+          NEGATE_PATH_FLAG="false"
+          shift
+          break
+        else
+          if [[ "$ARGS" == "none" ]]; then
+            ARGS="$1"
+          else
+            ARGS="$ARGS $1"
+          fi
+          shift
+        fi
+      done
+      ;;
+    --help|-h)
+      exec "$0" -h ;;
+    *)
+      echo "Unknown flag: $1"; exit 1 ;;
   esac
 done
-
 
 ##############################################################################
 #                        INTERACTIVE QUESTIONS (fallback)
 ##############################################################################
 
-# Check if we're in interactive mode (any required info missing)
 INTERACTIVE_MODE=false
-[[ -z "$SOURCE_LANG" || -z "$MODE" || -z "$ADDR" || "$ARGS" == "none" || -z "$NEGATE_PATH_FLAG" ]] && INTERACTIVE_MODE=true
+[[ -z "$SOURCE_LANG" || -z "$MODE" || "$ARGS" == "none" || -z "$NEGATE_PATH_FLAG" ]] && INTERACTIVE_MODE=true
 [[ "${SOURCE_LANG,,}" == "go" && -z "$COMPILER" ]] && INTERACTIVE_MODE=true
 
 if [[ "$INTERACTIVE_MODE" == "true" ]]; then
@@ -110,13 +130,13 @@ else
   echo -e "${CYAN}${BOLD}ZORYA - Next Generation Concolic Analysis${RESET}"
 fi
 
-# 0. language
+# 0. Language
 if [[ -z "$SOURCE_LANG" ]]; then
   echo ""; echo "What is the source language of the binary? (go, c or c++)"
   read -rp "[go]: " SOURCE_LANG; SOURCE_LANG="${SOURCE_LANG:-go}"
 fi; export SOURCE_LANG
 
-# 0b. Go compiler
+# 0b. Go compiler (if applicable)
 if [[ "${SOURCE_LANG,,}" == "go" && -z "$COMPILER" ]]; then
   echo ""; echo "Which Go compiler was used? (tinygo / gc)"
   read -rp "[tinygo]: " COMPILER; COMPILER="${COMPILER:-tinygo}"
@@ -125,39 +145,47 @@ fi; export COMPILER
 
 ENTRY_POINT=$(get_entry_point "$BIN_PATH")
 
-# 1. mode
+# 1. Mode
 if [[ -z "$MODE" ]]; then
   echo ""; echo "Where to begin the analysis? (start / main / function / custom)"
   read -rp "[main]: " MODE; MODE="${MODE:-main}"
 fi
 
-# 2. address selection by mode (if still missing)
+# 2. Address selection
 case "$MODE" in
-  start) [[ -z "$ADDR" ]] && ADDR="$ENTRY_POINT"
-         [[ "$INTERACTIVE_MODE" == "true" ]] && echo -e "${GREEN}Entry point: $ADDR${RESET}" ;;
-  main)  [[ -z "$ADDR" ]] && ADDR=$(get_main_addr "$BIN_PATH")
-         [[ -z "$ADDR" ]] && { echo "Could not locate main"; exit 1; }
-         [[ "$INTERACTIVE_MODE" == "true" ]] && echo -e "${GREEN}Main address: $ADDR${RESET}" ;;
+  start)
+    [[ -z "$ADDR" ]] && ADDR="$ENTRY_POINT"
+    [[ "$INTERACTIVE_MODE" == "true" ]] && echo -e "${GREEN}Entry point: $ADDR${RESET}" ;;
+  main)
+    if [[ -z "$ADDR" ]]; then
+      ADDR=$(get_main_addr "$BIN_PATH")
+      [[ -z "$ADDR" ]] && { echo "Could not locate main"; exit 1; }
+      [[ "$INTERACTIVE_MODE" == "true" ]] && echo -e "${GREEN}Main address (auto-detected): $ADDR${RESET}"
+    else
+      [[ "$INTERACTIVE_MODE" == "true" ]] && echo -e "${GREEN}Main address (user-supplied): $ADDR${RESET}"
+    fi
+    ;;
   function|custom)
-         while [[ -z "$ADDR" ]]; do
-             echo ""; read -rp "At what address should the analysis begin? (hex e.g. 0x123): " ADDR
-             [[ "$ADDR" =~ ^0x[0-9a-fA-F]+$ || "$ADDR" =~ ^[0-9]+$ ]] || ADDR=""
-         done ;;
-  *) echo "Unknown mode"; exit 1 ;;
+    while [[ -z "$ADDR" ]]; do
+      echo ""; read -rp "At what address should the analysis begin? (hex e.g. 0x123): " ADDR
+      [[ "$ADDR" =~ ^0x[0-9a-fA-F]+$ || "$ADDR" =~ ^[0-9]+$ ]] || ADDR=""
+    done ;;
+  *)
+    echo "Unknown mode: $MODE"; exit 1 ;;
 esac
 [[ "$INTERACTIVE_MODE" == "true" ]] && divider
 
-# 3. runtime arguments
+# 3. Runtime arguments
 if [[ "$ARGS" == "none" ]]; then
   echo ""; echo "Does the binary expect any arguments? (none / e.g., x y z)"
   read -rp "[none]: " ARGS; ARGS="${ARGS:-none}"
 fi
 [[ "$INTERACTIVE_MODE" == "true" ]] && divider
 
-# 4. Enable negating path exploration (if not set via flag)
+# 4. Negate path exploration
 if [[ -z "$NEGATE_PATH_FLAG" ]]; then
   echo ""; echo "Do you want to activate the negating path execution to cover symbolically more paths?"
-  read -rp "[Y/n]: " ENABLE_NEGATING; ENABLE_NEGATING="${ENABLE_NEGATING,,}"  # to lowercase
+  read -rp "[Y/n]: " ENABLE_NEGATING; ENABLE_NEGATING="${ENABLE_NEGATING,,}"
   if [[ "$ENABLE_NEGATING" == "n" || "$ENABLE_NEGATING" == "no" ]]; then
     NEGATE_PATH_FLAG="false"
   else
@@ -167,34 +195,42 @@ fi
 [[ "$INTERACTIVE_MODE" == "true" ]] && divider
 
 ##############################################################################
-#                        ENV EXPORTS & COMMAND LINE
+#                        ENV EXPORTS & FINAL COMMAND
 ##############################################################################
+
 export MODE ARGS START_POINT="$ADDR" ZORYA_DIR BIN_PATH NEGATE_PATH_FLAG="$NEGATE_PATH_FLAG"
 
-CMD="$ZORYA_DIR/zorya $BIN_PATH --mode $MODE $ADDR"
+# Build final command string
+CMD="$ZORYA_DIR/zorya $BIN_PATH --mode $MODE"
+[[ -n "$ADDR" ]] && CMD+=" $ADDR"
 [[ -n "$SOURCE_LANG" ]] && CMD+=" --lang $SOURCE_LANG"
-[[ -n "$COMPILER"     ]] && CMD+=" --compiler $COMPILER"
-[[ "$ARGS" != "none"  ]] && CMD+=" --arg \"$ARGS\""
+[[ -n "$COMPILER" ]] && CMD+=" --compiler $COMPILER"
+[[ "$ARGS" != "none" ]] && CMD+=" --arg \"$ARGS\""
 [[ "$NEGATE_PATH_FLAG" == "true" ]] && CMD+=" --negate-path-exploration" || CMD+=" --no-negate-path-exploration"
 
+echo "*************************************************************************************"
 echo "Running command: $CMD"
-echo "";
+echo ""
 
+# Step 1: Pcode generation
 cd "$PCODE_GENERATOR_DIR" || exit 1
 RUSTFLAGS="--cap-lints=allow" cargo run --release "$BIN_PATH" --low-pcode
 
 PCODE_FILE="$PCODE_GENERATOR_DIR/results/$(basename "$BIN_PATH")_low_pcode.txt"
 [[ ! -f "$PCODE_FILE" ]] && { echo "Pcode generation failed."; exit 1; }
 
+# Step 2: Generate dumps
 echo ""; echo "Generating memory and CPU register dumps…"
 chmod +x "$ZORYA_DIR/scripts/dump_memory.sh"
 "$ZORYA_DIR/scripts/dump_memory.sh" "$BIN_PATH" "$ADDR" "$ENTRY_POINT" "$ARGS"
 
+# Step 3: Run Zorya core
 echo ""; 
 echo "*********************************************************************************************"
 echo "Completed the generation of memory and CPU register dumps, and the P-Code file of the binary."
 echo "Launching Zorya now..."
 echo "*********************************************************************************************"
-echo "";
+echo ""
+
 cd "$ZORYA_DIR" || exit 1
 RUSTFLAGS="--cap-lints=allow" cargo run --release -- --write-args "$ARGS"
