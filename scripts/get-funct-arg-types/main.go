@@ -26,11 +26,11 @@ type Argument struct {
 	Location  string   `json:"location,omitempty"` // For debugging location info
 }
 
-// Standard x86-64 DWARF register mapping 
+// Standard x86-64 DWARF register mapping
 var correctDwarfRegNames = map[int]string{
 	0:  "RAX",
 	1:  "RDX",
-	2:  "RCX", 
+	2:  "RCX",
 	3:  "RBX",
 	4:  "RSI",
 	5:  "RDI",
@@ -47,8 +47,8 @@ var correctDwarfRegNames = map[int]string{
 }
 
 type LocationInfo struct {
-	Registers []string
-	HasStack  bool
+	Registers    []string
+	HasStack     bool
 	StackOffsets []int64
 }
 
@@ -81,6 +81,7 @@ func main() {
 	rdr := dwarfData.Reader()
 
 	var currentFunc *Function
+	var currentFuncLowPC uint64
 	safetyCounter := 0
 	maxIterations := 100000
 
@@ -139,6 +140,7 @@ func main() {
 					Arguments:    []Argument{},
 					HasReturnPtr: hasReturnPtr,
 				}
+				currentFuncLowPC = funcAddr
 			} else {
 				currentFunc = nil
 			}
@@ -181,20 +183,20 @@ func main() {
 			var locationInfo string
 
 			// Parse location information from DWARF
-			locInfo := parseLocationInfo(dwarfData, locationAttr)
-			
+			locInfo := parseLocationInfo(f, locationAttr, currentFuncLowPC)
+
 			if len(locInfo.Registers) > 0 {
 				// DWARF has explicit register information - use it!
 				registers = locInfo.Registers
 				locationInfo = "from_dwarf_location"
 			} else {
 				// Only fall back to ABI guessing if DWARF provides no location info
-				registers = getRegistersByGoABI(argType, currentFunc, currentFunc.HasReturnPtr)
+				registers = getRegistersByGoABI(argType, currentFunc)
 				locationInfo = "from_abi_fallback"
-				fmt.Fprintf(os.Stderr, "Warning: No DWARF location for %s.%s, using ABI fallback\n", 
+				fmt.Fprintf(os.Stderr, "Warning: No DWARF location for %s.%s, using ABI fallback\n",
 					currentFunc.Name, argName)
 			}
-			
+
 			arg := Argument{
 				Name:      argName,
 				Type:      argType,
@@ -203,7 +205,7 @@ func main() {
 
 			// Enhanced debug location info
 			if locationAttr != nil {
-				arg.Location = fmt.Sprintf("%s: location_attr=%v (type:%T)", 
+				arg.Location = fmt.Sprintf("%s: location_attr=%v (type:%T)",
 					locationInfo, locationAttr, locationAttr)
 			} else {
 				arg.Location = locationInfo + ": no_location_attr"
@@ -232,7 +234,7 @@ func main() {
 }
 
 // Improved location parsing with better error handling
-func parseLocationInfo(d *dwarf.Data, locationAttr interface{}) LocationInfo {
+func parseLocationInfo(ef *elf.File, locationAttr interface{}, lowPC uint64) LocationInfo {
 	info := LocationInfo{
 		Registers:    []string{},
 		HasStack:     false,
@@ -247,44 +249,267 @@ func parseLocationInfo(d *dwarf.Data, locationAttr interface{}) LocationInfo {
 	case int64:
 		// Location list offset - this is the most common case for function parameters
 		fmt.Fprintf(os.Stderr, "Debug: Parsing location list at offset %d (0x%x)\n", loc, loc)
-		return parseLocationListOffset(d, loc)
-		
+		// Try DWARF v5 .debug_loclists first, then legacy .debug_loc
+		if ef.Section(".debug_loclists") != nil && ef.Section(".debug_loclists").Size > 0 {
+			parsed := parseLocationListOffsetV5(ef, uint64(loc), lowPC)
+			if len(parsed.Registers) > 0 || len(parsed.StackOffsets) > 0 {
+				return normalizeStackRegisters(parsed)
+			}
+		}
+		if ef.Section(".debug_loc") != nil && ef.Section(".debug_loc").Size > 0 {
+			parsed := parseLocationListOffsetLegacy(ef, uint64(loc), lowPC)
+			return normalizeStackRegisters(parsed)
+		}
+		fmt.Fprintf(os.Stderr, "Warning: No loclists sections present in ELF\n")
+		return info
+
 	case []byte:
 		// Direct location expression ([]byte and []uint8 are the same type)
 		fmt.Fprintf(os.Stderr, "Debug: Parsing direct location expression (%d bytes)\n", len(loc))
-		return parseLocationExpression(loc)
-		
+		return normalizeStackRegisters(parseLocationExpression(loc))
+
 	default:
-		fmt.Fprintf(os.Stderr, "Warning: Unknown location attribute type: %T, value: %v\n", 
+		fmt.Fprintf(os.Stderr, "Warning: Unknown location attribute type: %T, value: %v\n",
 			locationAttr, locationAttr)
 		return info
 	}
 }
 
-// Simplified but functional location list parser
-func parseLocationListOffset(d *dwarf.Data, offset int64) LocationInfo {
-	info := LocationInfo{
-		Registers:    []string{},
-		HasStack:     false,
-		StackOffsets: []int64{},
+// Normalize stack-related placeholders into explicit strings usable by the Rust side.
+func normalizeStackRegisters(in LocationInfo) LocationInfo {
+	if len(in.Registers) == 0 {
+		return in
 	}
+	// Replace STACK/FRAME_BASE with STACK+0x<offset> if we have corresponding offsets
+	out := LocationInfo{Registers: []string{}, HasStack: in.HasStack, StackOffsets: in.StackOffsets}
+	offsetIdx := 0
+	for _, r := range in.Registers {
+		switch r {
+		case "STACK", "FRAME_BASE":
+			if offsetIdx < len(in.StackOffsets) {
+				out.Registers = append(out.Registers, fmt.Sprintf("STACK+0x%x", uint64(in.StackOffsets[offsetIdx])))
+				offsetIdx++
+			} else {
+				out.Registers = append(out.Registers, r)
+			}
+		default:
+			out.Registers = append(out.Registers, r)
+		}
+	}
+	return out
+}
 
-	// Known patterns based on DWARF analysis
-	knownOffsets := map[int64][]string{
-		236132: {"RDI", "RSI", "RDX"}, // pkScript []byte from your analysis
-		// Add more patterns as you discover them by analyzing DWARF output
-	}
-	
-	if registers, exists := knownOffsets[offset]; exists {
-		info.Registers = registers
-		fmt.Fprintf(os.Stderr, "Debug: Found known registers for offset %d: %v\n", offset, registers)
+// Parse legacy DWARF location lists (.debug_loc, DWARF <= v4)
+func parseLocationListOffsetLegacy(ef *elf.File, offset uint64, lowPC uint64) LocationInfo {
+	info := LocationInfo{Registers: []string{}, HasStack: false, StackOffsets: []int64{}}
+
+	sec := ef.Section(".debug_loc")
+	if sec == nil || sec.Size == 0 {
 		return info
 	}
-	
-	// Log unknown offsets so you can analyze them and add to known patterns
-	fmt.Fprintf(os.Stderr, "Warning: Unknown location list offset %d (0x%x) - analyze with objdump and add to known patterns\n", 
-		offset, offset)
-	
+	data, err := sec.Data()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to read .debug_loc: %v\n", err)
+		return info
+	}
+	if offset >= uint64(len(data)) {
+		fmt.Fprintf(os.Stderr, "Warning: .debug_loc offset out of range: 0x%x\n", offset)
+		return info
+	}
+
+	addrSize := 8
+	is64 := ef.Class == elf.ELFCLASS64
+	if !is64 {
+		addrSize = 4
+	}
+	order := ef.ByteOrder
+
+	i := int(offset)
+	var base uint64 = 0
+	// Base address selection markers per DWARF spec
+	var baseMarker uint64 = 0xffffffff
+	if is64 {
+		baseMarker = 0xffffffffffffffff
+	}
+
+	for i < len(data) {
+		// Read start, end
+		if i+addrSize*2 > len(data) {
+			break
+		}
+		var start, end uint64
+		if addrSize == 8 {
+			start = order.Uint64(data[i : i+8])
+			end = order.Uint64(data[i+8 : i+16])
+			i += 16
+		} else {
+			start = uint64(order.Uint32(data[i : i+4]))
+			end = uint64(order.Uint32(data[i+4 : i+8]))
+			i += 8
+		}
+
+		if start == 0 && end == 0 {
+			// End of list
+			break
+		}
+		if start == baseMarker {
+			// Base address selection entry
+			base = end
+			continue
+		}
+
+		// Expression length (u16), then bytes
+		if i+2 > len(data) {
+			break
+		}
+		exprLen := int(order.Uint16(data[i : i+2]))
+		i += 2
+		if i+exprLen > len(data) {
+			break
+		}
+		expr := data[i : i+exprLen]
+		i += exprLen
+
+		// Compute absolute range
+		absStart := start
+		absEnd := end
+		if base != 0 {
+			absStart = base + start
+			absEnd = base + end
+		}
+		if lowPC >= absStart && lowPC < absEnd {
+			// This is the location at function entry
+			return parseLocationExpression(expr)
+		}
+	}
+	return info
+}
+
+// Parse DWARF v5 location lists (.debug_loclists)
+func parseLocationListOffsetV5(ef *elf.File, offset uint64, lowPC uint64) LocationInfo {
+	info := LocationInfo{Registers: []string{}, HasStack: false, StackOffsets: []int64{}}
+
+	sec := ef.Section(".debug_loclists")
+	if sec == nil || sec.Size == 0 {
+		return info
+	}
+	data, err := sec.Data()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to read .debug_loclists: %v\n", err)
+		return info
+	}
+	if offset >= uint64(len(data)) {
+		fmt.Fprintf(os.Stderr, "Warning: .debug_loclists offset out of range: 0x%x\n", offset)
+		return info
+	}
+
+	addrSize := 8
+	if ef.Class != elf.ELFCLASS64 {
+		addrSize = 4
+	}
+	order := ef.ByteOrder
+
+	// In v5, the offset can be either an index into an offset table or a direct sec offset.
+	// We assume a direct section offset to the start of a location list for simplicity.
+	i := int(offset)
+	var base uint64 = 0
+
+	// Helper to read an address
+	readAddr := func() (uint64, bool) {
+		if i+addrSize > len(data) {
+			return 0, false
+		}
+		var v uint64
+		if addrSize == 8 {
+			v = order.Uint64(data[i : i+8])
+		} else {
+			v = uint64(order.Uint32(data[i : i+4]))
+		}
+		i += addrSize
+		return v, true
+	}
+
+	for i < len(data) {
+		kind := data[i]
+		i++
+		switch kind {
+		case 0x00: // DW_LLE_end_of_list
+			return info
+		case 0x01: // DW_LLE_base_address
+			v, ok := readAddr()
+			if !ok {
+				return info
+			}
+			base = v
+		case 0x02: // DW_LLE_start_end
+			start, ok1 := readAddr()
+			end, ok2 := readAddr()
+			if !ok1 || !ok2 {
+				return info
+			}
+			// expr length ULEB
+			if i >= len(data) {
+				return info
+			}
+			exprLen, n := readULEB128(data[i:])
+			i += n
+			if i+int(exprLen) > len(data) {
+				return info
+			}
+			expr := data[i : i+int(exprLen)]
+			i += int(exprLen)
+			if lowPC >= start && lowPC < end {
+				return parseLocationExpression(expr)
+			}
+		case 0x04: // DW_LLE_offset_pair
+			startOff, n1 := readULEB128(data[i:])
+			i += n1
+			endOff, n2 := readULEB128(data[i:])
+			i += n2
+			exprLen, n3 := readULEB128(data[i:])
+			i += n3
+			if i+int(exprLen) > len(data) {
+				return info
+			}
+			expr := data[i : i+int(exprLen)]
+			i += int(exprLen)
+			start := base + startOff
+			end := base + endOff
+			if lowPC >= start && lowPC < end {
+				return parseLocationExpression(expr)
+			}
+		default:
+			// Skip unhandled entry kinds conservatively
+			// Some entries carry only a base or single address/length; try to skip their payloads safely
+			switch kind {
+			case 0x03: // DW_LLE_start_length
+				start, ok := readAddr()
+				if !ok {
+					return info
+				}
+				length, n := readULEB128(data[i:])
+				i += n
+				if i >= len(data) {
+					return info
+				}
+				exprLen, n2 := readULEB128(data[i:])
+				i += n2
+				if i+int(exprLen) > len(data) {
+					return info
+				}
+				expr := data[i : i+int(exprLen)]
+				i += int(exprLen)
+				end := start + length
+				if lowPC >= start && lowPC < end {
+					return parseLocationExpression(expr)
+				}
+			default:
+				// Unknown kind: try to bail out to avoid infinite loop
+				fmt.Fprintf(os.Stderr, "Debug: Unknown DW_LLE kind 0x%02x at 0x%x\n", kind, i-1)
+				return info
+			}
+		}
+	}
 	return info
 }
 
@@ -319,10 +544,10 @@ func parseLocationExpression(expr []byte) LocationInfo {
 			if i < len(expr) {
 				offset, bytesRead := readLEB128(expr[i:])
 				i += bytesRead
-				
+
 				info.HasStack = true
 				info.StackOffsets = append(info.StackOffsets, offset)
-				
+
 				if regNum == 7 { // RSP
 					info.Registers = append(info.Registers, "STACK")
 				} else if regName, exists := correctDwarfRegNames[regNum]; exists {
@@ -366,10 +591,10 @@ func parseLocationExpression(expr []byte) LocationInfo {
 				if i < len(expr) {
 					offset, bytesRead2 := readLEB128(expr[i:])
 					i += bytesRead2
-					
+
 					info.HasStack = true
 					info.StackOffsets = append(info.StackOffsets, offset)
-					
+
 					if regNum == 7 { // RSP
 						info.Registers = append(info.Registers, "STACK")
 					} else if regName, exists := correctDwarfRegNames[int(regNum)]; exists {
@@ -380,10 +605,10 @@ func parseLocationExpression(expr []byte) LocationInfo {
 
 		default:
 			// Skip unknown operations - but don't crash
-			fmt.Fprintf(os.Stderr, "Debug: Unknown DWARF op: 0x%02x at position %d (remaining bytes: %d)\n", 
+			fmt.Fprintf(os.Stderr, "Debug: Unknown DWARF op: 0x%02x at position %d (remaining bytes: %d)\n",
 				op, i-1, len(expr)-i+1)
 		}
-		
+
 		// Safety check to prevent infinite loops
 		if i > len(expr) {
 			fmt.Fprintf(os.Stderr, "Warning: DWARF expression parser went beyond bounds, stopping\n")
@@ -399,11 +624,11 @@ func readULEB128(data []byte) (uint64, int) {
 	if len(data) == 0 {
 		return 0, 0
 	}
-	
+
 	var result uint64
 	var shift uint
 	var i int
-	
+
 	for i = 0; i < len(data); i++ {
 		b := data[i]
 		result |= uint64(b&0x7F) << shift
@@ -416,7 +641,7 @@ func readULEB128(data []byte) (uint64, int) {
 			break
 		}
 	}
-	
+
 	return result, i + 1
 }
 
@@ -424,11 +649,11 @@ func readLEB128(data []byte) (int64, int) {
 	if len(data) == 0 {
 		return 0, 0
 	}
-	
+
 	var result int64
 	var shift uint
 	var i int
-	
+
 	for i = 0; i < len(data); i++ {
 		b := data[i]
 		result |= int64(b&0x7F) << shift
@@ -441,12 +666,12 @@ func readLEB128(data []byte) (int64, int) {
 			break
 		}
 	}
-	
+
 	// Sign extend if necessary
 	if i < len(data) && shift < 64 && (data[i]&0x40) != 0 {
 		result |= -(1 << shift)
 	}
-	
+
 	return result, i + 1
 }
 
@@ -532,41 +757,41 @@ func isComplexGoType(typeName string) bool {
 }
 
 // Fallback ABI guessing - only used when DWARF provides no location info
-func getRegistersByGoABI(argType string, currentFunc *Function, hasReturnPtr bool) []string {
+func getRegistersByGoABI(argType string, currentFunc *Function) []string {
 	// For TinyGo: Use LLVM-style register assignment
 	// Don't make assumptions about return pointer reservation - trust DWARF instead
 	intRegs := []string{"RDI", "RSI", "RDX", "RCX", "R8", "R9"}
-	
+
 	// Calculate register usage for current argument
 	regUsage := calculateRegisterUsage(argType)
-	
+
 	// Calculate starting register position based on previous arguments
 	startReg := calculateStartingRegisterAccurate(currentFunc.Arguments)
-	
+
 	if startReg >= len(intRegs) {
 		// Arguments go to stack
 		stackOffsets := make([]string, regUsage)
 		for i := 0; i < regUsage; i++ {
-			offset := 8 + (startReg - len(intRegs) + i) * 8
+			offset := 8 + (startReg-len(intRegs)+i)*8
 			stackOffsets[i] = fmt.Sprintf("STACK+0x%x", offset)
 		}
 		return stackOffsets
 	}
-	
+
 	endReg := startReg + regUsage
 	if endReg > len(intRegs) {
 		// Partially on stack
 		regsUsed := len(intRegs) - startReg
 		result := make([]string, regUsage)
 		copy(result, intRegs[startReg:])
-		
+
 		for i := regsUsed; i < regUsage; i++ {
-			stackOffset := 8 + (i - regsUsed) * 8
+			stackOffset := 8 + (i-regsUsed)*8
 			result[i] = fmt.Sprintf("STACK+0x%x", stackOffset)
 		}
 		return result
 	}
-	
+
 	result := make([]string, regUsage)
 	copy(result, intRegs[startReg:endReg])
 	return result
@@ -575,13 +800,13 @@ func getRegistersByGoABI(argType string, currentFunc *Function, hasReturnPtr boo
 // Calculate the starting register for an argument based on actual previous arguments
 func calculateStartingRegisterAccurate(previousArgs []Argument) int {
 	totalRegsUsed := 0
-	
+
 	// Sum up the register usage of all previous arguments
 	for _, arg := range previousArgs {
 		regUsage := calculateRegisterUsage(arg.Type)
 		totalRegsUsed += regUsage
 	}
-	
+
 	return totalRegsUsed
 }
 

@@ -624,9 +624,9 @@ fn execute_instructions_from(
 
                 // This block is for find fast a SAT state for the negated path exploration
                 if negate_path_flag == "true" {
-                    // broken-calculator 22f068 // omni-vuln4 0x2300b7 0x2300d7// crashme: 0x22b21a
+                    // broken-calculator 22f068 // omni-vuln4 0x2300d7// crashme: 0x22b21a
                     // invalidpubkey 22fc8b
-                    if current_rip == 0x22f068 {
+                    if current_rip == 0x22b21a {
                         log!(
                             executor.state.logger,
                             ">>> Evaluating arguments for the negated path exploration."
@@ -727,9 +727,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x0 - RAX is {:x} and symbolic {:?}",
+                "The value of register at offset 0x0 - RAX is {:x} and symbolic {}",
                 register0x0.concrete,
-                register0x0.symbolic.simplify()
+                register0x0.symbolic.simplify().to_string()
             );
             let register0x8 = executor
                 .state
@@ -740,9 +740,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x8 - RCX is {:x} and symbolic {:?}",
+                "The value of register at offset 0x8 - RCX is {:x} and symbolic {}",
                 register0x8.concrete,
-                register0x8.symbolic.simplify()
+                register0x8.symbolic.simplify().to_string()
             );
             let register0x10 = executor
                 .state
@@ -753,9 +753,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x10 - RDX is {:x} and symbolic {:?}",
+                "The value of register at offset 0x10 - RDX is {:x} and symbolic {}",
                 register0x10.concrete,
-                register0x10.symbolic.simplify()
+                register0x10.symbolic.simplify().to_string()
             );
             let register0x18 = executor
                 .state
@@ -766,9 +766,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x18 - RBX is {:x} and symbolic {:?}",
+                "The value of register at offset 0x18 - RBX is {:x} and symbolic {}",
                 register0x18.concrete,
-                register0x18.symbolic.simplify()
+                register0x18.symbolic.simplify().to_string()
             );
             let register0x20 = executor
                 .state
@@ -779,9 +779,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x20 - RSP is {:x} and symbolic {:?}",
+                "The value of register at offset 0x20 - RSP is {:x} and symbolic {}",
                 register0x20.concrete,
-                register0x20.symbolic.simplify()
+                register0x20.symbolic.simplify().to_string()
             );
             let register0x28 = executor
                 .state
@@ -792,9 +792,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x28 - RBP is {:x} and symbolic {:?}",
+                "The value of register at offset 0x28 - RBP is {:x} and symbolic {}",
                 register0x28.concrete,
-                register0x28.symbolic.simplify()
+                register0x28.symbolic.simplify().to_string()
             );
             let register0x30 = executor
                 .state
@@ -805,9 +805,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x30 - RSI is {:x} and symbolic {:?}",
+                "The value of register at offset 0x30 - RSI is {:x} and symbolic {}",
                 register0x30.concrete,
-                register0x30.symbolic.simplify()
+                register0x30.symbolic.simplify().to_string()
             );
             let register0x38 = executor
                 .state
@@ -818,9 +818,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x38 - RDI is {:x} and symbolic {:?}",
+                "The value of register at offset 0x38 - RDI is {:x} and symbolic {}",
                 register0x38.concrete,
-                register0x38.symbolic.simplify()
+                register0x38.symbolic.simplify().to_string()
             );
             let register0x80 = executor
                 .state
@@ -831,9 +831,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x80 - R8 is {:x} and symbolic {:?}",
+                "The value of register at offset 0x80 - R8 is {:x} and symbolic {}",
                 register0x80.concrete,
-                register0x80.symbolic.simplify()
+                register0x80.symbolic.simplify().to_string()
             );
             let register0x88 = executor
                 .state
@@ -844,9 +844,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x88 - R9 is {:x} and symbolic {:?}",
+                "The value of register at offset 0x88 - R9 is {:x} and symbolic {}",
                 register0x88.concrete,
-                register0x88.symbolic.simplify()
+                register0x88.symbolic.simplify().to_string()
             );
             let register0x90 = executor
                 .state
@@ -857,9 +857,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x90 - R10 is {:x} and symbolic {:?}",
+                "The value of register at offset 0x90 - R10 is {:x} and symbolic {}",
                 register0x90.concrete,
-                register0x90.symbolic.simplify()
+                register0x90.symbolic.simplify().to_string()
             );
             let register0x98 = executor
                 .state
@@ -870,9 +870,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x98 - R11 is {:x} and symbolic {:?}",
+                "The value of register at offset 0x98 - R11 is {:x} and symbolic {}",
                 register0x98.concrete,
-                register0x98.symbolic.simplify()
+                register0x98.symbolic.simplify().to_string()
             );
             let register0xa0 = executor
                 .state
@@ -883,9 +883,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0xa0 - R12 is {:x} and symbolic {:?}",
+                "The value of register at offset 0xa0 - R12 is {:x} and symbolic {}",
                 register0xa0.concrete,
-                register0xa0.symbolic.simplify()
+                register0xa0.symbolic.simplify().to_string()
             );
             let register0xa8 = executor
                 .state
@@ -896,9 +896,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0xa8 - R13 is {:x} and symbolic {:?}",
+                "The value of register at offset 0xa8 - R13 is {:x} and symbolic {}",
                 register0xa8.concrete,
-                register0xa8.symbolic.simplify()
+                register0xa8.symbolic.simplify().to_string()
             );
             let register0xb0 = executor
                 .state
@@ -909,9 +909,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0xb0 - R14 is {:x} and symbolic {:?}",
+                "The value of register at offset 0xb0 - R14 is {:x} and symbolic {}",
                 register0xb0.concrete,
-                register0xb0.symbolic.simplify()
+                register0xb0.symbolic.simplify().to_string()
             );
             let register0xb8 = executor
                 .state
@@ -922,9 +922,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0xb8 - R15 is {:x} and symbolic {:?}",
+                "The value of register at offset 0xb8 - R15 is {:x} and symbolic {}",
                 register0xb8.concrete,
-                register0xb8.symbolic.simplify()
+                register0xb8.symbolic.simplify().to_string()
             );
             let register0x1200 = executor
                 .state
@@ -961,9 +961,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x200 - CF is {:x} and symbolic {:?}",
+                "The value of register at offset 0x200 - CF is {:x} and symbolic {}",
                 register0x200.concrete,
-                register0x200.symbolic.simplify()
+                register0x200.symbolic.simplify().to_string()
             );
             let register0x202 = executor
                 .state
@@ -974,9 +974,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x202 - PF is {:x} and symbolic {:?}",
+                "The value of register at offset 0x202 - PF is {:x} and symbolic {}",
                 register0x202.concrete,
-                register0x202.symbolic.simplify()
+                register0x202.symbolic.simplify().to_string()
             );
             let register0x206 = executor
                 .state
@@ -987,9 +987,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x206 - ZF is {:x} and symbolic {:?}",
+                "The value of register at offset 0x206 - ZF is {:x} and symbolic {}",
                 register0x206.concrete,
-                register0x206.symbolic.simplify()
+                register0x206.symbolic.simplify().to_string()
             );
             let register0x207 = executor
                 .state
@@ -1000,9 +1000,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x207 - SF is {:x} and symbolic {:?}",
+                "The value of register at offset 0x207 - SF is {:x} and symbolic {}",
                 register0x207.concrete,
-                register0x207.symbolic.simplify()
+                register0x207.symbolic.simplify().to_string()
             );
             let register0x20b = executor
                 .state
@@ -1013,9 +1013,9 @@ fn execute_instructions_from(
                 .unwrap();
             log!(
                 executor.state.logger,
-                "The value of register at offset 0x20b - OF is {:x} and symbolic {:?}",
+                "The value of register at offset 0x20b - OF is {:x} and symbolic {}",
                 register0x20b.concrete,
-                register0x20b.symbolic.simplify()
+                register0x20b.symbolic.simplify().to_string()
             );
             let register0x110 = executor
                 .state

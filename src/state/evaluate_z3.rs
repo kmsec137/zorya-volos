@@ -286,12 +286,12 @@ pub fn evaluate_args_z3<'ctx>(
                             "Conditional flag Bool simplified: {:?}",
                             bool_expr.simplify()
                         );
-                        // Assert the condition that actually causes the panic
+                        // Flip the observed condition to explore the negated branch
                         let condition = if panic_causing_flag_u64 == 0 {
-                            // We want the condition to be false
-                            bool_expr.clone()
+                            // Observed false; require true
+                            bool_expr.not().not() // i.e., bool_expr == true
                         } else {
-                            // We want the condition to be true
+                            // Observed true; require false
                             bool_expr.not()
                         };
                         condition
@@ -305,11 +305,11 @@ pub fn evaluate_args_z3<'ctx>(
                         let bit_width = bv.get_size();
                         let expected_val =
                             BV::from_u64(executor.context, panic_causing_flag_u64, bit_width);
-                        // We need to convert the BV in Bool form to assert the condition
+                        // Flip the observed condition: if was 0, require non-zero; if was non-zero, require zero
                         let condition = if panic_causing_flag_u64 == 0 {
-                            bv._eq(&expected_val) // Negate the condition
+                            bv._eq(&expected_val).not()
                         } else {
-                            bv._eq(&expected_val).not() // Keep original
+                            bv._eq(&expected_val)
                         };
                         condition
                     }

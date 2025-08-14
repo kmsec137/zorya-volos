@@ -302,8 +302,10 @@ pub fn initialize_slice_argument<'a>(
     }
 
     let ctx = executor.context;
-    let ptr_spec = regs[0];
-    let len_spec = regs[1];
+    // Determine correct mapping of (ptr,len,cap) from concrete values to avoid mis-ordered DWARF/ABI cases
+    let mut ptr_spec = regs[0];
+    let mut len_spec = regs[1];
+    let mut cap_spec: Option<&str> = if regs.len() >= 3 { Some(regs[2]) } else { None };
 
     let inner_ty = &arg_type[2..];
     let elem_desc = if inner_ty.starts_with('[') {
@@ -327,6 +329,54 @@ pub fn initialize_slice_argument<'a>(
         .insert(arg_name.into(), slice_sv.clone());
 
     if let SymbolicVar::Slice(slice) = &slice_sv {
+        // Optionally re-map (ptr,len,cap) based on concrete values and plausibility checks
+        {
+            // Gather candidates
+            let mut specs: Vec<&str> = Vec::new();
+            specs.push(ptr_spec);
+            specs.push(len_spec);
+            if let Some(c3) = cap_spec { specs.push(c3); }
+
+            // Identify pointer-like spec: non-zero, 8-byte aligned, valid address
+            let mut detected_ptr: Option<&str> = None;
+            for s in &specs {
+                if let Some(v) = get_concrete_value_from_location(executor, s) {
+                    if v != 0 && (v & 7) == 0 && executor.state.memory.is_valid_address(v) {
+                        detected_ptr = Some(*s);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(p) = detected_ptr {
+                // Remaining are numeric; choose len/cap by magnitude (len <= cap when both present)
+                let rest: Vec<&str> = specs.into_iter().filter(|x| *x != p).collect();
+                if !rest.is_empty() {
+                    // Read their concrete values (fallback to u64::MAX if missing)
+                    let mut vals: Vec<(u64, &str)> = rest
+                        .iter()
+                        .map(|s| (get_concrete_value_from_location(executor, s).unwrap_or(u64::MAX), *s))
+                        .collect();
+                    vals.sort_by_key(|(v, _)| *v);
+                    // Smallest -> len, next -> cap (if exists)
+                    ptr_spec = p;
+                    len_spec = vals[0].1;
+                    cap_spec = if vals.len() >= 2 { Some(vals[1].1) } else { None };
+                } else {
+                    // Only pointer detected (2-reg slice), keep original len
+                    ptr_spec = p;
+                }
+                log!(
+                    executor.state.logger,
+                    "Resolved slice '{}' mapping: ptr={}, len={}{}",
+                    arg_name,
+                    ptr_spec,
+                    len_spec,
+                    cap_spec.map(|c| format!(", cap={}", c)).unwrap_or_default()
+                );
+            }
+        }
+
         // Handle solver assertions
         {
             let solver = &mut executor.solver;
@@ -341,19 +391,15 @@ pub fn initialize_slice_argument<'a>(
         }
 
         // Write pointer (can be register or stack)
-        write_symbolic_to_location(ptr_spec, &slice.pointer, conc, executor, "ptr");
+        write_symbolic_to_location(ptr_spec, &slice.pointer, conc, executor, "ptr", true);
 
         // Write length (can be register or stack)
-        write_symbolic_to_location(len_spec, &slice.length, conc, executor, "len");
+        write_symbolic_to_location(len_spec, &slice.length, conc, executor, "len", false);
 
         // Handle capacity if present
-        if regs.len() >= 3 {
+        if let Some(cap_loc) = cap_spec {
             let cap_bv = BV::fresh_const(ctx, &format!("{}_cap", arg_name), 64);
-            {
-                let solver = &mut executor.solver;
-                solver.assert(&cap_bv.bvuge(&slice.length));
-            }
-            write_symbolic_to_location(regs[2], &cap_bv, conc, executor, "cap");
+            write_symbolic_to_location(cap_loc, &cap_bv, conc, executor, "cap", false);
         }
 
         log!(
@@ -373,6 +419,7 @@ fn write_symbolic_to_location<'a>(
     conc: &mut Vec<ConcreteVar>,
     executor: &mut ConcolicExecutor<'a>,
     field_name: &str,
+    anchor_to_concrete: bool,
 ) {
     if is_stack_location(location_spec) {
         // Handle stack location
@@ -396,6 +443,17 @@ fn write_symbolic_to_location<'a>(
 
                     let stack_concolic_mem =
                         MemoryValue::new(current_val.concrete.to_u64(), symbolic_bv.clone(), 64);
+
+                    // Optionally anchor symbol to the current concrete value for reproducibility
+                    if anchor_to_concrete {
+                        let ctx = executor.context;
+                        let solver = &mut executor.solver;
+                        solver.assert(&symbolic_bv._eq(&BV::from_u64(
+                            ctx,
+                            current_val.concrete.to_u64(),
+                            64,
+                        )));
+                    }
 
                     executor
                         .state
@@ -425,6 +483,17 @@ fn write_symbolic_to_location<'a>(
                     symbolic: SymbolicVar::Int(symbolic_bv.clone()),
                     ctx: executor.context,
                 };
+
+                // Optionally anchor symbol to the current concrete value for reproducibility
+                if anchor_to_concrete {
+                    let ctx = executor.context;
+                    let solver = &mut executor.solver;
+                    solver.assert(&symbolic_bv._eq(&BV::from_u64(
+                        ctx,
+                        original.concrete.to_u64(),
+                        bit_width,
+                    )));
+                }
 
                 cpu.set_register_value_by_offset(offset, reg_concolic, bit_width)
                     .ok();
@@ -525,13 +594,13 @@ pub fn initialize_slice_memory_contents<'a>(
         if let Some(slice_sym_var) = executor.function_symbolic_arguments.get(arg_name) {
             if let SymbolicVar::Slice(_slice) = slice_sym_var {
                 // Get concrete values from registers to determine memory layout
-                let (ptr_concrete, len_concrete, _cap_concrete) =
+                let (ptr_concrete, len_concrete, _cap_concrete) = 
                     extract_slice_concrete_values(executor, reg_name);
 
                 if let (Some(ptr_addr), Some(slice_len)) = (ptr_concrete, len_concrete) {
                     // Determine element size and type
                     let (element_size, element_type) = parse_slice_element_info(arg_type);
-
+                    
                     log!(
                         executor.state.logger,
                         "Slice '{}': ptr=0x{:x}, len={}, element_size={}, element_type='{}'",
@@ -542,13 +611,31 @@ pub fn initialize_slice_memory_contents<'a>(
                         element_type
                     );
 
-                    // Initialize memory for each element in the slice
-                    for i in 0..slice_len {
-                        let element_addr = ptr_addr + (i * element_size);
+                    // Clamp initialization; also ensure we materialize at least 3 elements
+                    let elems_to_init = {
+                        let cap: u64 = 64;
+                        let base = if slice_len == 0 { 1 } else { slice_len };
+                        let n = if base > cap { cap } else { base };
+                        let m = if n < 3 { 3 } else { n };
+                        if base > cap {
+                            log!(
+                                executor.state.logger,
+                                "Clamping slice '{}' init from {} to {} elements",
+                                arg_name,
+                                base,
+                                cap
+                            );
+                        }
+                        m
+                    };
 
+                    // Initialize memory for each element in the slice (clamped)
+                    for i in 0..elems_to_init {
+                        let element_addr = ptr_addr + (i * element_size);
+                        
                         // Create symbolic variable for this element
                         let element_var_name = format!("{}[{}]", arg_name, i);
-
+                        
                         initialize_slice_element_memory(
                             executor,
                             &element_var_name,
@@ -670,7 +757,23 @@ fn get_concrete_value_from_location<'a>(
 
     if is_stack_location(location_spec) {
         // Handle stack location
-        // ... existing code ...
+        if let Some(stack_offset) = parse_stack_offset(location_spec) {
+            if let Some(rsp_reg) = executor.state.cpu_state.lock().unwrap().get_register_by_offset(0x20, 64) {
+                let rsp_value = rsp_reg.concrete.to_u64();
+                let stack_address = (rsp_value as i64 + stack_offset) as u64;
+                
+                if let Ok(stack_val) = executor.state.memory.read_u64(stack_address, &mut executor.state.logger.clone()) {
+                    let concrete_val = stack_val.concrete.to_u64();
+                    log!(
+                        executor.state.logger.clone(),
+                        "DEBUG: Stack location '{}' concrete value = 0x{:x}",
+                        location_spec,
+                        concrete_val
+                    );
+                    return Some(concrete_val);
+                }
+            }
+        }
     } else {
         // Handle register location
         let cpu = executor.state.cpu_state.lock().unwrap();
