@@ -10,12 +10,149 @@ use parser::parser::Inst;
 use std::fs::OpenOptions;
 use std::path::Path;
 use z3::ast::{Ast, BV};
+use std::collections::HashSet;
 use z3::SatResult;
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
         writeln!($logger, $($arg)*).unwrap();
     }};
+}
+
+/// Add ASCII constraints for argument bytes to ensure readable output
+fn add_ascii_constraints_for_args<'ctx>(
+    executor: &mut ConcolicExecutor<'ctx>,
+    binary_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ascii_profile = std::env::var("ARG_ASCII_PROFILE")
+        .unwrap_or_else(|_| "auto".to_string())
+        .to_lowercase();
+
+    // Auto-detect numeric arguments by parsing the execution trace for calls
+    // to strconv.Atoi / strconv.ParseInt and capture the first argument pointer.
+    let mut numeric_arg_ptrs: HashSet<u64> = HashSet::new();
+    if ascii_profile == "auto" {
+        if let Ok(trace) = std::fs::read_to_string("results/execution_trace.txt") {
+            for line in trace.lines() {
+                if line.contains("Symbol: strconv.Atoi") || line.contains("Symbol: strconv.ParseInt") {
+                    // Heuristic: find the first "=0x..." after the arrow
+                    if let Some(arrow_idx) = line.find("->") {
+                        let after = &line[arrow_idx + 2..];
+                        if let Some(s_idx) = after.find("=0x") {
+                            let hex_start = s_idx + 3;
+                            let mut hex_end = hex_start;
+                            let bytes = after.as_bytes();
+                            while hex_end < after.len() && bytes[hex_end].is_ascii_hexdigit() {
+                                hex_end += 1;
+                            }
+                            if let Ok(val) = u64::from_str_radix(&after[hex_start..hex_end], 16) {
+                                numeric_arg_ptrs.insert(val);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Ok(os_args_addr) = get_os_args_address(binary_path) {
+        if let Ok(slice_ptr_bv) = executor
+            .state
+            .memory
+            .read_u64(os_args_addr, &mut executor.state.logger.clone())
+        {
+            if let Ok(slice_len_bv) = executor
+                .state
+                .memory
+                .read_u64(os_args_addr + 8, &mut executor.state.logger.clone())
+            {
+                let slice_ptr_val = slice_ptr_bv.concrete.to_u64();
+                let slice_len_val = slice_len_bv.concrete.to_u64();
+                
+                // Add ASCII constraints for each argument byte
+                for i in 1..slice_len_val.min(10) { // Limit to first 10 args for performance
+                    let string_struct_addr = slice_ptr_val + i * 16;
+                    
+                    if let Ok(str_data_ptr_cv) = executor
+                        .state
+                        .memory
+                        .read_u64(string_struct_addr, &mut executor.state.logger.clone())
+                    {
+                        if let Ok(str_data_len_cv) = executor
+                            .state
+                            .memory
+                            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone())
+                        {
+                            let str_data_ptr_val = str_data_ptr_cv.concrete.to_u64();
+                            let str_data_len_val = str_data_len_cv.concrete.to_u64();
+                            let str_data_len_bv_sym = str_data_len_cv.symbolic.to_bv(executor.context);
+                            
+                            if str_data_ptr_val != 0 && str_data_len_val > 0 {
+                                // Decide constraint profile for this specific arg (auto/digits/printable)
+                                let apply_digits_for_this_arg = match ascii_profile.as_str() {
+                                    "digits" => true,
+                                    "printable" => false,
+                                    _ => numeric_arg_ptrs.contains(&str_data_ptr_val),
+                                };
+                                // Limit string length for performance
+                                let max_len = str_data_len_val.min(256);
+                                let mut first_byte_bv_opt: Option<z3::ast::BV> = None;
+                                for j in 0..max_len {
+                                    if let Ok(byte_read) = executor
+                                        .state
+                                        .memory
+                                        .read_byte(str_data_ptr_val + j)
+                                    {
+                                        let byte_bv = byte_read.symbolic.to_bv(executor.context);
+                                        if j == 0 { first_byte_bv_opt = Some(byte_bv.clone()); }
+                                        if apply_digits_for_this_arg {
+                                            // Allow only digits '0'-'9'; allow optional leading '-' at position 0
+                                            let zero = z3::ast::BV::from_u64(executor.context, b'0' as u64, 8);
+                                            let nine = z3::ast::BV::from_u64(executor.context, b'9' as u64, 8);
+                                            let is_digit = byte_bv.bvuge(&zero) & byte_bv.bvule(&nine);
+
+                                            if j == 0 {
+                                                let dash = z3::ast::BV::from_u64(executor.context, b'-' as u64, 8);
+                                                let is_dash = byte_bv._eq(&dash);
+                                                let allowed = z3::ast::Bool::or(executor.context, &[&is_dash, &is_digit]);
+                                                executor.solver.assert(&allowed);
+                                            } else {
+                                                executor.solver.assert(&is_digit);
+                                            }
+                                        } else {
+                                            // Default: printable ASCII (32-126)
+                                            let printable_min = z3::ast::BV::from_u64(executor.context, 32, 8);
+                                            let printable_max = z3::ast::BV::from_u64(executor.context, 126, 8);
+                                            let printable_constraint = byte_bv.bvuge(&printable_min) & byte_bv.bvule(&printable_max);
+                                            executor.solver.assert(&printable_constraint);
+                                        }
+                                    }
+                                }
+                                // For digits profile, forbid a lone '-' when length == 1
+                                if apply_digits_for_this_arg {
+                                    if let Some(first_byte_bv) = first_byte_bv_opt {
+                                        let one64 = z3::ast::BV::from_u64(executor.context, 1, 64);
+                                        let len_eq_one = str_data_len_bv_sym._eq(&one64);
+                                        let dash8 = z3::ast::BV::from_u64(executor.context, b'-' as u64, 8);
+                                        let first_is_dash = first_byte_bv._eq(&dash8);
+                                        let lone_dash = z3::ast::Bool::and(executor.context, &[&len_eq_one, &first_is_dash]);
+                                        let not_lone_dash = lone_dash.not();
+                                        executor.solver.assert(&not_lone_dash);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                match ascii_profile.as_str() {
+                    "digits" => log!(executor.state.logger, "Added ASCII constraints for argument bytes (digits mode)"),
+                    "printable" => log!(executor.state.logger, "Added ASCII constraints for argument bytes (printable mode)"),
+                    _ => log!(executor.state.logger, "Added ASCII constraints for argument bytes (auto mode: digits applied to detected numeric args)"),
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Write SAT state details to file and log to terminal
@@ -156,6 +293,9 @@ fn capture_go_arguments_evaluation(
     binary_path: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut output = String::new();
+    let ascii_profile = std::env::var("ARG_ASCII_PROFILE")
+        .unwrap_or_default()
+        .to_lowercase();
 
     // Get address of os.Args
     let os_args_addr = get_os_args_address(binary_path)?;
@@ -232,6 +372,20 @@ fn capture_go_arguments_evaluation(
             "The user input nr.{} must be => \"{}\", the raw value being {:?} (len={})\n",
             i, arg_str, arg_bytes, str_data_len_val
         ));
+        // If digits mode or value looks numeric, also print parsed integer form
+        let looks_numeric = {
+            let s = arg_str.trim();
+            let bytes = s.as_bytes();
+            !bytes.is_empty()
+                && bytes.iter().enumerate().all(|(idx, b)| {
+                    (*b >= b'0' && *b <= b'9') || (idx == 0 && *b == b'-')
+                })
+        };
+        if ascii_profile == "digits" || looks_numeric {
+            if let Ok(parsed) = arg_str.trim().parse::<i64>() {
+                output.push_str(&format!("  as integer: {}\n", parsed));
+            }
+        }
     }
 
     Ok(output)
@@ -303,13 +457,13 @@ pub fn evaluate_args_z3<'ctx>(
                             bv.simplify()
                         );
                         let bit_width = bv.get_size();
-                        let expected_val =
-                            BV::from_u64(executor.context, panic_causing_flag_u64, bit_width);
-                        // Flip the observed condition: if was 0, require non-zero; if was non-zero, require zero
+                        let zero = BV::from_u64(executor.context, 0, bit_width);
+                        // Flip the observed condition: if observed 0 (false), require non-zero (true);
+                        // if observed non-zero (true), require zero (false).
                         let condition = if panic_causing_flag_u64 == 0 {
-                            bv._eq(&expected_val).not()
+                            bv._eq(&zero).not()
                         } else {
-                            bv._eq(&expected_val)
+                            bv._eq(&zero)
                         };
                         condition
                     }
@@ -335,6 +489,9 @@ pub fn evaluate_args_z3<'ctx>(
 
             // List constraints and assert them to solver
             add_constraints_from_vector(&executor);
+
+            // Add ASCII constraints for argument bytes
+            let _ = add_ascii_constraints_for_args(executor, &binary_path);
 
             // Minimize symbolic variables to prefer smaller values
             for symbolic_var in executor.function_symbolic_arguments.values() {
@@ -426,6 +583,11 @@ pub fn evaluate_args_z3<'ctx>(
             log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
         }
     } else if mode == "start" || mode == "main" {
+        let binary_path = {
+            let target_info = GLOBAL_TARGET_INFO.lock().unwrap();
+            target_info.binary_path.clone()
+        };
+
         let cf_reg = executor
             .state
             .cpu_state
@@ -452,6 +614,9 @@ pub fn evaluate_args_z3<'ctx>(
         // List constraints and assert them to solver
         add_constraints_from_vector(&executor);
 
+        // Add ASCII constraints for argument bytes
+        let _ = add_ascii_constraints_for_args(executor, &binary_path);
+
         // we want to assert that the condition is non zero.
         let zero_bv = z3::ast::BV::from_u64(executor.context, 0, cond_bv.get_size());
         let branch_condition = cond_bv._eq(&zero_bv).not();
@@ -473,10 +638,6 @@ pub fn evaluate_args_z3<'ctx>(
                 let lang = std::env::var("SOURCE_LANG")
                     .unwrap_or_default()
                     .to_lowercase();
-                let binary_path = {
-                    let target_info = GLOBAL_TARGET_INFO.lock().unwrap();
-                    target_info.binary_path.clone()
-                };
 
                 let evaluation_content = if lang == "go" {
                     // Capture Go arguments evaluation

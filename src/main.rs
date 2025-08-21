@@ -626,7 +626,7 @@ fn execute_instructions_from(
                 if negate_path_flag == "true" {
                     // broken-calculator 22f068 // omni-vuln4 0x2300d7// crashme: 0x22b21a
                     // invalidpubkey 22fc8b
-                    if current_rip == 0x22b21a {
+                    if current_rip == 0x22891a {
                         log!(
                             executor.state.logger,
                             ">>> Evaluating arguments for the negated path exploration."
@@ -1625,6 +1625,12 @@ fn update_argc_argv(
         for offset in 0..arg_bytes.len() {
             let sym_byte =
                 BV::fresh_const(&executor.context, &format!("arg{}_byte{}", i, offset), 8);
+
+            // Add ASCII constraints for printable characters (32-126)
+            let printable_min = BV::from_u64(&executor.context, 32, 8);
+            let printable_max = BV::from_u64(&executor.context, 126, 8);
+            let ascii_constraint = sym_byte.bvuge(&printable_min) & sym_byte.bvule(&printable_max);
+            executor.solver.assert(&ascii_constraint);
 
             executor.state.memory.write_value(
                 current_string_address + offset as u64,
