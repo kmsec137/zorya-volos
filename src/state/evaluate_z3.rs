@@ -23,6 +23,70 @@ macro_rules! log {
 
 // Global timer to measure elapsed time until first SAT state is found
 static START_INSTANT: OnceLock<Instant> = OnceLock::new();
+static INVOCATION_CMDLINE: OnceLock<String> = OnceLock::new();
+
+/// Initialize the global SAT timer start. Safe to call multiple times; only first wins.
+pub fn init_sat_timer_start() {
+    let _ = START_INSTANT.set(Instant::now());
+}
+
+/// Initialize the recorded command line invocation including key environment variables.
+pub fn init_invocation_command_line() {
+    // Try to reconstruct the full wrapper-style command
+    let zorya_dir = std::env::var("ZORYA_DIR").ok();
+    let bin_path = std::env::var("BIN_PATH").ok();
+    let start_point = std::env::var("START_POINT").ok();
+    let mode = std::env::var("MODE").ok();
+    let source_lang = std::env::var("SOURCE_LANG").ok();
+    let compiler = std::env::var("COMPILER").ok();
+    let args_env = std::env::var("ARGS").ok();
+    let negate_flag = std::env::var("NEGATE_PATH_FLAG").ok();
+
+    let reconstructed = match (zorya_dir, bin_path, start_point, mode) {
+        (Some(zdir), Some(bin), Some(start), Some(mode_val)) => {
+            let mut s = format!("{}/zorya {} --mode {} {}", zdir, bin, mode_val, start);
+            if let Some(lang) = source_lang {
+                if !lang.is_empty() {
+                    s.push_str(&format!(" --lang {}", lang));
+                }
+            }
+            if let Some(comp) = compiler {
+                if !comp.is_empty() {
+                    s.push_str(&format!(" --compiler {}", comp));
+                }
+            }
+            if let Some(a) = args_env {
+                if !a.is_empty() && a != "none" {
+                    s.push_str(&format!(" --arg \"{}\"", a));
+                }
+            }
+            if let Some(neg) = negate_flag {
+                if neg == "true" {
+                    s.push_str(" --negate-path-exploration");
+                } else if neg == "false" {
+                    s.push_str(" --no-negate-path-exploration");
+                }
+            }
+            s
+        }
+        _ => {
+            // Fallback: argv join
+            let mut parts: Vec<String> = Vec::new();
+            for arg in std::env::args() {
+                let needs_quotes = arg.contains(' ') || arg.contains('\t');
+                let escaped = arg.replace('"', "\\\"");
+                if needs_quotes {
+                    parts.push(format!("\"{}\"", escaped));
+                } else {
+                    parts.push(escaped);
+                }
+            }
+            parts.join(" ")
+        }
+    };
+
+    let _ = INVOCATION_CMDLINE.set(reconstructed);
+}
 
 /// Add ASCII constraints for argument bytes to ensure readable output
 fn add_ascii_constraints_for_args<'ctx>(
@@ -192,9 +256,9 @@ fn add_ascii_constraints_for_args<'ctx>(
 fn write_sat_state_to_file(
     evaluation_content: &str,
     mode: &str,
+    panic_addr: Option<u64>,
     elapsed_since_start: Option<Duration>,
     instruction_addr: Option<u64>,
-    panic_addr: Option<u64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create results directory if it doesn't exist
     std::fs::create_dir_all("results")?;
@@ -218,6 +282,9 @@ fn write_sat_state_to_file(
     }
 
     // Write SAT state entry
+    if let Some(inv) = INVOCATION_CMDLINE.get() {
+        writeln!(file, "Running command: {}", inv)?;
+    }
     writeln!(file, "[*] SATISFIABLE STATE FOUND")?;
     writeln!(file, "Timestamp: {}", timestamp_str)?;
     writeln!(file, "Mode: {}", mode)?;
@@ -229,7 +296,6 @@ fn write_sat_state_to_file(
     if let Some(addr) = instruction_addr {
         writeln!(file, "Instruction Address: 0x{:x}", addr)?;
     }
-
     if let Some(addr) = panic_addr {
         writeln!(file, "Panic Address: 0x{:x}", addr)?;
     }
@@ -248,12 +314,6 @@ fn write_sat_state_to_file(
     if let Some(dur) = elapsed_since_start {
         let secs = dur.as_secs_f64();
         println!("[*] Elapsed since start: {:.3}s", secs);
-    }
-    if let Some(addr) = instruction_addr {
-        println!("[*] Instruction Address: 0x{:x}", addr);
-    }
-    if let Some(addr) = panic_addr {
-        println!("[*] Panic Address: 0x{:x}", addr);
     }
     println!("~~~~~~~~~~~\n");
 
@@ -316,6 +376,33 @@ fn capture_symbolic_arguments_evaluation(
                         if let Some(val_u64) = val.as_u64() {
                             output.push_str(&format!("  {} = #x{:016x}\n", bv, val_u64));
                             output.push_str(&format!("    (decimal: {})\n", val_u64));
+
+                            // Add ASCII interpretation for byte-sized values
+                            if bv.get_size() == 8 && val_u64 <= 255 {
+                                let byte_val = val_u64 as u8;
+                                if byte_val >= 32 && byte_val <= 126 {
+                                    // Printable ASCII
+                                    output.push_str(&format!(
+                                        "    (ASCII: '{}')\n",
+                                        char::from(byte_val)
+                                    ));
+                                } else if byte_val == 0 {
+                                    output.push_str(&format!("    (ASCII: '\\0' - null byte)\n"));
+                                } else if byte_val == 9 {
+                                    output.push_str(&format!("    (ASCII: '\\t' - tab)\n"));
+                                } else if byte_val == 10 {
+                                    output.push_str(&format!("    (ASCII: '\\n' - newline)\n"));
+                                } else if byte_val == 13 {
+                                    output.push_str(&format!(
+                                        "    (ASCII: '\\r' - carriage return)\n"
+                                    ));
+                                } else {
+                                    output.push_str(&format!(
+                                        "    (ASCII: non-printable, code {})\n",
+                                        byte_val
+                                    ));
+                                }
+                            }
                         }
                     } else {
                         // For large bit vectors (like 256-bit arrays)
@@ -450,10 +537,11 @@ pub fn evaluate_args_z3<'ctx>(
     inst: &Inst,
     address_of_negated_path_exploration: u64,
     conditional_flag: Option<ConcolicVar<'ctx>>,
+    instruction_addr: Option<u64>,
+    branch_target_addr: Option<u64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::env;
     let mode = env::var("MODE").expect("MODE environment variable is not set");
-    let _ = START_INSTANT.get_or_init(Instant::now);
 
     if mode == "function" {
         let binary_path = {
@@ -610,13 +698,12 @@ pub fn evaluate_args_z3<'ctx>(
 
                     // Write to file
                     let elapsed = START_INSTANT.get().map(|s| s.elapsed());
-                    let current_addr = executor.current_address.unwrap_or(0);
                     if let Err(e) = write_sat_state_to_file(
                         &evaluation_content,
                         &mode,
-                        elapsed,
-                        Some(current_addr),
                         panic_addr,
+                        elapsed,
+                        instruction_addr,
                     ) {
                         log!(
                             executor.state.logger,
@@ -807,33 +894,14 @@ pub fn evaluate_args_z3<'ctx>(
                     msg
                 };
 
-                // Determine panic address via AST exploration (optional)
-                let mut panic_addr_opt: Option<u64> = None;
-                let ast_panic_result = explore_ast_for_panic(
-                    executor,
-                    address_of_negated_path_exploration,
-                    &binary_path,
-                );
-                if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
-                    if let Some(panic_addr_str) = ast_panic_result.trim().split_whitespace().last()
-                    {
-                        if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
-                            if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
-                                panic_addr_opt = Some(parsed_addr);
-                            }
-                        }
-                    }
-                }
-
                 // Write to file
                 let elapsed = START_INSTANT.get().map(|s| s.elapsed());
-                let current_addr = executor.current_address.unwrap_or(0);
                 if let Err(e) = write_sat_state_to_file(
                     &evaluation_content,
                     &mode,
+                    branch_target_addr,
                     elapsed,
-                    Some(current_addr),
-                    panic_addr_opt,
+                    instruction_addr,
                 ) {
                     log!(
                         executor.state.logger,
@@ -923,6 +991,29 @@ fn log_symbolic_arguments_evaluation(
                                 log!(logger, "    (hex: 0x{:x})", u64_val);
                             } else {
                                 log!(logger, "    (decimal: {})", u64_val);
+
+                                // Add ASCII interpretation for byte-sized values
+                                if bv_var.get_size() == 8 && u64_val <= 255 {
+                                    let byte_val = u64_val as u8;
+                                    if byte_val >= 32 && byte_val <= 126 {
+                                        // Printable ASCII
+                                        log!(logger, "    (ASCII: '{}')", char::from(byte_val));
+                                    } else if byte_val == 0 {
+                                        log!(logger, "    (ASCII: '\\0' - null byte)");
+                                    } else if byte_val == 9 {
+                                        log!(logger, "    (ASCII: '\\t' - tab)");
+                                    } else if byte_val == 10 {
+                                        log!(logger, "    (ASCII: '\\n' - newline)");
+                                    } else if byte_val == 13 {
+                                        log!(logger, "    (ASCII: '\\r' - carriage return)");
+                                    } else {
+                                        log!(
+                                            logger,
+                                            "    (ASCII: non-printable, code {})",
+                                            byte_val
+                                        );
+                                    }
+                                }
                             }
                         }
                     }

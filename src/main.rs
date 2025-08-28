@@ -16,10 +16,14 @@ use z3::{
 use zorya::concolic::symbolic_initialization::{
     initialize_single_register_argument, initialize_single_register_slice,
     initialize_slice_argument, initialize_slice_memory_contents, initialize_string_argument,
+    initialize_string_memory_contents,
 };
 use zorya::concolic::{ConcolicVar, Logger};
 use zorya::executor::{ConcolicExecutor, SymbolicVar};
-use zorya::state::evaluate_z3::{evaluate_args_z3, get_os_args_address};
+use zorya::state::evaluate_z3::{
+    evaluate_args_z3, get_os_args_address, init_invocation_command_line, init_sat_timer_start,
+};
+use zorya::state::explore_ast::explore_ast_for_panic;
 use zorya::state::function_signatures::{
     load_function_args_map, load_go_function_args_map, precompute_function_signatures_via_ghidra,
     GoFunctionArg,
@@ -44,6 +48,10 @@ const IGNORED_TINYGO_FUNCS: &[&str] = &[
 ];
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // Initialize wall-clock timer to measure time until first SAT state
+    init_sat_timer_start();
+    // Record command line invocation for SAT result file
+    init_invocation_command_line();
     // Clean up previous SAT state file before starting new execution
     let sat_state_file = "results/FOUND_SAT_STATE.txt";
     if Path::new(sat_state_file).exists() {
@@ -388,6 +396,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
             }
 
+            // Initialize string memory contents (make string bytes symbolic)
+            log!(
+                executor.state.logger,
+                "Initializing string memory contents..."
+            );
+            initialize_string_memory_contents(&mut executor, args);
+
             log!(
                 executor.state.logger,
                 "=== INITIALIZATION COMPLETE: {} total arguments processed ===",
@@ -622,20 +637,49 @@ fn execute_instructions_from(
                 let negate_path_flag = std::env::var("NEGATE_PATH_FLAG")
                     .expect("NEGATE_PATH_FLAG environment variable is not set");
 
-                // This block is for find fast a SAT state for the negated path exploration
+                // This block is for find a SAT state for the negated path exploration
                 if negate_path_flag == "true" {
                     // broken-calculator 22f068 // omni-vuln4 0x2300d7// crashme: 0x22b21a
                     // invalidpubkey 22fc8b
-                    if current_rip == 0x22891a {
-                        log!(
-                            executor.state.logger,
-                            ">>> Evaluating arguments for the negated path exploration."
-                        );
+                    //if current_rip == 0x22af64 {
+                    log!(
+                        executor.state.logger,
+                        ">>> Evaluating arguments for the negated path exploration."
+                    );
+
+                    let ast_panic_result = explore_ast_for_panic(
+                        executor,
+                        address_of_negated_path_exploration,
+                        &binary_path,
+                    );
+
+                    if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
+                        let mut panic_addr: Option<u64> = None;
+
+                        if let Some(panic_addr_str) =
+                            ast_panic_result.trim().split_whitespace().last()
+                        {
+                            if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
+                                if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
+                                    panic_addr = Some(parsed_addr);
+                                    log!(executor.state.logger, ">>> The speculative AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
+                                } else {
+                                    log!(
+                                        executor.state.logger,
+                                        "Could not parse panic address from AST result: '{}'",
+                                        panic_addr_str
+                                    );
+                                }
+                            }
+                        }
+
                         evaluate_args_z3(
                             executor,
                             inst,
                             address_of_negated_path_exploration,
                             Some(conditional_flag.clone()),
+                            Some(current_rip),
+                            Some(branch_target_address),
                         )
                         .unwrap_or_else(|e| {
                             log!(
@@ -645,11 +689,14 @@ fn execute_instructions_from(
                                 e
                             );
                         });
+                    } else {
+                        log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
                     }
                 } else {
                     log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");
                 }
 
+                // This block is for find fast a SAT state when the execution is directly branching to a panic function
                 if panic_address_ints.contains(&z3::ast::Int::from_u64(
                     executor.context,
                     branch_target_address,
@@ -664,6 +711,8 @@ fn execute_instructions_from(
                         inst,
                         address_of_negated_path_exploration,
                         Some(conditional_flag),
+                        Some(current_rip),
+                        Some(branch_target_address),
                     )
                     .unwrap_or_else(|e| {
                         log!(

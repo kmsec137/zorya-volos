@@ -198,8 +198,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             if let Some(symbol_name) = self.symbol_table.get(&current_addr_hex).cloned() {
                 if symbol_name == "runtime.nilPanic" {
                     // Log all the constraints accumulated in the solver until that point
-                    evaluate_args_z3(self, &instruction, current_addr, None)
-                        .map_err(|e| e.to_string())?;
+                    evaluate_args_z3(
+                        self,
+                        &instruction,
+                        current_addr,
+                        None,
+                        Some(current_addr),
+                        None,
+                    )
+                    .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -215,8 +222,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
                 if symbol_name == "runtime.nilMapPanic" {
                     // Log all the constraints accumulated in the solver until that point
-                    evaluate_args_z3(self, &instruction, current_addr, None)
-                        .map_err(|e| e.to_string())?;
+                    evaluate_args_z3(
+                        self,
+                        &instruction,
+                        current_addr,
+                        None,
+                        Some(current_addr),
+                        None,
+                    )
+                    .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -232,8 +246,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
                 if symbol_name == "runtime._panic" {
                     // Log all the constraints accumulated in the solver until that point
-                    evaluate_args_z3(self, &instruction, current_addr, None)
-                        .map_err(|e| e.to_string())?;
+                    evaluate_args_z3(
+                        self,
+                        &instruction,
+                        current_addr,
+                        None,
+                        Some(current_addr),
+                        None,
+                    )
+                    .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -245,8 +266,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
                 if symbol_name == "runtime.recordForPanic" {
                     // Log all the constraints accumulated in the solver until that point
-                    evaluate_args_z3(self, &instruction, current_addr, None)
-                        .map_err(|e| e.to_string())?;
+                    evaluate_args_z3(
+                        self,
+                        &instruction,
+                        current_addr,
+                        None,
+                        Some(current_addr),
+                        None,
+                    )
+                    .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -258,8 +286,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
                 if symbol_name == "runtime.slicePanic" {
                     // Log all the constraints accumulated in the solver until that point
-                    evaluate_args_z3(self, &instruction, current_addr, None)
-                        .map_err(|e| e.to_string())?;
+                    evaluate_args_z3(
+                        self,
+                        &instruction,
+                        current_addr,
+                        None,
+                        Some(current_addr),
+                        None,
+                    )
+                    .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -271,8 +306,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
                 if symbol_name == "runtime.lookupPanic" {
                     // Log all the constraints accumulated in the solver until that point
-                    evaluate_args_z3(self, &instruction, current_addr, None)
-                        .map_err(|e| e.to_string())?;
+                    evaluate_args_z3(
+                        self,
+                        &instruction,
+                        current_addr,
+                        None,
+                        Some(current_addr),
+                        None,
+                    )
+                    .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -288,8 +330,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
                 if symbol_name == "runtime.runtimePanic" {
                     // Log all the constraints accumulated in the solver until that point
-                    evaluate_args_z3(self, &instruction, current_addr, None)
-                        .map_err(|e| e.to_string())?;
+                    evaluate_args_z3(
+                        self,
+                        &instruction,
+                        current_addr,
+                        None,
+                        Some(current_addr),
+                        None,
+                    )
+                    .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -301,8 +350,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
                 if symbol_name == "runtime.chanMakePanic" {
                     // Log all the constraints accumulated in the solver until that point
-                    evaluate_args_z3(self, &instruction, current_addr, None)
-                        .map_err(|e| e.to_string())?;
+                    evaluate_args_z3(
+                        self,
+                        &instruction,
+                        current_addr,
+                        None,
+                        Some(current_addr),
+                        None,
+                    )
+                    .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
@@ -318,8 +374,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
                 if symbol_name == "runtime.negativeShiftPanic" {
                     // Log all the constraints accumulated in the solver until that point
-                    evaluate_args_z3(self, &instruction, current_addr, None)
-                        .map_err(|e| e.to_string())?;
+                    evaluate_args_z3(
+                        self,
+                        &instruction,
+                        current_addr,
+                        None,
+                        Some(current_addr),
+                        None,
+                    )
+                    .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),

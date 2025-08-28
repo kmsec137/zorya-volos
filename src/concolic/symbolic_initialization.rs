@@ -110,6 +110,257 @@ pub fn initialize_string_argument<'a>(
     );
 }
 
+/// Initialize string memory contents as symbolic bytes
+/// This should be called after string arguments have been initialized
+pub fn initialize_string_memory_contents<'a>(
+    executor: &mut ConcolicExecutor<'a>,
+    function_args: &[(String, String, String)],
+) {
+    log!(
+        executor.state.logger,
+        "=== INITIALIZING STRING MEMORY CONTENTS ==="
+    );
+
+    for (arg_name, _reg_name, arg_type) in function_args {
+        // Only process string types
+        if arg_type != "string" {
+            continue;
+        }
+
+        log!(
+            executor.state.logger,
+            "Processing string memory for '{}' of type '{}'",
+            arg_name,
+            arg_type
+        );
+
+        // Get the string's pointer and length from tracked symbolic variables
+        let ptr_var_name = format!("{}__ptr", arg_name);
+        let len_var_name = format!("{}__len", arg_name);
+
+        if let (Some(ptr_sym_var), Some(len_sym_var)) = (
+            executor.function_symbolic_arguments.get(&ptr_var_name),
+            executor.function_symbolic_arguments.get(&len_var_name),
+        ) {
+            if let (SymbolicVar::Int(_ptr_bv), SymbolicVar::Int(_len_bv)) =
+                (ptr_sym_var, len_sym_var)
+            {
+                // Get concrete values from the symbolic variables or fallback to registers
+                let ptr_concrete = get_concrete_string_ptr_value(executor, arg_name);
+                let len_concrete = get_concrete_string_len_value(executor, arg_name);
+
+                if let (Some(ptr_addr), Some(str_len)) = (ptr_concrete, len_concrete) {
+                    log!(
+                        executor.state.logger,
+                        "String '{}': ptr=0x{:x}, len={}",
+                        arg_name,
+                        ptr_addr,
+                        str_len
+                    );
+
+                    // Clamp string length for performance (similar to slice clamping)
+                    let bytes_to_init = {
+                        let cap: u64 = 256; // Maximum string length to symbolically initialize
+                        let actual_len = if str_len == 0 { 1 } else { str_len };
+                        let clamped = if actual_len > cap { cap } else { actual_len };
+                        if actual_len > cap {
+                            log!(
+                                executor.state.logger,
+                                "Clamping string '{}' init from {} to {} bytes",
+                                arg_name,
+                                actual_len,
+                                cap
+                            );
+                        }
+                        clamped
+                    };
+
+                    // Initialize each byte of the string as symbolic
+                    for i in 0..bytes_to_init {
+                        let byte_addr = ptr_addr + i;
+                        let byte_var_name = format!("{}_byte_{}", arg_name, i);
+
+                        initialize_string_byte_memory(
+                            executor,
+                            &byte_var_name,
+                            byte_addr,
+                            arg_name,
+                            i,
+                        );
+                    }
+                } else {
+                    log!(
+                        executor.state.logger,
+                        "WARNING: Could not extract concrete values for string '{}' (ptr={:?}, len={:?})",
+                        arg_name,
+                        ptr_concrete,
+                        len_concrete
+                    );
+                }
+            }
+        }
+    }
+
+    log!(
+        executor.state.logger,
+        "=== FINISHED STRING MEMORY INITIALIZATION ==="
+    );
+}
+
+/// Get concrete pointer value for a string argument
+fn get_concrete_string_ptr_value<'a>(
+    executor: &ConcolicExecutor<'a>,
+    arg_name: &str,
+) -> Option<u64> {
+    // Try to get from RDI (typical for first string arg in Go ABI)
+    if let Some(val) = get_concrete_value_from_location(executor, "RDI") {
+        return Some(val);
+    }
+
+    // Try other common pointer registers
+    for reg in &["RSI", "RDX", "RCX", "R8", "R9"] {
+        if let Some(val) = get_concrete_value_from_location(executor, reg) {
+            // Basic heuristic: valid pointer should be non-zero and aligned
+            if val != 0 && (val & 7) == 0 && executor.state.memory.is_valid_address(val) {
+                log!(
+                    executor.state.logger.clone(),
+                    "Detected string '{}' pointer in register {} = 0x{:x}",
+                    arg_name,
+                    reg,
+                    val
+                );
+                return Some(val);
+            }
+        }
+    }
+    None
+}
+
+/// Get concrete length value for a string argument
+fn get_concrete_string_len_value<'a>(
+    executor: &ConcolicExecutor<'a>,
+    arg_name: &str,
+) -> Option<u64> {
+    // Try to get from RSI (typical for string length in Go ABI)
+    if let Some(val) = get_concrete_value_from_location(executor, "RSI") {
+        return Some(val);
+    }
+
+    // Try other common length registers
+    for reg in &["RDX", "RCX", "R8", "R9"] {
+        if let Some(val) = get_concrete_value_from_location(executor, reg) {
+            // Basic heuristic: length should be reasonable (not too large)
+            if val > 0 && val < 10000 {
+                log!(
+                    executor.state.logger.clone(),
+                    "Detected string '{}' length in register {} = {}",
+                    arg_name,
+                    reg,
+                    val
+                );
+                return Some(val);
+            }
+        }
+    }
+    None
+}
+
+/// Initialize a single byte of string memory as symbolic
+fn initialize_string_byte_memory<'a>(
+    executor: &mut ConcolicExecutor<'a>,
+    byte_var_name: &str,
+    byte_addr: u64,
+    string_name: &str,
+    byte_index: u64,
+) {
+    log!(
+        executor.state.logger,
+        "Initializing string byte '{}' at 0x{:x} (string '{}', index {})",
+        byte_var_name,
+        byte_addr,
+        string_name,
+        byte_index
+    );
+
+    // Check if this memory address is valid
+    if !executor.state.memory.is_valid_address(byte_addr) {
+        log!(
+            executor.state.logger,
+            "WARNING: Invalid memory address 0x{:x} for string byte '{}' - skipping",
+            byte_addr,
+            byte_var_name
+        );
+        return;
+    }
+
+    // Read current byte value from memory
+    match executor.state.memory.read_byte(byte_addr) {
+        Ok(current_byte) => {
+            log!(
+                executor.state.logger,
+                "Successfully read current byte from 0x{:x}: concrete=0x{:02x} ('{}')",
+                byte_addr,
+                current_byte.concrete.to_u64(),
+                if current_byte.concrete.to_u64() >= 32 && current_byte.concrete.to_u64() <= 126 {
+                    char::from(current_byte.concrete.to_u64() as u8).to_string()
+                } else {
+                    "non-printable".to_string()
+                }
+            );
+
+            // Create fresh symbolic variable for this byte
+            let byte_bv = BV::fresh_const(
+                executor.context,
+                byte_var_name,
+                8, // 8 bits for a byte
+            );
+
+            // Add to tracked symbolic arguments
+            executor
+                .function_symbolic_arguments
+                .insert(byte_var_name.to_string(), SymbolicVar::Int(byte_bv.clone()));
+
+            // Create memory value with original concrete data but new symbolic variable
+            let symbolic_memory_value =
+                MemoryValue::new(current_byte.concrete.to_u64(), byte_bv.clone(), 8);
+
+            // Write symbolic value back to memory
+            match executor
+                .state
+                .memory
+                .write_value(byte_addr, &symbolic_memory_value)
+            {
+                Ok(()) => {
+                    log!(
+                        executor.state.logger,
+                        "✓ Successfully initialized string byte '{}' at 0x{:x} with fresh symbolic variable",
+                        byte_var_name,
+                        byte_addr
+                    );
+                }
+                Err(e) => {
+                    log!(
+                        executor.state.logger,
+                        "✗ Failed to write symbolic value for string byte '{}' at 0x{:x}: {}",
+                        byte_var_name,
+                        byte_addr,
+                        e
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            log!(
+                executor.state.logger,
+                "✗ Failed to read current byte for string '{}' at 0x{:x}: {}",
+                byte_var_name,
+                byte_addr,
+                e
+            );
+        }
+    }
+}
+
 // Enhanced helper function for single-register argument initialization that handles stack locations
 pub fn initialize_single_register_argument<'a>(
     arg_name: &str,
