@@ -1,4 +1,6 @@
 use std::io::Write;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 use std::{error::Error, process::Command};
 
 use super::explore_ast::explore_ast_for_panic;
@@ -7,10 +9,10 @@ use crate::state::simplify_z3::add_constraints_from_vector;
 use crate::target_info::GLOBAL_TARGET_INFO;
 use chrono::{DateTime, Utc};
 use parser::parser::Inst;
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::path::Path;
 use z3::ast::{Ast, BV};
-use std::collections::HashSet;
 use z3::SatResult;
 
 macro_rules! log {
@@ -18,6 +20,9 @@ macro_rules! log {
         writeln!($logger, $($arg)*).unwrap();
     }};
 }
+
+// Global timer to measure elapsed time until first SAT state is found
+static START_INSTANT: OnceLock<Instant> = OnceLock::new();
 
 /// Add ASCII constraints for argument bytes to ensure readable output
 fn add_ascii_constraints_for_args<'ctx>(
@@ -34,7 +39,9 @@ fn add_ascii_constraints_for_args<'ctx>(
     if ascii_profile == "auto" {
         if let Ok(trace) = std::fs::read_to_string("results/execution_trace.txt") {
             for line in trace.lines() {
-                if line.contains("Symbol: strconv.Atoi") || line.contains("Symbol: strconv.ParseInt") {
+                if line.contains("Symbol: strconv.Atoi")
+                    || line.contains("Symbol: strconv.ParseInt")
+                {
                     // Heuristic: find the first "=0x..." after the arrow
                     if let Some(arrow_idx) = line.find("->") {
                         let after = &line[arrow_idx + 2..];
@@ -67,11 +74,12 @@ fn add_ascii_constraints_for_args<'ctx>(
             {
                 let slice_ptr_val = slice_ptr_bv.concrete.to_u64();
                 let slice_len_val = slice_len_bv.concrete.to_u64();
-                
+
                 // Add ASCII constraints for each argument byte
-                for i in 1..slice_len_val.min(10) { // Limit to first 10 args for performance
+                for i in 1..slice_len_val.min(10) {
+                    // Limit to first 10 args for performance
                     let string_struct_addr = slice_ptr_val + i * 16;
-                    
+
                     if let Ok(str_data_ptr_cv) = executor
                         .state
                         .memory
@@ -84,8 +92,9 @@ fn add_ascii_constraints_for_args<'ctx>(
                         {
                             let str_data_ptr_val = str_data_ptr_cv.concrete.to_u64();
                             let str_data_len_val = str_data_len_cv.concrete.to_u64();
-                            let str_data_len_bv_sym = str_data_len_cv.symbolic.to_bv(executor.context);
-                            
+                            let str_data_len_bv_sym =
+                                str_data_len_cv.symbolic.to_bv(executor.context);
+
                             if str_data_ptr_val != 0 && str_data_len_val > 0 {
                                 // Decide constraint profile for this specific arg (auto/digits/printable)
                                 let apply_digits_for_this_arg = match ascii_profile.as_str() {
@@ -97,32 +106,52 @@ fn add_ascii_constraints_for_args<'ctx>(
                                 let max_len = str_data_len_val.min(256);
                                 let mut first_byte_bv_opt: Option<z3::ast::BV> = None;
                                 for j in 0..max_len {
-                                    if let Ok(byte_read) = executor
-                                        .state
-                                        .memory
-                                        .read_byte(str_data_ptr_val + j)
+                                    if let Ok(byte_read) =
+                                        executor.state.memory.read_byte(str_data_ptr_val + j)
                                     {
                                         let byte_bv = byte_read.symbolic.to_bv(executor.context);
-                                        if j == 0 { first_byte_bv_opt = Some(byte_bv.clone()); }
+                                        if j == 0 {
+                                            first_byte_bv_opt = Some(byte_bv.clone());
+                                        }
                                         if apply_digits_for_this_arg {
                                             // Allow only digits '0'-'9'; allow optional leading '-' at position 0
-                                            let zero = z3::ast::BV::from_u64(executor.context, b'0' as u64, 8);
-                                            let nine = z3::ast::BV::from_u64(executor.context, b'9' as u64, 8);
-                                            let is_digit = byte_bv.bvuge(&zero) & byte_bv.bvule(&nine);
+                                            let zero = z3::ast::BV::from_u64(
+                                                executor.context,
+                                                b'0' as u64,
+                                                8,
+                                            );
+                                            let nine = z3::ast::BV::from_u64(
+                                                executor.context,
+                                                b'9' as u64,
+                                                8,
+                                            );
+                                            let is_digit =
+                                                byte_bv.bvuge(&zero) & byte_bv.bvule(&nine);
 
                                             if j == 0 {
-                                                let dash = z3::ast::BV::from_u64(executor.context, b'-' as u64, 8);
+                                                let dash = z3::ast::BV::from_u64(
+                                                    executor.context,
+                                                    b'-' as u64,
+                                                    8,
+                                                );
                                                 let is_dash = byte_bv._eq(&dash);
-                                                let allowed = z3::ast::Bool::or(executor.context, &[&is_dash, &is_digit]);
+                                                let allowed = z3::ast::Bool::or(
+                                                    executor.context,
+                                                    &[&is_dash, &is_digit],
+                                                );
                                                 executor.solver.assert(&allowed);
                                             } else {
                                                 executor.solver.assert(&is_digit);
                                             }
                                         } else {
                                             // Default: printable ASCII (32-126)
-                                            let printable_min = z3::ast::BV::from_u64(executor.context, 32, 8);
-                                            let printable_max = z3::ast::BV::from_u64(executor.context, 126, 8);
-                                            let printable_constraint = byte_bv.bvuge(&printable_min) & byte_bv.bvule(&printable_max);
+                                            let printable_min =
+                                                z3::ast::BV::from_u64(executor.context, 32, 8);
+                                            let printable_max =
+                                                z3::ast::BV::from_u64(executor.context, 126, 8);
+                                            let printable_constraint = byte_bv
+                                                .bvuge(&printable_min)
+                                                & byte_bv.bvule(&printable_max);
                                             executor.solver.assert(&printable_constraint);
                                         }
                                     }
@@ -132,9 +161,13 @@ fn add_ascii_constraints_for_args<'ctx>(
                                     if let Some(first_byte_bv) = first_byte_bv_opt {
                                         let one64 = z3::ast::BV::from_u64(executor.context, 1, 64);
                                         let len_eq_one = str_data_len_bv_sym._eq(&one64);
-                                        let dash8 = z3::ast::BV::from_u64(executor.context, b'-' as u64, 8);
+                                        let dash8 =
+                                            z3::ast::BV::from_u64(executor.context, b'-' as u64, 8);
                                         let first_is_dash = first_byte_bv._eq(&dash8);
-                                        let lone_dash = z3::ast::Bool::and(executor.context, &[&len_eq_one, &first_is_dash]);
+                                        let lone_dash = z3::ast::Bool::and(
+                                            executor.context,
+                                            &[&len_eq_one, &first_is_dash],
+                                        );
                                         let not_lone_dash = lone_dash.not();
                                         executor.solver.assert(&not_lone_dash);
                                     }
@@ -143,7 +176,7 @@ fn add_ascii_constraints_for_args<'ctx>(
                         }
                     }
                 }
-                
+
                 match ascii_profile.as_str() {
                     "digits" => log!(executor.state.logger, "Added ASCII constraints for argument bytes (digits mode)"),
                     "printable" => log!(executor.state.logger, "Added ASCII constraints for argument bytes (printable mode)"),
@@ -159,6 +192,8 @@ fn add_ascii_constraints_for_args<'ctx>(
 fn write_sat_state_to_file(
     evaluation_content: &str,
     mode: &str,
+    elapsed_since_start: Option<Duration>,
+    instruction_addr: Option<u64>,
     panic_addr: Option<u64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create results directory if it doesn't exist
@@ -186,6 +221,14 @@ fn write_sat_state_to_file(
     writeln!(file, "[*] SATISFIABLE STATE FOUND")?;
     writeln!(file, "Timestamp: {}", timestamp_str)?;
     writeln!(file, "Mode: {}", mode)?;
+    if let Some(dur) = elapsed_since_start {
+        let secs = dur.as_secs();
+        let millis = dur.subsec_millis();
+        writeln!(file, "Elapsed since start: {}.{:03}s", secs, millis)?;
+    }
+    if let Some(addr) = instruction_addr {
+        writeln!(file, "Instruction Address: 0x{:x}", addr)?;
+    }
 
     if let Some(addr) = panic_addr {
         writeln!(file, "Panic Address: 0x{:x}", addr)?;
@@ -202,6 +245,16 @@ fn write_sat_state_to_file(
         "[*] SATISFIABLE STATE AND POTENTIAL BUG FOUND! You can find the details in: {}",
         file_path
     );
+    if let Some(dur) = elapsed_since_start {
+        let secs = dur.as_secs_f64();
+        println!("[*] Elapsed since start: {:.3}s", secs);
+    }
+    if let Some(addr) = instruction_addr {
+        println!("[*] Instruction Address: 0x{:x}", addr);
+    }
+    if let Some(addr) = panic_addr {
+        println!("[*] Panic Address: 0x{:x}", addr);
+    }
     println!("~~~~~~~~~~~\n");
 
     Ok(())
@@ -377,9 +430,10 @@ fn capture_go_arguments_evaluation(
             let s = arg_str.trim();
             let bytes = s.as_bytes();
             !bytes.is_empty()
-                && bytes.iter().enumerate().all(|(idx, b)| {
-                    (*b >= b'0' && *b <= b'9') || (idx == 0 && *b == b'-')
-                })
+                && bytes
+                    .iter()
+                    .enumerate()
+                    .all(|(idx, b)| (*b >= b'0' && *b <= b'9') || (idx == 0 && *b == b'-'))
         };
         if ascii_profile == "digits" || looks_numeric {
             if let Ok(parsed) = arg_str.trim().parse::<i64>() {
@@ -399,6 +453,7 @@ pub fn evaluate_args_z3<'ctx>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::env;
     let mode = env::var("MODE").expect("MODE environment variable is not set");
+    let _ = START_INSTANT.get_or_init(Instant::now);
 
     if mode == "function" {
         let binary_path = {
@@ -554,8 +609,15 @@ pub fn evaluate_args_z3<'ctx>(
                     );
 
                     // Write to file
-                    if let Err(e) = write_sat_state_to_file(&evaluation_content, &mode, panic_addr)
-                    {
+                    let elapsed = START_INSTANT.get().map(|s| s.elapsed());
+                    let current_addr = executor.current_address.unwrap_or(0);
+                    if let Err(e) = write_sat_state_to_file(
+                        &evaluation_content,
+                        &mode,
+                        elapsed,
+                        Some(current_addr),
+                        panic_addr,
+                    ) {
                         log!(
                             executor.state.logger,
                             "WARNING: Failed to write SAT state to file: {}",
@@ -745,8 +807,34 @@ pub fn evaluate_args_z3<'ctx>(
                     msg
                 };
 
+                // Determine panic address via AST exploration (optional)
+                let mut panic_addr_opt: Option<u64> = None;
+                let ast_panic_result = explore_ast_for_panic(
+                    executor,
+                    address_of_negated_path_exploration,
+                    &binary_path,
+                );
+                if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
+                    if let Some(panic_addr_str) = ast_panic_result.trim().split_whitespace().last()
+                    {
+                        if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
+                            if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
+                                panic_addr_opt = Some(parsed_addr);
+                            }
+                        }
+                    }
+                }
+
                 // Write to file
-                if let Err(e) = write_sat_state_to_file(&evaluation_content, &mode, None) {
+                let elapsed = START_INSTANT.get().map(|s| s.elapsed());
+                let current_addr = executor.current_address.unwrap_or(0);
+                if let Err(e) = write_sat_state_to_file(
+                    &evaluation_content,
+                    &mode,
+                    elapsed,
+                    Some(current_addr),
+                    panic_addr_opt,
+                ) {
                     log!(
                         executor.state.logger,
                         "WARNING: Failed to write SAT state to file: {}",

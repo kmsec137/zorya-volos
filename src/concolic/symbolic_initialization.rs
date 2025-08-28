@@ -335,7 +335,9 @@ pub fn initialize_slice_argument<'a>(
             let mut specs: Vec<&str> = Vec::new();
             specs.push(ptr_spec);
             specs.push(len_spec);
-            if let Some(c3) = cap_spec { specs.push(c3); }
+            if let Some(c3) = cap_spec {
+                specs.push(c3);
+            }
 
             // Identify pointer-like spec: non-zero, 8-byte aligned, valid address
             let mut detected_ptr: Option<&str> = None;
@@ -355,13 +357,22 @@ pub fn initialize_slice_argument<'a>(
                     // Read their concrete values (fallback to u64::MAX if missing)
                     let mut vals: Vec<(u64, &str)> = rest
                         .iter()
-                        .map(|s| (get_concrete_value_from_location(executor, s).unwrap_or(u64::MAX), *s))
+                        .map(|s| {
+                            (
+                                get_concrete_value_from_location(executor, s).unwrap_or(u64::MAX),
+                                *s,
+                            )
+                        })
                         .collect();
                     vals.sort_by_key(|(v, _)| *v);
                     // Smallest -> len, next -> cap (if exists)
                     ptr_spec = p;
                     len_spec = vals[0].1;
-                    cap_spec = if vals.len() >= 2 { Some(vals[1].1) } else { None };
+                    cap_spec = if vals.len() >= 2 {
+                        Some(vals[1].1)
+                    } else {
+                        None
+                    };
                 } else {
                     // Only pointer detected (2-reg slice), keep original len
                     ptr_spec = p;
@@ -594,13 +605,13 @@ pub fn initialize_slice_memory_contents<'a>(
         if let Some(slice_sym_var) = executor.function_symbolic_arguments.get(arg_name) {
             if let SymbolicVar::Slice(_slice) = slice_sym_var {
                 // Get concrete values from registers to determine memory layout
-                let (ptr_concrete, len_concrete, _cap_concrete) = 
+                let (ptr_concrete, len_concrete, _cap_concrete) =
                     extract_slice_concrete_values(executor, reg_name);
 
                 if let (Some(ptr_addr), Some(slice_len)) = (ptr_concrete, len_concrete) {
                     // Determine element size and type
                     let (element_size, element_type) = parse_slice_element_info(arg_type);
-                    
+
                     log!(
                         executor.state.logger,
                         "Slice '{}': ptr=0x{:x}, len={}, element_size={}, element_type='{}'",
@@ -632,10 +643,10 @@ pub fn initialize_slice_memory_contents<'a>(
                     // Initialize memory for each element in the slice (clamped)
                     for i in 0..elems_to_init {
                         let element_addr = ptr_addr + (i * element_size);
-                        
+
                         // Create symbolic variable for this element
                         let element_var_name = format!("{}[{}]", arg_name, i);
-                        
+
                         initialize_slice_element_memory(
                             executor,
                             &element_var_name,
@@ -758,11 +769,21 @@ fn get_concrete_value_from_location<'a>(
     if is_stack_location(location_spec) {
         // Handle stack location
         if let Some(stack_offset) = parse_stack_offset(location_spec) {
-            if let Some(rsp_reg) = executor.state.cpu_state.lock().unwrap().get_register_by_offset(0x20, 64) {
+            if let Some(rsp_reg) = executor
+                .state
+                .cpu_state
+                .lock()
+                .unwrap()
+                .get_register_by_offset(0x20, 64)
+            {
                 let rsp_value = rsp_reg.concrete.to_u64();
                 let stack_address = (rsp_value as i64 + stack_offset) as u64;
-                
-                if let Ok(stack_val) = executor.state.memory.read_u64(stack_address, &mut executor.state.logger.clone()) {
+
+                if let Ok(stack_val) = executor
+                    .state
+                    .memory
+                    .read_u64(stack_address, &mut executor.state.logger.clone())
+                {
                     let concrete_val = stack_val.concrete.to_u64();
                     log!(
                         executor.state.logger.clone(),
