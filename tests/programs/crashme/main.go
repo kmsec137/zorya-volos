@@ -10,7 +10,7 @@ func main() {
 		fmt.Println("Usage: ./crashme [char]")
 		return
 	}
-	if os.Args[1][0] == 'C' {
+	if os.Args[1][0] == 'K' {
 		var p *int
 		*p = 0
 	}
