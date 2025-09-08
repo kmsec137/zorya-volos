@@ -633,6 +633,16 @@ pub fn evaluate_args_z3<'ctx>(
             // List constraints and assert them to solver
             add_constraints_from_vector(&executor);
 
+            // If no path constraints have been collected, skip variable evaluation entirely
+            if executor.constraint_vector.is_empty() {
+                log!(
+                    executor.state.logger,
+                    "No collected path constraints; skipping variable evaluation."
+                );
+                executor.solver.pop();
+                return Ok(());
+            }
+
             // Add ASCII constraints for argument bytes
             let _ = add_ascii_constraints_for_args(executor, &binary_path);
 
@@ -762,6 +772,16 @@ pub fn evaluate_args_z3<'ctx>(
 
         // List constraints and assert them to solver
         add_constraints_from_vector(&executor);
+
+        // If no path constraints have been collected, skip variable evaluation entirely
+        if executor.constraint_vector.is_empty() {
+            log!(
+                executor.state.logger,
+                "No collected path constraints; skipping variable evaluation."
+            );
+            executor.solver.pop();
+            return Ok(());
+        }
 
         // Add ASCII constraints for argument bytes
         let _ = add_ascii_constraints_for_args(executor, &binary_path);
