@@ -49,7 +49,7 @@ pub struct ConcolicExecutor<'ctx> {
     pub initialiazed_var: BTreeMap<String, u64>, // check if the variable has been initialized before using it
     pub inside_jump_table: bool, // check if the current instruction is handling a jump table
     pub trace_logger: Logger,
-    pub function_symbolic_arguments: BTreeMap<String, SymbolicVar<'ctx>>, // in "function" mode, this is used to store the symbolic arguments of the function
+    pub function_symbolic_arguments: BTreeMap<String, SymbolicVar<'ctx>>, // this is used to store the symbolic arguments of the binary (os.args) or the function (RSI, RDX, RCX, R8, R9 etc.)
     pub constraint_vector: Vec<Bool<'ctx>>, // Vector to collect constraints on tracked symbolic variables
 }
 

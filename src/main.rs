@@ -10,13 +10,13 @@ use std::sync::Arc;
 
 use parser::parser::{Inst, Opcode};
 use z3::{
-    ast::{Int, BV},
+    ast::{Ast, Int, BV},
     Config, Context,
 };
 use zorya::concolic::symbolic_initialization::{
     initialize_single_register_argument, initialize_single_register_slice,
     initialize_slice_argument, initialize_slice_memory_contents, initialize_string_argument,
-    initialize_string_memory_contents,
+    initialize_string_memory_contents, is_stack_location, parse_stack_offset,
 };
 use zorya::concolic::{ConcolicVar, Logger};
 use zorya::executor::{ConcolicExecutor, SymbolicVar};
@@ -29,6 +29,9 @@ use zorya::state::function_signatures::{
     GoFunctionArg,
 };
 use zorya::state::memory_x86_64::MemoryValue;
+use zorya::state::simplify_z3::{
+    add_constraints_from_vector, extract_underlying_condition_from_flag_ast,
+};
 use zorya::target_info::GLOBAL_TARGET_INFO;
 
 macro_rules! log {
@@ -552,6 +555,97 @@ fn execute_instructions_from(
 
         // This block is only to get data about the execution in results/execution_trace.txt
         if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) {
+            // If entering strconv numeric parsing, proactively constrain argument bytes to digits
+            if symbol_name == "strconv.Atoi" || symbol_name == "strconv.ParseInt" {
+                if let Some((_, args)) = function_args_map.get(&current_rip) {
+                    // Find a string argument (two locations: ptr,len). Prefer exact type match.
+                    if let Some((_, reg_names, _)) = args
+                        .iter()
+                        .find(|(_, _, t)| t == "string")
+                        .or_else(|| args.iter().find(|(_, _, t)| t.contains("string")))
+                    {
+                        // Resolve (ptr,len) locations from reg_names which may include registers or stack specs
+                        let mut ptr_opt: Option<u64> = None;
+                        let mut len_opt: Option<u64> = None;
+                        let cpu = executor.state.cpu_state.lock().unwrap();
+                        for (idx, s) in reg_names.iter().enumerate() {
+                            let s = s.as_str();
+                            let val = if is_stack_location(s) {
+                                parse_stack_offset(s)
+                                    .and_then(|off| {
+                                        cpu.get_register_by_offset(0x20, 64).map(|rsp| {
+                                            let addr = (rsp.concrete.to_u64() as i64 + off) as u64;
+                                            // Read memory at computed stack address
+                                            executor
+                                                .state
+                                                .memory
+                                                .read_u64(addr, &mut executor.state.logger.clone())
+                                                .ok()
+                                                .map(|cv| cv.concrete.to_u64())
+                                        })
+                                    })
+                                    .flatten()
+                            } else {
+                                cpu.resolve_offset_from_register_name(s)
+                                    .and_then(|off| cpu.get_register_by_offset(off, 64))
+                                    .map(|v| v.concrete.to_u64())
+                            };
+                            if idx == 0 {
+                                ptr_opt = val;
+                            } else if idx == 1 {
+                                len_opt = val;
+                            }
+                        }
+                        if let (Some(ptr), Some(len)) = (ptr_opt, len_opt) {
+                            let max_len = std::cmp::min(len, 256);
+                            let mut first_byte_bv: Option<z3::ast::BV> = None;
+                            for j in 0..max_len {
+                                if let Ok(byte_read) = executor.state.memory.read_byte(ptr + j) {
+                                    let byte_bv = byte_read.symbolic.to_bv(executor.context);
+                                    if j == 0 {
+                                        first_byte_bv = Some(byte_bv.clone());
+                                    }
+                                    let zero =
+                                        z3::ast::BV::from_u64(executor.context, b'0' as u64, 8);
+                                    let nine =
+                                        z3::ast::BV::from_u64(executor.context, b'9' as u64, 8);
+                                    let is_digit = byte_bv.bvuge(&zero) & byte_bv.bvule(&nine);
+                                    if j == 0 {
+                                        let dash =
+                                            z3::ast::BV::from_u64(executor.context, b'-' as u64, 8);
+                                        let is_dash = byte_bv._eq(&dash);
+                                        let allowed = z3::ast::Bool::or(
+                                            executor.context,
+                                            &[&is_dash, &is_digit],
+                                        );
+                                        executor.solver.assert(&allowed);
+                                    } else {
+                                        executor.solver.assert(&is_digit);
+                                    }
+                                }
+                            }
+                            if let Some(fb) = first_byte_bv {
+                                let one64 = z3::ast::BV::from_u64(executor.context, 1, 64);
+                                let len_bv = z3::ast::BV::from_u64(executor.context, len, 64);
+                                let len_eq_one = len_bv._eq(&one64);
+                                let dash8 = z3::ast::BV::from_u64(executor.context, b'-' as u64, 8);
+                                let first_is_dash = fb._eq(&dash8);
+                                let lone_dash = z3::ast::Bool::and(
+                                    executor.context,
+                                    &[&len_eq_one, &first_is_dash],
+                                );
+                                executor.solver.assert(&lone_dash.not());
+                            }
+                            log!(
+                                executor.state.logger,
+                                "Applied numeric ASCII constraints to strconv arg (ptr=0x{:x}, len={})",
+                                ptr,
+                                len
+                            );
+                        }
+                    }
+                }
+            }
             if let Some((_, args)) = function_args_map.get(&current_rip) {
                 let mut arg_values = Vec::new();
                 let cpu = executor.state.cpu_state.lock().unwrap();
@@ -637,91 +731,95 @@ fn execute_instructions_from(
                 let negate_path_flag = std::env::var("NEGATE_PATH_FLAG")
                     .expect("NEGATE_PATH_FLAG environment variable is not set");
 
-                // This block is for find a SAT state for the negated path exploration
-                if negate_path_flag == "true" {
-                    // broken-calculator 22f068 // omni-vuln4 0x2300d7// crashme: 0x22b21a
-                    // invalidpubkey 22fc8b
-                    //if current_rip == 0x22af64 {
+                // Derive the negated-path branch condition and decide whether to explore
+                let cond_bv = conditional_flag.symbolic.to_bv(executor.context);
+                let branch_taken_to_explore = conditional_flag_u64 == 0;
+                let explored_condition = extract_underlying_condition_from_flag_ast(
+                    &cond_bv,
+                    branch_taken_to_explore,
+                    &mut executor.state.logger.clone(),
+                );
+
+                // Determine if the explored condition references any tracked symbolic argument
+                let expr_string = format!("{:?}", explored_condition.simplify());
+                let involves_tracked = executor
+                    .function_symbolic_arguments
+                    .keys()
+                    .any(|arg_name| expr_string.contains(arg_name));
+                // If the condition involves tracked variables or the constraint vector is not empty, we want to explore the negated path
+                let should_explore = involves_tracked || !executor.constraint_vector.is_empty();
+
+                if !should_explore {
                     log!(
                         executor.state.logger,
-                        ">>> Evaluating arguments for the negated path exploration."
+                        "Skipping negated-path exploration: condition has no tracked symbols and constraint vector is empty."
                     );
+                } else {
+                    // Push the explored condition only if it involves tracked variables
+                    if involves_tracked {
+                        executor.constraint_vector.push(explored_condition);
+                    }
 
-                    let ast_panic_result = explore_ast_for_panic(
-                        executor,
-                        address_of_negated_path_exploration,
-                        &binary_path,
-                    );
+                    // List constraints and assert them to solver
+                    add_constraints_from_vector(&executor);
 
-                    if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
-                        let mut panic_addr: Option<u64> = None;
-
-                        if let Some(panic_addr_str) =
-                            ast_panic_result.trim().split_whitespace().last()
-                        {
-                            if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
-                                if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
-                                    panic_addr = Some(parsed_addr);
-                                    log!(executor.state.logger, ">>> The speculative AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
-                                } else {
-                                    log!(
-                                        executor.state.logger,
-                                        "Could not parse panic address from AST result: '{}'",
-                                        panic_addr_str
-                                    );
-                                }
-                            }
-                        }
-
-                        evaluate_args_z3(
-                            executor,
-                            inst,
-                            address_of_negated_path_exploration,
-                            Some(conditional_flag.clone()),
-                            Some(current_rip),
-                            Some(branch_target_address),
-                        )
-                        .unwrap_or_else(|e| {
+                    {
+                        // This block is for find a SAT state for the negated path exploration
+                        if negate_path_flag == "true" {
                             log!(
                                 executor.state.logger,
-                                "Error evaluating arguments for branch at 0x{:x}: {}",
-                                branch_target_address,
-                                e
+                                ">>> Evaluating arguments for the negated path exploration."
                             );
-                        });
-                    } else {
-                        log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
-                    }
-                } else {
-                    log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");
-                }
 
-                // This block is for find fast a SAT state when the execution is directly branching to a panic function
-                if panic_address_ints.contains(&z3::ast::Int::from_u64(
-                    executor.context,
-                    branch_target_address,
-                )) {
-                    log!(
-                        executor.state.logger,
-                        "Potential branching to a panic function at 0x{:x}",
-                        branch_target_address
-                    );
-                    evaluate_args_z3(
-                        executor,
-                        inst,
-                        address_of_negated_path_exploration,
-                        Some(conditional_flag),
-                        Some(current_rip),
-                        Some(branch_target_address),
-                    )
-                    .unwrap_or_else(|e| {
-                        log!(
-                            executor.state.logger,
-                            "Error evaluating arguments for branch at 0x{:x}: {}",
-                            branch_target_address,
-                            e
-                        );
-                    });
+                            let ast_panic_result = explore_ast_for_panic(
+                                executor,
+                                address_of_negated_path_exploration,
+                                &binary_path,
+                            );
+
+                            if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
+                                let mut panic_addr: Option<u64> = None;
+
+                                if let Some(panic_addr_str) =
+                                    ast_panic_result.trim().split_whitespace().last()
+                                {
+                                    if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
+                                        if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
+                                            panic_addr = Some(parsed_addr);
+                                            log!(executor.state.logger, ">>> The speculative AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
+                                        } else {
+                                            log!(
+                                                executor.state.logger,
+                                                "Could not parse panic address from AST result: '{}'",
+                                                panic_addr_str
+                                            );
+                                        }
+                                    }
+                                }
+
+                                evaluate_args_z3(
+                                    executor,
+                                    inst,
+                                    address_of_negated_path_exploration,
+                                    Some(conditional_flag.clone()),
+                                    Some(current_rip),
+                                    Some(branch_target_address),
+                                )
+                                .unwrap_or_else(|e| {
+                                    log!(
+                                        executor.state.logger,
+                                        "Error evaluating arguments for branch at 0x{:x}: {}",
+                                        branch_target_address,
+                                        e
+                                    );
+                                });
+                            } else {
+                                log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
+                            }
+                        } else {
+                            log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");
+                        }
+                    }
                 }
             }
 
@@ -1458,6 +1556,10 @@ pub fn initialize_symbolic_part_args(
         for (byte_index, _) in concrete_str_bytes.iter().enumerate() {
             let bv_name = format!("arg{}_byte_{}", i, byte_index);
             let fresh_bv = BV::fresh_const(&executor.context, &bv_name, 8);
+            // Register this symbolic byte so negated-path detection can recognize it
+            executor
+                .function_symbolic_arguments
+                .insert(bv_name.clone(), SymbolicVar::Int(fresh_bv.clone()));
             fresh_symbolic.push(Some(Arc::new(fresh_bv)));
         }
 
