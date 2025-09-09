@@ -774,9 +774,16 @@ pub fn evaluate_args_z3<'ctx>(
         // Add ASCII constraints for argument bytes
         let _ = add_ascii_constraints_for_args(executor, &binary_path);
 
-        // we want to assert that the condition is non zero.
+        // We are exploring the negated path: assert the opposite of the observed flag
         let zero_bv = z3::ast::BV::from_u64(executor.context, 0, cond_bv.get_size());
-        let branch_condition = cond_bv._eq(&zero_bv).not();
+        let observed_flag = cond_concolic.concrete.to_u64();
+        let branch_condition = if observed_flag == 0 {
+            // Observed false -> require true
+            cond_bv._eq(&zero_bv).not()
+        } else {
+            // Observed true -> require false
+            cond_bv._eq(&zero_bv)
+        };
 
         // 3) Assert the branch condition.
         executor.solver.assert(&branch_condition);
