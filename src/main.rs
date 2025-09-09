@@ -29,9 +29,7 @@ use zorya::state::function_signatures::{
     GoFunctionArg,
 };
 use zorya::state::memory_x86_64::MemoryValue;
-use zorya::state::simplify_z3::{
-    add_constraints_from_vector, extract_underlying_condition_from_flag_ast,
-};
+use zorya::state::simplify_z3::extract_underlying_condition_from_flag_ast;
 use zorya::target_info::GLOBAL_TARGET_INFO;
 
 macro_rules! log {
@@ -769,14 +767,11 @@ fn execute_instructions_from(
                         );
 
                         if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
-                            let mut panic_addr: Option<u64> = None;
-
                             if let Some(panic_addr_str) =
                                 ast_panic_result.trim().split_whitespace().last()
                             {
                                 if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
                                     if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
-                                        panic_addr = Some(parsed_addr);
                                         log!(executor.state.logger, ">>> The speculative AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
                                     } else {
                                         log!(
