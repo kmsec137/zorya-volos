@@ -12,7 +12,7 @@ use parser::parser::Inst;
 use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::path::Path;
-use z3::ast::{Ast, BV};
+use z3::ast::{Ast, Int, BV};
 use z3::SatResult;
 
 macro_rules! log {
@@ -375,10 +375,12 @@ fn capture_symbolic_arguments_evaluation(
                     if bv.get_size() <= 64 {
                         if let Some(val_u64) = val.as_u64() {
                             output.push_str(&format!("  {} = #x{:016x}\n", bv, val_u64));
-                            output.push_str(&format!("    (decimal: {})\n", val_u64));
+                            let signed_val = val_u64 as i64;
+                            output.push_str(&format!("    (unsigned: {})\n", val_u64));
+                            output.push_str(&format!("    (signed: {})\n", signed_val));
 
-                            // Add ASCII interpretation for byte-sized values
-                            if bv.get_size() == 8 && val_u64 <= 255 {
+                            // Add ASCII interpretation when value fits in a byte
+                            if val_u64 <= 255 {
                                 let byte_val = val_u64 as u8;
                                 if byte_val >= 32 && byte_val <= 126 {
                                     // Printable ASCII
@@ -407,7 +409,8 @@ fn capture_symbolic_arguments_evaluation(
                     } else {
                         // For large bit vectors (like 256-bit arrays)
                         output.push_str(&format!("  {} = {}\n", bv, val));
-                        output.push_str(&format!("    (decimal: 0)\n")); // Simplified for large values
+                        output.push_str(&format!("    (unsigned: n/a)\n"));
+                        output.push_str(&format!("    (signed: n/a)\n"));
                     }
 
                     output.push_str("\n");
@@ -630,20 +633,28 @@ pub fn evaluate_args_z3<'ctx>(
                 );
             }
 
+            // List constraints and assert them to solver
+            add_constraints_from_vector(&executor);
+
             // Add ASCII constraints for argument bytes
             let _ = add_ascii_constraints_for_args(executor, &binary_path);
 
-            // Minimize symbolic variables to prefer smaller values
+            // Minimize symbolic variables; for integer values prefer smallest signed magnitude
             for symbolic_var in executor.function_symbolic_arguments.values() {
                 match symbolic_var {
                     SymbolicVar::Int(bv_var) => {
-                        executor.solver.minimize(bv_var); // minimizing so that z3 givess us the smallest values possible
+                        let signed_int = Int::from_bv(bv_var, true);
+                        // approximate |x| by minimizing x^2 to avoid missing abs()
+                        let squared = &signed_int * &signed_int;
+                        executor.solver.minimize(&squared);
                     }
                     SymbolicVar::Slice(slice) => {
                         for elem in &slice.elements {
                             match elem {
                                 SymbolicVar::Int(bv_elem) => {
-                                    executor.solver.minimize(bv_elem);
+                                    let signed_elem = Int::from_bv(bv_elem, true);
+                                    let squared_elem = &signed_elem * &signed_elem;
+                                    executor.solver.minimize(&squared_elem);
                                 }
                                 _ => {
                                     log!(
@@ -756,6 +767,9 @@ pub fn evaluate_args_z3<'ctx>(
             .to_concolic_var()
             .unwrap();
         let cond_bv = cond_concolic.symbolic.to_bv(executor.context);
+
+        // List constraints and assert them to solver
+        add_constraints_from_vector(&executor);
 
         // Add ASCII constraints for argument bytes
         let _ = add_ascii_constraints_for_args(executor, &binary_path);
@@ -984,10 +998,12 @@ fn log_symbolic_arguments_evaluation(
                             if var_name.contains("ptr") || var_name.contains("R8") {
                                 log!(logger, "    (hex: 0x{:x})", u64_val);
                             } else {
-                                log!(logger, "    (decimal: {})", u64_val);
+                                let signed_val = u64_val as i64;
+                                log!(logger, "    (unsigned: {})", u64_val);
+                                log!(logger, "    (signed: {})", signed_val);
 
-                                // Add ASCII interpretation for byte-sized values
-                                if bv_var.get_size() == 8 && u64_val <= 255 {
+                                // Add ASCII interpretation when value fits in a byte
+                                if u64_val <= 255 {
                                     let byte_val = u64_val as u8;
                                     if byte_val >= 32 && byte_val <= 126 {
                                         // Printable ASCII

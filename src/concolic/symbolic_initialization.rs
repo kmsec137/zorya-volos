@@ -398,6 +398,67 @@ pub fn initialize_register_argument<'a>(
                 &format!("{}_{}", arg_name, reg_name),
                 bit_width,
             );
+            // Constrain integer domains to speed solving and avoid unrealistic high bits.
+            // - Signed ints: clamp to [-B, B] with B=min(user bound, type max) where INT_ABS_BOUND defaults to 4096
+            // - Unsigned ints and bytes: clamp to [0, 2^n-1] for their logical width n
+            let hint = std::env::var("INT_ABS_BOUND").unwrap_or_else(|_| "4096".to_string());
+            if hint.to_lowercase() != "off" {
+                let is_signed_int =
+                    matches!(arg_type, "int" | "int64" | "int32" | "int16" | "int8");
+                let is_unsigned_int = matches!(
+                    arg_type,
+                    "uint" | "uint64" | "uint32" | "uint16" | "uint8" | "byte" | "uintptr"
+                );
+                if is_signed_int {
+                    let typed_bits: u32 = match arg_type {
+                        "int8" => 8,
+                        "int16" => 16,
+                        "int32" => 32,
+                        _ => 64, // int or int64
+                    };
+                    if let Ok(user_bound) = hint.parse::<i64>() {
+                        if user_bound > 0 {
+                            let max_signed = (1i128 << (typed_bits - 1)) - 1; // 2^(n-1)-1
+                            let eff_bound = std::cmp::min(user_bound as i128, max_signed) as i64;
+                            let lower = BV::from_i64(executor.context, -eff_bound, bit_width);
+                            let upper = BV::from_i64(executor.context, eff_bound, bit_width);
+                            executor.solver.assert(&bv.bvsge(&lower));
+                            executor.solver.assert(&bv.bvsle(&upper));
+                            log!(
+                                executor.state.logger,
+                                "Applied signed int range hint for '{}' [{}..{}] ({} bits logical, {} bits reg)",
+                                arg_name,
+                                -eff_bound,
+                                eff_bound,
+                                typed_bits,
+                                bit_width
+                            );
+                        }
+                    }
+                } else if is_unsigned_int {
+                    let typed_bits: u32 = match arg_type {
+                        "uint8" | "byte" => 8,
+                        "uint16" => 16,
+                        "uint32" => 32,
+                        _ => 64, // uint, uint64, uintptr
+                    };
+                    let max_val = if typed_bits == 64 {
+                        u64::MAX
+                    } else {
+                        ((1u128 << typed_bits) - 1) as u64
+                    };
+                    let upper = BV::from_u64(executor.context, max_val, bit_width);
+                    executor.solver.assert(&bv.bvule(&upper));
+                    log!(
+                        executor.state.logger,
+                        "Applied unsigned int range hint for '{}' [0..{}] ({} bits logical, {} bits reg)",
+                        arg_name,
+                        max_val,
+                        typed_bits,
+                        bit_width
+                    );
+                }
+            }
             executor
                 .function_symbolic_arguments
                 .insert(arg_name.to_string(), SymbolicVar::Int(bv.clone()));

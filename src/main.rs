@@ -755,70 +755,60 @@ fn execute_instructions_from(
                         "Skipping negated-path exploration: condition has no tracked symbols and constraint vector is empty."
                     );
                 } else {
-                    // Push the explored condition only if it involves tracked variables
-                    if involves_tracked {
-                        executor.constraint_vector.push(explored_condition);
-                    }
+                    // This block is for find a SAT state for the negated path exploration
+                    if negate_path_flag == "true" {
+                        log!(
+                            executor.state.logger,
+                            ">>> Evaluating arguments for the negated path exploration."
+                        );
 
-                    // List constraints and assert them to solver
-                    add_constraints_from_vector(&executor);
+                        let ast_panic_result = explore_ast_for_panic(
+                            executor,
+                            address_of_negated_path_exploration,
+                            &binary_path,
+                        );
 
-                    {
-                        // This block is for find a SAT state for the negated path exploration
-                        if negate_path_flag == "true" {
-                            log!(
-                                executor.state.logger,
-                                ">>> Evaluating arguments for the negated path exploration."
-                            );
+                        if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
+                            let mut panic_addr: Option<u64> = None;
 
-                            let ast_panic_result = explore_ast_for_panic(
-                                executor,
-                                address_of_negated_path_exploration,
-                                &binary_path,
-                            );
-
-                            if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
-                                let mut panic_addr: Option<u64> = None;
-
-                                if let Some(panic_addr_str) =
-                                    ast_panic_result.trim().split_whitespace().last()
-                                {
-                                    if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
-                                        if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
-                                            panic_addr = Some(parsed_addr);
-                                            log!(executor.state.logger, ">>> The speculative AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
-                                        } else {
-                                            log!(
-                                                executor.state.logger,
-                                                "Could not parse panic address from AST result: '{}'",
-                                                panic_addr_str
-                                            );
-                                        }
+                            if let Some(panic_addr_str) =
+                                ast_panic_result.trim().split_whitespace().last()
+                            {
+                                if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
+                                    if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
+                                        panic_addr = Some(parsed_addr);
+                                        log!(executor.state.logger, ">>> The speculative AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
+                                    } else {
+                                        log!(
+                                            executor.state.logger,
+                                            "Could not parse panic address from AST result: '{}'",
+                                            panic_addr_str
+                                        );
                                     }
                                 }
-
-                                evaluate_args_z3(
-                                    executor,
-                                    inst,
-                                    address_of_negated_path_exploration,
-                                    Some(conditional_flag.clone()),
-                                    Some(current_rip),
-                                    Some(branch_target_address),
-                                )
-                                .unwrap_or_else(|e| {
-                                    log!(
-                                        executor.state.logger,
-                                        "Error evaluating arguments for branch at 0x{:x}: {}",
-                                        branch_target_address,
-                                        e
-                                    );
-                                });
-                            } else {
-                                log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
                             }
+
+                            evaluate_args_z3(
+                                executor,
+                                inst,
+                                address_of_negated_path_exploration,
+                                Some(conditional_flag.clone()),
+                                Some(current_rip),
+                                Some(branch_target_address),
+                            )
+                            .unwrap_or_else(|e| {
+                                log!(
+                                    executor.state.logger,
+                                    "Error evaluating arguments for branch at 0x{:x}: {}",
+                                    branch_target_address,
+                                    e
+                                );
+                            });
                         } else {
-                            log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");
+                            log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
                         }
+                    } else {
+                        log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");
                     }
                 }
             }
