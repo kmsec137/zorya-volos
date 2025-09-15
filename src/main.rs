@@ -28,7 +28,14 @@ use zorya::state::function_signatures::{
     load_function_args_map, load_go_function_args_map, precompute_function_signatures_via_ghidra,
     GoFunctionArg,
 };
+use zorya::state::gating_stats::{
+    get_allowed_by_xref_fallback, get_gated_by_reach, inc_allowed_by_xref_fallback,
+    inc_gated_by_reach,
+};
 use zorya::state::memory_x86_64::MemoryValue;
+use zorya::state::panic_reach::{
+    is_panic_reachable_addr, precompute_panic_reach, PanicReachRanges, PanicReachSet,
+};
 use zorya::state::simplify_z3::extract_underlying_condition_from_flag_ast;
 use zorya::target_info::GLOBAL_TARGET_INFO;
 
@@ -72,7 +79,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let config = Config::new();
     let context = Context::new(&config);
-    let logger = Logger::new("results/execution_log.txt", false).expect("Failed to create logger"); // get the instruction handling detailed log, log to the file only
+    // Logging mode: "verbose" (default) writes execution_log.txt; "trace_only" disables it
+    let log_mode = env::var("LOG_MODE")
+        .unwrap_or_else(|_| "verbose".to_string())
+        .to_lowercase();
+    let logger_path = if log_mode == "trace_only" {
+        "/dev/null"
+    } else {
+        "results/execution_log.txt"
+    };
+    let logger = Logger::new(logger_path, false).expect("Failed to create logger"); // detailed log (file only when not trace_only)
     let trace_logger =
         Logger::new("results/execution_trace.txt", true).expect("Failed to create trace logger"); // get the trace of the executed symbols names, log to the file and stdout
     let mut executor: ConcolicExecutor<'_> =
@@ -434,13 +450,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     // CORE COMMAND
     println!("**************************************************************************");
     println!("THE CONCOLIC EXECUTION OF THE BINARY HAS STARTED!");
-    println!("Find the logs in results/execution_log.txt and results/execution_trace.txt");
+    if log_mode == "trace_only" {
+        println!("Trace-only logging enabled (LOG_MODE=trace_only). Writing results/execution_trace.txt only.");
+    } else {
+        println!("Find the logs in results/execution_log.txt and results/execution_trace.txt");
+    }
     println!("**************************************************************************");
+    // Precompute reverse panic reachability set (O(V+E)), then O(1) queries
+    let (panic_reach_set, panic_reach_ranges) = precompute_panic_reach(&binary_path)?;
+
     execute_instructions_from(
         &mut executor,
         start_address,
         &instructions_map,
         &binary_path,
+        &panic_reach_set,
+        &panic_reach_ranges,
     );
     // *****************************
 
@@ -453,6 +478,8 @@ fn execute_instructions_from(
     start_address: u64,
     instructions_map: &BTreeMap<u64, Vec<Inst>>,
     binary_path: &str,
+    panic_reach: &PanicReachSet,
+    panic_ranges: &PanicReachRanges,
 ) {
     let mut current_rip = start_address;
     let mut local_line_number: i64 = 0; // Index of the current instruction within the block
@@ -524,6 +551,8 @@ fn execute_instructions_from(
         let function_args_map = load_function_args_map();
         function_args_map
     };
+
+    // counters are global atomics in gating_stats; they start at 0 at process start
 
     while let Some(instructions) = instructions_map.get(&current_rip) {
         if current_rip == end_address {
@@ -695,115 +724,147 @@ fn execute_instructions_from(
 
             // If this is a branch-type instruction, do symbolic checks.
             if inst.opcode == Opcode::CBranch {
-                log!(
-                    executor.state.logger,
-                    " !!! Branch-type instruction detected: entrying symbolic checks..."
-                );
-                let branch_target_varnode = inst.inputs[0].clone();
-                let branch_target_address = executor
-                    .from_varnode_var_to_branch_address(&branch_target_varnode)
+                // Compute branch target early
+                let branch_target_varnode_tmp = inst.inputs[0].clone();
+                let branch_target_address_tmp = executor
+                    .from_varnode_var_to_branch_address(&branch_target_varnode_tmp)
                     .map_err(|e| e.to_string())
                     .unwrap();
-                let conditional_flag = inst.inputs[1].clone();
-                let conditional_flag = executor
-                    .varnode_to_concolic(&conditional_flag)
-                    .map_err(|e| e.to_string())
-                    .unwrap()
-                    .to_concolic_var()
-                    .unwrap();
-                let conditional_flag_u64 = conditional_flag.concrete.to_u64();
-
-                let address_of_negated_path_exploration = if conditional_flag_u64 == 0 {
-                    // We want to explore the branch that is not taken
-                    log!(executor.state.logger, ">>> Branch condition is false (0x{:x}), performing the speculative exploration on the other branch...", conditional_flag_u64);
-                    let addr = branch_target_address;
-                    addr
-                } else {
-                    // We want to explore the branch that is taken
-                    log!(executor.state.logger, ">>> Branch condition is true (0x{:x}), performing the speculative exploration on the other branch...", conditional_flag_u64);
-                    let addr = next_addr_in_map;
-                    *addr
-                };
-
-                // This flag indicates whether we want to explore th negated (not taken) path to explor eit symbolically
-                let negate_path_flag = std::env::var("NEGATE_PATH_FLAG")
-                    .expect("NEGATE_PATH_FLAG environment variable is not set");
-
-                // Derive the negated-path branch condition and decide whether to explore
-                let cond_bv = conditional_flag.symbolic.to_bv(executor.context);
-                let branch_taken_to_explore = conditional_flag_u64 == 0;
-                let explored_condition = extract_underlying_condition_from_flag_ast(
-                    &cond_bv,
-                    branch_taken_to_explore,
-                    &mut executor.state.logger.clone(),
-                );
-
-                // Determine if the explored condition references any tracked symbolic argument
-                let expr_string = format!("{:?}", explored_condition.simplify());
-                let involves_tracked = executor
-                    .function_symbolic_arguments
-                    .keys()
-                    .any(|arg_name| expr_string.contains(arg_name));
-                // If the condition involves tracked variables or the constraint vector is not empty, we want to explore the negated path
-                let should_explore = involves_tracked || !executor.constraint_vector.is_empty();
-
-                if !should_explore {
+                // Gate: allow if current block is reachable OR branch target is within any
+                // panic-reachable range OR target matches a known panic xref
+                let panic_reach_ok =
+                    is_panic_reachable_addr(current_rip, panic_reach, panic_ranges)
+                        || is_panic_reachable_addr(
+                            branch_target_address_tmp,
+                            panic_reach,
+                            panic_ranges,
+                        )
+                        || panic_addresses
+                            .iter()
+                            .any(|&a| a == branch_target_address_tmp);
+                if !panic_reach_ok {
+                    inc_gated_by_reach();
                     log!(
                         executor.state.logger,
-                        "Skipping negated-path exploration: condition has no tracked symbols and constraint vector is empty."
+                        "Skipping SMT analysis: neither block 0x{:x} nor target 0x{:x} are in panic reach or xrefs",
+                        current_rip,
+                        branch_target_address_tmp
                     );
+                    local_line_number += 1;
                 } else {
-                    // This block is for find a SAT state for the negated path exploration
-                    if negate_path_flag == "true" {
+                    if !panic_reach.contains(&current_rip) {
+                        inc_allowed_by_xref_fallback();
+                    }
+                    log!(
+                        executor.state.logger,
+                        " Possible panic function reference detected: entrying symbolic checks..."
+                    );
+                    let branch_target_varnode = inst.inputs[0].clone();
+                    let branch_target_address = executor
+                        .from_varnode_var_to_branch_address(&branch_target_varnode)
+                        .map_err(|e| e.to_string())
+                        .unwrap();
+                    let conditional_flag = inst.inputs[1].clone();
+                    let conditional_flag = executor
+                        .varnode_to_concolic(&conditional_flag)
+                        .map_err(|e| e.to_string())
+                        .unwrap()
+                        .to_concolic_var()
+                        .unwrap();
+                    let conditional_flag_u64 = conditional_flag.concrete.to_u64();
+
+                    let address_of_negated_path_exploration = if conditional_flag_u64 == 0 {
+                        // We want to explore the branch that is not taken
+                        log!(executor.state.logger, ">>> Branch condition is false (0x{:x}), performing the speculative exploration on the other branch...", conditional_flag_u64);
+                        let addr = branch_target_address;
+                        addr
+                    } else {
+                        // We want to explore the branch that is taken
+                        log!(executor.state.logger, ">>> Branch condition is true (0x{:x}), performing the speculative exploration on the other branch...", conditional_flag_u64);
+                        let addr = next_addr_in_map;
+                        *addr
+                    };
+
+                    // This flag indicates whether we want to explore th negated (not taken) path to explor eit symbolically
+                    let negate_path_flag = std::env::var("NEGATE_PATH_FLAG")
+                        .expect("NEGATE_PATH_FLAG environment variable is not set");
+
+                    // Derive the negated-path branch condition and decide whether to explore
+                    let cond_bv = conditional_flag.symbolic.to_bv(executor.context);
+                    let branch_taken_to_explore = conditional_flag_u64 == 0;
+                    let explored_condition = extract_underlying_condition_from_flag_ast(
+                        &cond_bv,
+                        branch_taken_to_explore,
+                        &mut executor.state.logger.clone(),
+                    );
+
+                    // Determine if the explored condition references any tracked symbolic argument
+                    let expr_string = format!("{:?}", explored_condition.simplify());
+                    let involves_tracked = executor
+                        .function_symbolic_arguments
+                        .keys()
+                        .any(|arg_name| expr_string.contains(arg_name));
+                    // If the condition involves tracked variables or the constraint vector is not empty, we want to explore the negated path
+                    let should_explore = involves_tracked || !executor.constraint_vector.is_empty();
+
+                    if !should_explore {
                         log!(
                             executor.state.logger,
-                            ">>> Evaluating arguments for the negated path exploration."
+                            "Skipping negated-path exploration: condition has no tracked symbols and constraint vector is empty."
                         );
+                    } else {
+                        // This block is for finding a SAT state for the negated path exploration
+                        if negate_path_flag == "true" {
+                            log!(
+                                executor.state.logger,
+                                ">>> Evaluating arguments for the negated path exploration."
+                            );
 
-                        let ast_panic_result = explore_ast_for_panic(
-                            executor,
-                            address_of_negated_path_exploration,
-                            &binary_path,
-                        );
+                            let ast_panic_result = explore_ast_for_panic(
+                                executor,
+                                address_of_negated_path_exploration,
+                                &binary_path,
+                            );
 
-                        if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
-                            if let Some(panic_addr_str) =
-                                ast_panic_result.trim().split_whitespace().last()
-                            {
-                                if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
-                                    if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
-                                        log!(executor.state.logger, ">>> The speculative AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
-                                    } else {
-                                        log!(
-                                            executor.state.logger,
-                                            "Could not parse panic address from AST result: '{}'",
-                                            panic_addr_str
-                                        );
+                            if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
+                                if let Some(panic_addr_str) =
+                                    ast_panic_result.trim().split_whitespace().last()
+                                {
+                                    if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
+                                        if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
+                                            log!(executor.state.logger, ">>> The speculative AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
+                                        } else {
+                                            log!(
+                                                executor.state.logger,
+                                                "Could not parse panic address from AST result: '{}'",
+                                                panic_addr_str
+                                            );
+                                        }
                                     }
                                 }
-                            }
 
-                            evaluate_args_z3(
-                                executor,
-                                inst,
-                                address_of_negated_path_exploration,
-                                Some(conditional_flag.clone()),
-                                Some(current_rip),
-                                Some(branch_target_address),
-                            )
-                            .unwrap_or_else(|e| {
-                                log!(
-                                    executor.state.logger,
-                                    "Error evaluating arguments for branch at 0x{:x}: {}",
-                                    branch_target_address,
-                                    e
-                                );
-                            });
+                                evaluate_args_z3(
+                                    executor,
+                                    inst,
+                                    address_of_negated_path_exploration,
+                                    Some(conditional_flag.clone()),
+                                    Some(current_rip),
+                                    Some(branch_target_address),
+                                )
+                                .unwrap_or_else(|e| {
+                                    log!(
+                                        executor.state.logger,
+                                        "Error evaluating arguments for branch at 0x{:x}: {}",
+                                        branch_target_address,
+                                        e
+                                    );
+                                });
+                            } else {
+                                log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
+                            }
                         } else {
-                            log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
+                            log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");
                         }
-                    } else {
-                        log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");
                     }
                 }
             }
@@ -1478,6 +1539,12 @@ fn execute_instructions_from(
             }
         }
     }
+    log!(
+        executor.state.logger,
+        "Panic gating stats: gated_by_reach={}, allowed_by_xref_fallback={}",
+        get_gated_by_reach(),
+        get_allowed_by_xref_fallback()
+    );
 }
 
 // Function to initialize the symbolic part of os.Args

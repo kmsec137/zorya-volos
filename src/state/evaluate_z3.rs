@@ -253,6 +253,8 @@ fn add_ascii_constraints_for_args<'ctx>(
 }
 
 /// Write SAT state details to file and log to terminal
+use crate::state::gating_stats::{get_allowed_by_xref_fallback, get_gated_by_reach};
+
 fn write_sat_state_to_file(
     evaluation_content: &str,
     mode: &str,
@@ -301,6 +303,17 @@ fn write_sat_state_to_file(
     }
 
     writeln!(file, "{}", "-".repeat(60))?;
+    // Gating stats summary
+    let gated = get_gated_by_reach();
+    let allowed = get_allowed_by_xref_fallback();
+    writeln!(file, "Panic gating stats:")?;
+    writeln!(
+        file,
+        "  gated_by_reach = {} (branches skipped by reverse CFG reachability)",
+        gated
+    )?;
+    writeln!(file, "  allowed_by_xref_fallback = {} (branches allowed because target matched a known panic xref)", allowed)?;
+    writeln!(file, "{}", "-".repeat(60))?;
     writeln!(file, "{}", evaluation_content)?;
     writeln!(file, "{}", "=".repeat(80))?;
 
@@ -318,6 +331,23 @@ fn write_sat_state_to_file(
     println!("~~~~~~~~~~~\n");
 
     Ok(())
+}
+
+fn ascii_pretty(bytes: &[u8]) -> String {
+    let mut s = String::new();
+    for &b in bytes {
+        match b {
+            b'\\' => s.push_str("\\\\"),
+            b'"' => s.push_str("\\\""),
+            32..=126 => s.push(b as char),
+            0 => s.push_str("\\0"),
+            9 => s.push_str("\\t"),
+            10 => s.push_str("\\n"),
+            13 => s.push_str("\\r"),
+            _ => s.push_str(&format!("\\x{:02x}", b)),
+        }
+    }
+    s
 }
 
 /// Capture the evaluation content as a string (similar to what goes to the logger)
@@ -515,6 +545,12 @@ fn capture_go_arguments_evaluation(
             "The user input nr.{} must be => \"{}\", the raw value being {:?} (len={})\n",
             i, arg_str, arg_bytes, str_data_len_val
         ));
+        // Append conversions: unsigned bytes, signed bytes, and ASCII rendering
+        let signed_bytes: Vec<i8> = arg_bytes.iter().map(|&b| b as i8).collect();
+        let ascii_str = ascii_pretty(&arg_bytes);
+        output.push_str(&format!("  as unsigned bytes: {:?}\n", arg_bytes));
+        output.push_str(&format!("  as signed bytes: {:?}\n", signed_bytes));
+        output.push_str(&format!("  as ASCII: {}\n", ascii_str));
         // If digits mode or value looks numeric, also print parsed integer form
         let looks_numeric = {
             let s = arg_str.trim();
@@ -530,8 +566,8 @@ fn capture_go_arguments_evaluation(
                 output.push_str(&format!("  as integer: {}\n", parsed));
             }
         }
+        output.push_str(&format!("(If the result is not in the expected format, try to set the ARG_ASCII_PROFILE environment variable to 'printable' or 'digits', by running 'ARG_ASCII_PROFILE=printable zorya ...' for instance)"));
     }
-
     Ok(output)
 }
 
@@ -635,9 +671,6 @@ pub fn evaluate_args_z3<'ctx>(
 
             // List constraints and assert them to solver
             add_constraints_from_vector(&executor);
-
-            // Add ASCII constraints for argument bytes
-            let _ = add_ascii_constraints_for_args(executor, &binary_path);
 
             // Minimize symbolic variables; for integer values prefer smallest signed magnitude
             for symbolic_var in executor.function_symbolic_arguments.values() {
@@ -771,8 +804,13 @@ pub fn evaluate_args_z3<'ctx>(
         // List constraints and assert them to solver
         add_constraints_from_vector(&executor);
 
-        // Add ASCII constraints for argument bytes
-        let _ = add_ascii_constraints_for_args(executor, &binary_path);
+        // Optionally enforce ASCII profiles for argv bytes (off by default)
+        if let Ok(profile) = std::env::var("ARG_ASCII_PROFILE") {
+            let prof = profile.to_lowercase();
+            if prof == "printable" || prof == "digits" || prof == "auto" {
+                let _ = add_ascii_constraints_for_args(executor, &binary_path);
+            }
+        }
 
         // We are exploring the negated path: assert the opposite of the observed flag
         let zero_bv = z3::ast::BV::from_u64(executor.context, 0, cond_bv.get_size());
@@ -803,7 +841,7 @@ pub fn evaluate_args_z3<'ctx>(
                     .unwrap_or_default()
                     .to_lowercase();
 
-                let evaluation_content = if lang == "go" {
+                let mut evaluation_content = if lang == "go" {
                     // Capture Go arguments evaluation
                     match capture_go_arguments_evaluation(&model, executor, &binary_path) {
                         Ok(go_eval) => {
@@ -895,6 +933,20 @@ pub fn evaluate_args_z3<'ctx>(
 
                                 let arg_str = String::from_utf8_lossy(&arg_bytes);
                                 log!(executor.state.logger, "The user input nr.{} must be => \"{}\", the raw value being {:?} (len={})", i, arg_str, arg_bytes, str_data_len_val);
+                                let signed_bytes: Vec<i8> =
+                                    arg_bytes.iter().map(|&b| b as i8).collect();
+                                let ascii_str = ascii_pretty(&arg_bytes);
+                                log!(
+                                    executor.state.logger,
+                                    "  as unsigned bytes: {:?}",
+                                    arg_bytes
+                                );
+                                log!(
+                                    executor.state.logger,
+                                    "  as signed bytes: {:?}",
+                                    signed_bytes
+                                );
+                                log!(executor.state.logger, "  as ASCII: {}", ascii_str);
                             }
 
                             go_eval // Return the captured evaluation
@@ -908,6 +960,14 @@ pub fn evaluate_args_z3<'ctx>(
                     log!(executor.state.logger, "{}", msg);
                     msg
                 };
+
+                // Also include tracked Z3 variables evaluation (unsigned, signed, ASCII) like function mode
+                let tracked_eval = capture_symbolic_arguments_evaluation(
+                    &model,
+                    &executor.function_symbolic_arguments,
+                );
+                evaluation_content.push_str("\n");
+                evaluation_content.push_str(&tracked_eval);
 
                 // Write to file
                 let elapsed = START_INSTANT.get().map(|s| s.elapsed());

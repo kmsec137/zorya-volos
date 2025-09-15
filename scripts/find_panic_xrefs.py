@@ -25,6 +25,8 @@ def main():
     pyhidra.start()
 
     from ghidra.program.model.symbol import RefType
+    from ghidra.program.model.block import BasicBlockModel
+    from ghidra.util.task import ConsoleTaskMonitor
 
     # Open the binary with Pyhidra
     with pyhidra.open_program(binary_path, analyze=True) as flat_api:
@@ -34,8 +36,30 @@ def main():
         # Get the FunctionManager
         function_manager = program.getFunctionManager()
 
-        # List to store the addresses of xrefs to panic functions
-        xref_addresses = []
+        # Addresses (as strings) to seed reverse search: include call sites and containing block starts
+        xref_addresses = set()
+
+        # Prepare basic block model to resolve containing block starts
+        model = BasicBlockModel(program)
+        monitor = ConsoleTaskMonitor()
+
+        # Patterns for panic-like functions (case-insensitive)
+        panic_substrings = [
+            "panic",
+            "nilpanic",
+            "panicindex",
+            "panicbounds",
+            "panicmem",
+            "panicdivide",
+            "panicslice",
+            "throw",
+            "fatal",
+            "abort",
+            "trap",
+            "tinygo_longjmp",
+            "lookuppanic",
+            "Panic",
+        ]
 
         # Iterate over all functions in the program
         function_iterator = function_manager.getFunctions(True)
@@ -46,8 +70,13 @@ def main():
             # Convert function name to lowercase for case-insensitive comparison
             function_name_lower = function_name.lower()
 
-            # Check if the function name contains "panic" (case-insensitive)
-            if "panic" in function_name_lower:
+            # Match if any panic-like substring appears in the symbol name
+            if any(pat in function_name_lower for pat in panic_substrings):
+                # Always include the function entry point as a seed (even if no xrefs)
+                entry = function.getEntryPoint()
+                if entry is not None:
+                    xref_addresses.add("0x{}".format(entry.toString()))
+
                 # Get references to this function
                 references = program.getReferenceManager().getReferencesTo(function.getEntryPoint())
 
@@ -55,7 +84,18 @@ def main():
                     # We are interested in code references that are calls
                     if ref.getReferenceType().isCall():
                         from_address = ref.getFromAddress()
-                        xref_addresses.append(from_address)
+                        # Add the raw call site
+                        xref_addresses.add("0x{}".format(from_address.toString()))
+                        # Also add the start of the containing basic block
+                        blk = model.getCodeBlockAt(from_address, monitor)
+                        if blk is None:
+                            # Fallback: blocks containing the address
+                            blocks = model.getCodeBlocksContaining(from_address, monitor)
+                            for b in blocks:
+                                if b is not None:
+                                    xref_addresses.add("0x{}".format(b.getFirstStartAddress().toString()))
+                        else:
+                            xref_addresses.add("0x{}".format(blk.getFirstStartAddress().toString()))
 
         # Ensure results directory exists
         results_dir = "results"
@@ -64,8 +104,8 @@ def main():
         # Write the addresses to a file in the results directory
         output_file = os.path.join(results_dir, "xref_addresses.txt")
         with open(output_file, "w") as file:
-            for addr in xref_addresses:
-                file.write("0x{}\n".format(addr.toString()))
+            for addr in sorted(xref_addresses):
+                file.write(f"{addr}\n")
 
         print(f"[INFO] Xref analysis completed. Results saved to {output_file}")
 
