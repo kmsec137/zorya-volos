@@ -682,6 +682,23 @@ pub fn evaluate_args_z3<'ctx>(
                         executor.solver.minimize(&squared);
                     }
                     SymbolicVar::Slice(slice) => {
+                        // Prefer smallest slice length first (lexicographic objective)
+                        executor.solver.minimize(&slice.length);
+
+                        // Heuristic domain constraints for slice length
+                        let len_int = Int::from_bv(&slice.length, false);
+                        executor.solver.minimize(&len_int);
+
+                        let zero = Int::from_i64(executor.context, 0);
+                        executor.solver.assert(&len_int.ge(&zero));
+
+                        let materialized = slice.elements.len() as i64;
+                        if materialized > 0 {
+                            let max_len = Int::from_i64(executor.context, materialized);
+                            executor.solver.assert(&len_int.le(&max_len));
+                        }
+
+                        // Then minimize each element magnitude
                         for elem in &slice.elements {
                             match elem {
                                 SymbolicVar::Int(bv_elem) => {
@@ -697,7 +714,6 @@ pub fn evaluate_args_z3<'ctx>(
                                 }
                             }
                         }
-                        executor.solver.minimize(&slice.length);
                     }
                     _ => {
                         log!(
