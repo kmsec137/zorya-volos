@@ -22,3 +22,4 @@
 /results/execution_log_normal.txt
 /results/execution_log_panic.txt
 /results/execution_log_error.txt
+/results/panic_reachable.txt

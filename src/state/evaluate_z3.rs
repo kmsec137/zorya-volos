@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{error::Error, process::Command};
 
-use super::explore_ast::explore_ast_for_panic;
+// use super::explore_ast::explore_ast_for_panic;  // Removed to avoid duplication
 use crate::concolic::{ConcolicExecutor, ConcolicVar, Logger, SymbolicVar};
 use crate::state::simplify_z3::add_constraints_from_vector;
 use crate::target_info::GLOBAL_TARGET_INFO;
@@ -578,36 +578,19 @@ pub fn evaluate_args_z3<'ctx>(
     conditional_flag: Option<ConcolicVar<'ctx>>,
     instruction_addr: Option<u64>,
     branch_target_addr: Option<u64>,
+    panic_addr: Option<u64>, // Add panic address parameter to avoid re-exploration
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::env;
     let mode = env::var("MODE").expect("MODE environment variable is not set");
 
     if mode == "function" {
-        let binary_path = {
-            let target_info = GLOBAL_TARGET_INFO.lock().unwrap();
-            target_info.binary_path.clone()
-        };
-
-        let ast_panic_result =
-            explore_ast_for_panic(executor, address_of_negated_path_exploration, &binary_path);
-
-        if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
-            let mut panic_addr: Option<u64> = None;
-
-            if let Some(panic_addr_str) = ast_panic_result.trim().split_whitespace().last() {
-                if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
-                    if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
-                        panic_addr = Some(parsed_addr);
-                        log!(executor.state.logger, ">>> The speculative AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
-                    } else {
-                        log!(
-                            executor.state.logger,
-                            "Could not parse panic address from AST result: '{}'",
-                            panic_addr_str
-                        );
-                    }
-                }
-            }
+        // Use panic_addr passed from caller instead of re-doing AST exploration
+        if let Some(parsed_addr) = panic_addr {
+            log!(
+                executor.state.logger,
+                ">>> Using panic address from caller: 0x{:x}",
+                parsed_addr
+            );
 
             executor.solver.push();
 
@@ -702,9 +685,10 @@ pub fn evaluate_args_z3<'ctx>(
                         for elem in &slice.elements {
                             match elem {
                                 SymbolicVar::Int(bv_elem) => {
-                                    let signed_elem = Int::from_bv(bv_elem, true);
-                                    let squared_elem = &signed_elem * &signed_elem;
-                                    executor.solver.minimize(&squared_elem);
+                                    let signed_int = Int::from_bv(bv_elem, true);
+                                    // approximate |x| by minimizing x^2 to avoid missing abs()
+                                    let squared = &signed_int * &signed_int;
+                                    executor.solver.minimize(&squared);
                                 }
                                 _ => {
                                     log!(

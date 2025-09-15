@@ -205,6 +205,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         None,
                         Some(current_addr),
                         None,
+                        None, // No panic addr for non-CBranch instructions
                     )
                     .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
@@ -229,6 +230,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         None,
                         Some(current_addr),
                         None,
+                        None, // No panic addr for non-CBranch instructions
                     )
                     .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
@@ -253,6 +255,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         None,
                         Some(current_addr),
                         None,
+                        None, // No panic addr for non-CBranch instructions
                     )
                     .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
@@ -273,6 +276,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         None,
                         Some(current_addr),
                         None,
+                        None, // No panic addr for non-CBranch instructions
                     )
                     .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
@@ -293,6 +297,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         None,
                         Some(current_addr),
                         None,
+                        None, // No panic addr for non-CBranch instructions
                     )
                     .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
@@ -313,6 +318,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         None,
                         Some(current_addr),
                         None,
+                        None, // No panic addr for non-CBranch instructions
                     )
                     .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
@@ -337,6 +343,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         None,
                         Some(current_addr),
                         None,
+                        None, // No panic addr for non-CBranch instructions
                     )
                     .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
@@ -357,6 +364,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         None,
                         Some(current_addr),
                         None,
+                        None, // No panic addr for non-CBranch instructions
                     )
                     .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
@@ -381,6 +389,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         None,
                         Some(current_addr),
                         None,
+                        None, // No panic addr for non-CBranch instructions
                     )
                     .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
