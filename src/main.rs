@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
-use parser::parser::{Inst, Opcode};
+use parser::parser::{Inst, Opcode, Var};
 use z3::{
     ast::{Ast, Int, BV},
     Config, Context,
@@ -730,18 +730,44 @@ fn execute_instructions_from(
                     .from_varnode_var_to_branch_address(&branch_target_varnode_tmp)
                     .map_err(|e| e.to_string())
                     .unwrap();
+                // Treat tiny Const targets (e.g., 0x3/0x6) as p-code internal (jump table/sub-instruction): skip AST/speculation later
+                let is_internal_target = match &inst.inputs[0].var {
+                    Var::Const(s) => {
+                        let stripped = s.trim();
+                        let hex = stripped.strip_prefix("0x").or_else(|| stripped.strip_prefix("0X")).unwrap_or(stripped);
+                        if let Ok(v) = u64::from_str_radix(hex, 16) {
+                            v <= 0xff
+                        } else if let Ok(v) = stripped.parse::<u64>() {
+                            v <= 0xff
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                };
                 // Gate: allow if current block is reachable OR branch target is within any
                 // panic-reachable range OR target matches a known panic xref
-                let panic_reach_ok =
-                    is_panic_reachable_addr(current_rip, panic_reach, panic_ranges)
-                        || is_panic_reachable_addr(
-                            branch_target_address_tmp,
-                            panic_reach,
-                            panic_ranges,
-                        )
-                        || panic_addresses
-                            .iter()
-                            .any(|&a| a == branch_target_address_tmp);
+                // Whitelist: always allow SMT for known tight arithmetic loops such as math/bits.Len
+                let whitelist_loop = {
+                    let enclosing = executor
+                        .enclosing_symbol_name(current_rip)
+                        .map(|s| s.to_lowercase())
+                        .unwrap_or_default();
+                    enclosing.contains("math/bits.len")
+                        || enclosing.contains("math.bits.len")
+                        || enclosing.contains("bits.len")
+                };
+
+                let panic_reach_ok = whitelist_loop
+                    || is_panic_reachable_addr(current_rip, panic_reach, panic_ranges)
+                    || is_panic_reachable_addr(
+                        branch_target_address_tmp,
+                        panic_reach,
+                        panic_ranges,
+                    )
+                    || panic_addresses
+                        .iter()
+                        .any(|&a| a == branch_target_address_tmp);
                 if !panic_reach_ok {
                     inc_gated_by_reach();
                     log!(
@@ -807,7 +833,9 @@ fn execute_instructions_from(
                     // If the condition involves tracked variables or the constraint vector is not empty, we want to explore the negated path
                     let should_explore = involves_tracked || !executor.constraint_vector.is_empty();
 
-                    if !should_explore {
+                    if is_internal_target {
+                        log!(executor.state.logger, ">>> Internal p-code branch target detected; skipping AST exploration and negated-path SMT.");
+                    } else if !should_explore {
                         log!(
                             executor.state.logger,
                             "Skipping negated-path exploration: condition has no tracked symbols and constraint vector is empty."

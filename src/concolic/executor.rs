@@ -135,6 +135,23 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         Ok(())
     }
 
+    // Find the enclosing function symbol name for an address using the existing hex-keyed table
+    pub fn enclosing_symbol_name(&self, addr: u64) -> Option<String> {
+        let mut best: Option<(u64, &String)> = None;
+        for (hex, name) in &self.symbol_table {
+            if let Ok(sym_addr) = u64::from_str_radix(hex, 16) {
+                if sym_addr <= addr {
+                    match best {
+                        None => best = Some((sym_addr, name)),
+                        Some((cur, _)) if sym_addr > cur => best = Some((sym_addr, name)),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        best.map(|(_, n)| n.clone())
+    }
+
     // Helper function to resolve function names via GOT
     fn resolve_got_function(&mut self, elf: &Elf, plt_addr: u64) -> Option<String> {
         // Look for GOT entries that are referenced by the dynamic symbol table

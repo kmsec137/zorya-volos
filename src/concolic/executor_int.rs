@@ -3,7 +3,7 @@
 use crate::concolic::{executor::ConcolicExecutor, SymbolicVar};
 use parser::parser::{Inst, Opcode, Var};
 use std::io::Write;
-use z3::ast::{Ast, Float, BV};
+use z3::ast::{Ast, Bool, Float, BV};
 
 use super::ConcolicVar;
 
@@ -518,7 +518,14 @@ pub fn handle_int_equal(executor: &mut ConcolicExecutor, instruction: Inst) -> R
         result_concrete
     );
 
-    let result_symbolic = input0_simplified._eq(&input1_simplified);
+    // Prefer a constant Bool when both operands simplify to numerals to avoid spurious taint
+    let result_symbolic = if input0_simplified.as_u64().is_some()
+        && input1_simplified.as_u64().is_some()
+    {
+        Bool::from_bool(executor.context, result_concrete)
+    } else {
+        input0_simplified._eq(&input1_simplified)
+    };
     log!(
         executor.state.logger.clone(),
         "result_symbolic (Bool): {:?}",
@@ -650,12 +657,16 @@ pub fn handle_int_notequal(
 
     // Perform the inequality comparison
     let result_concrete = input0_var.get_concrete_value() != input1_var.get_concrete_value();
-    let result_symbolic = !input0_var
-        .get_symbolic_value_bv(executor.context)
-        ._eq(&input1_var.get_symbolic_value_bv(executor.context));
+    let bv0 = input0_var.get_symbolic_value_bv(executor.context).simplify();
+    let bv1 = input1_var.get_symbolic_value_bv(executor.context).simplify();
+    let result_symbolic_bool = if bv0.as_u64().is_some() && bv1.as_u64().is_some() {
+        Bool::from_bool(executor.context, result_concrete)
+    } else {
+        !bv0._eq(&bv1)
+    };
 
     // Explicitly convert Bool to BV
-    let result_symbolic_bv = result_symbolic.ite(
+    let result_symbolic_bv = result_symbolic_bool.ite(
         &BV::from_u64(executor.context, 1, output_size_bits),
         &BV::from_u64(executor.context, 0, output_size_bits),
     );
@@ -741,7 +752,13 @@ pub fn handle_int_less(executor: &mut ConcolicExecutor, instruction: Inst) -> Re
     let symbolic_bv1 = input1_var
         .get_symbolic_value_bv(executor.context)
         .simplify();
-    let result_symbolic = symbolic_bv0.bvult(&symbolic_bv1);
+    let result_symbolic_bool = if symbolic_bv0.as_u64().is_some()
+        && symbolic_bv1.as_u64().is_some()
+    {
+        Bool::from_bool(executor.context, result_concrete)
+    } else {
+        symbolic_bv0.bvult(&symbolic_bv1)
+    };
 
     log!(
         executor.state.logger.clone(),
@@ -751,7 +768,7 @@ pub fn handle_int_less(executor: &mut ConcolicExecutor, instruction: Inst) -> Re
 
     let result_value = ConcolicVar::new_concrete_and_symbolic_bool(
         result_concrete,
-        result_symbolic,
+        result_symbolic_bool,
         executor.context,
         output_size_bits,
     );
