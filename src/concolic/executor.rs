@@ -218,7 +218,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     evaluate_args_z3(
                         self,
                         &instruction,
-                        current_addr,
                         None,
                         Some(current_addr),
                         None,
@@ -243,7 +242,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     evaluate_args_z3(
                         self,
                         &instruction,
-                        current_addr,
                         None,
                         Some(current_addr),
                         None,
@@ -268,7 +266,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     evaluate_args_z3(
                         self,
                         &instruction,
-                        current_addr,
                         None,
                         Some(current_addr),
                         None,
@@ -289,7 +286,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     evaluate_args_z3(
                         self,
                         &instruction,
-                        current_addr,
                         None,
                         Some(current_addr),
                         None,
@@ -310,7 +306,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     evaluate_args_z3(
                         self,
                         &instruction,
-                        current_addr,
                         None,
                         Some(current_addr),
                         None,
@@ -331,7 +326,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     evaluate_args_z3(
                         self,
                         &instruction,
-                        current_addr,
                         None,
                         Some(current_addr),
                         None,
@@ -356,7 +350,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     evaluate_args_z3(
                         self,
                         &instruction,
-                        current_addr,
                         None,
                         Some(current_addr),
                         None,
@@ -377,7 +370,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     evaluate_args_z3(
                         self,
                         &instruction,
-                        current_addr,
                         None,
                         Some(current_addr),
                         None,
@@ -402,7 +394,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     evaluate_args_z3(
                         self,
                         &instruction,
-                        current_addr,
                         None,
                         Some(current_addr),
                         None,
@@ -1179,9 +1170,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     "Parsed branch target (signed): {}",
                     parsed_value
                 );
-
-                // Use the signed value for jumping (if a negative offset means to jump back).
-                self.pcode_internal_lines_to_be_jumped = parsed_value;
 
                 Ok(parsed_value as u64)
             }

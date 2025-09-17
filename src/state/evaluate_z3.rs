@@ -4,12 +4,12 @@ use std::time::{Duration, Instant};
 use std::{error::Error, process::Command};
 
 // use super::explore_ast::explore_ast_for_panic;  // Removed to avoid duplication
-use crate::concolic::{ConcolicExecutor, ConcolicVar, Logger, SymbolicVar};
+use crate::concolic::{ConcolicExecutor, ConcolicVar, SymbolicVar};
 use crate::state::simplify_z3::add_constraints_from_vector;
 use crate::target_info::GLOBAL_TARGET_INFO;
 use chrono::{DateTime, Utc};
 use parser::parser::Inst;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::OpenOptions;
 use std::path::Path;
 use z3::ast::{Ast, Int, BV};
@@ -333,21 +333,246 @@ fn write_sat_state_to_file(
     Ok(())
 }
 
-fn ascii_pretty(bytes: &[u8]) -> String {
-    let mut s = String::new();
-    for &b in bytes {
-        match b {
-            b'\\' => s.push_str("\\\\"),
-            b'"' => s.push_str("\\\""),
-            32..=126 => s.push(b as char),
-            0 => s.push_str("\\0"),
-            9 => s.push_str("\\t"),
-            10 => s.push_str("\\n"),
-            13 => s.push_str("\\r"),
-            _ => s.push_str(&format!("\\x{:02x}", b)),
+
+/// Capture simple value assignments for constrained inputs (e.g., indices.len = 1)
+fn capture_constrained_values_section(
+    executor: &ConcolicExecutor,
+    model: &z3::Model,
+    symbolic_arguments: &BTreeMap<String, SymbolicVar>,
+    extra_expressions: &[String],
+) -> String {
+    // Recompute constrained labels similarly to capture_constrained_inputs_section
+    let mut constraint_strings: Vec<String> = Vec::new();
+    for c in &executor.constraint_vector {
+        constraint_strings.push(format!("{:?}", c.simplify()));
+    }
+    constraint_strings.extend(extra_expressions.iter().cloned());
+
+    // Build label set we will evaluate
+    let mut label_set: BTreeSet<String> = BTreeSet::new();
+
+    fn collect_symbols<'ctx>(
+        label: &str,
+        sym: &SymbolicVar<'ctx>,
+        labels: &mut BTreeSet<String>,
+        constraints: &[String],
+    ) {
+        match sym {
+            SymbolicVar::Int(bv) => {
+                let name = bv.to_string();
+                if constraints.iter().any(|s| s.contains(&name)) {
+                    labels.insert(label.to_string());
+                }
+            }
+            SymbolicVar::Bool(b) => {
+                let name = b.to_string();
+                if constraints.iter().any(|s| s.contains(&name)) {
+                    labels.insert(label.to_string());
+                }
+            }
+            SymbolicVar::Float(f) => {
+                let name = f.to_string();
+                if constraints.iter().any(|s| s.contains(&name)) {
+                    labels.insert(label.to_string());
+                }
+            }
+            SymbolicVar::Slice(slice) => {
+                let p = slice.pointer.to_string();
+                if constraints.iter().any(|s| s.contains(&p)) {
+                    labels.insert(format!("{}.ptr", label));
+                }
+                let l = slice.length.to_string();
+                if constraints.iter().any(|s| s.contains(&l)) {
+                    labels.insert(format!("{}.len", label));
+                }
+                let c = slice.capacity.to_string();
+                if constraints.iter().any(|s| s.contains(&c)) {
+                    labels.insert(format!("{}.cap", label));
+                }
+                for (i, elem) in slice.elements.iter().enumerate() {
+                    let child = format!("{}[{}]", label, i);
+                    collect_symbols(&child, elem, labels, constraints);
+                }
+            }
+            SymbolicVar::LargeInt(vec_bv) => {
+                for (i, bv) in vec_bv.iter().enumerate() {
+                    let name = bv.to_string();
+                    if constraints.iter().any(|s| s.contains(&name)) {
+                        labels.insert(format!("{}[{}]", label, i));
+                    }
+                }
+            }
         }
     }
-    s
+
+    for (arg, sym) in symbolic_arguments.iter() {
+        collect_symbols(arg, sym, &mut label_set, &constraint_strings);
+    }
+
+    // Helper to render ASCII description for small integers
+    fn ascii_desc(v: u64) -> String {
+        if v <= 0xff {
+            let b = v as u8;
+            match b {
+                32..=126 => format!("'{}'", b as char),
+                0 => "\\0".to_string(),
+                9 => "\\t".to_string(),
+                10 => "\\n".to_string(),
+                13 => "\\r".to_string(),
+                _ => format!("non-printable 0x{:02x}", b),
+            }
+        } else {
+            "n/a".to_string()
+        }
+    }
+
+    // Render sentences for labels we can evaluate
+    let mut out = String::new();
+    if label_set.is_empty() {
+        return out;
+    }
+    out.push_str("RESULTS\n");
+    out.push_str("The program can panic if its inputs are the following:\n");
+
+    for label in label_set {
+        // Try to evaluate by pattern-matching against the arguments
+        let rendered = if let Some(dot) = label.rfind('.') {
+            // Possibly slice comp: arg.len/cap/ptr
+            let (arg, field) = label.split_at(dot);
+            let field = &field[1..];
+            if let Some(SymbolicVar::Slice(slice)) = symbolic_arguments.get(arg) {
+                match field {
+                    "len" => match model.eval(&slice.length, true).and_then(|v| v.as_u64()) {
+                        Some(v) => {
+                            let signed = v as i64;
+                            let ascii = ascii_desc(v);
+                            format!(
+                                "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
+                                label, v, v, signed, ascii
+                            )
+                        }
+                        None => format!("  - The input '{}' has unknown value\n", label),
+                    },
+                    "cap" => match model.eval(&slice.capacity, true).and_then(|v| v.as_u64()) {
+                        Some(v) => {
+                            let signed = v as i64;
+                            let ascii = ascii_desc(v);
+                            format!(
+                                "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
+                                label, v, v, signed, ascii
+                            )
+                        }
+                        None => format!("  - The input '{}' has unknown value\n", label),
+                    },
+                    "ptr" => match model.eval(&slice.pointer, true).and_then(|v| v.as_u64()) {
+                        Some(v) => format!(
+                            "  - The pointer '{}' must be 0x{:x}\n",
+                            label, v
+                        ),
+                        None => format!("  - The pointer '{}' has unknown value\n", label),
+                    },
+                    _ => String::new(),
+                }
+            } else {
+                String::new()
+            }
+        } else if let Some(bracket) = label.find('[') {
+            // Element access: arg[i]
+            let arg = &label[..bracket];
+            let idx_str = &label[bracket + 1..label.len() - 1];
+            let idx = idx_str.parse::<usize>().unwrap_or(usize::MAX);
+            if let Some(sym) = symbolic_arguments.get(arg) {
+                match sym {
+                    SymbolicVar::Slice(slice) => {
+                        if idx < slice.elements.len() {
+                            match &slice.elements[idx] {
+                                SymbolicVar::Int(bv) => match model.eval(bv, true).and_then(|v| v.as_u64()) {
+                                    Some(v) => {
+                                        let signed = v as i64;
+                                        let ascii = ascii_desc(v);
+                                        format!(
+                                            "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
+                                            label, v, v, signed, ascii
+                                        )
+                                    }
+                                    None => format!("  - The input '{}' has unknown value\n", label),
+                                },
+                                SymbolicVar::Bool(b) => match model.eval(b, true).and_then(|v| v.as_bool()) {
+                                    Some(v) => format!(
+                                        "  - The input '{}' must be {}\n",
+                                        label, v
+                                    ),
+                                    None => format!("  -The input '{}' has unknown value\n", label),
+                                },
+                                SymbolicVar::Float(f) => match model.eval(f, true).map(|v| v.to_string()) {
+                                    Some(s) => format!(
+                                        "  -The input '{}' must be {}\n",
+                                        label, s
+                                    ),
+                                    None => format!("  - The input '{}' has unknown value\n", label),
+                                },
+                                _ => format!("  {} = <complex>\n", label),
+                            }
+                        } else {
+                            String::new()
+                        }
+                    }
+                    SymbolicVar::LargeInt(vec_bv) => {
+                        if idx < vec_bv.len() {
+                            match model.eval(&vec_bv[idx], true).and_then(|v| v.as_u64()) {
+                                Some(v) => {
+                                    let signed = v as i64;
+                                    let ascii = ascii_desc(v);
+                                    format!(
+                                        "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
+                                        label, v, v, signed, ascii
+                                    )
+                                }
+                                None => format!("  - The input '{}' has unknown value\n", label),
+                            }
+                        } else {
+                            String::new()
+                        }
+                    }
+                    _ => String::new(),
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            // Base arg (Int/Bool/Float)
+            if let Some(sym) = symbolic_arguments.get(&label) {
+                match sym {
+                    SymbolicVar::Int(bv) => match model.eval(bv, true).and_then(|v| v.as_u64()) {
+                        Some(v) => {
+                            let signed = v as i64;
+                            let ascii = ascii_desc(v);
+                            format!(
+                                "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
+                                label, v, v, signed, ascii
+                            )
+                        }
+                        None => format!("  - The input '{}' has unknown value\n", label),
+                    },
+                    SymbolicVar::Bool(b) => match model.eval(b, true).and_then(|v| v.as_bool()) {
+                        Some(v) => format!("  - The input '{}' must be {}\n", label, v),
+                        None => format!("  - The input '{}' has unknown value\n", label),
+                    },
+                    SymbolicVar::Float(f) => match model.eval(f, true).map(|v| v.to_string()) {
+                        Some(s) => format!("  - The input '{}' must be {}\n", label, s),
+                        None => format!("  - The input '{}' has unknown value\n", label),
+                    },
+                    _ => String::new(),
+                }
+            } else {
+                String::new()
+            }
+        };
+        out.push_str(&rendered);
+    }
+
+    out.push_str("\n");
+    out
 }
 
 /// Capture the evaluation content as a string (similar to what goes to the logger)
@@ -357,7 +582,7 @@ fn capture_symbolic_arguments_evaluation(
 ) -> String {
     let mut output = String::new();
 
-    output.push_str("=== EVALUATING TRACKED Z3 VARIABLES ===\n\n");
+    output.push_str("=== FULL EVALUATION OF Z3 VARIABLES (TRACKED AND UNTRACKED) ===\n\n");
 
     for (arg_name, symbolic_var) in function_symbolic_arguments {
         match symbolic_var {
@@ -434,6 +659,23 @@ fn capture_symbolic_arguments_evaluation(
                                         byte_val
                                     ));
                                 }
+                            } else {
+                                // Always provide LSB ASCII hint for larger integers
+                                let b0 = (val_u64 & 0xff) as u8;
+                                let ascii = if (32..=126).contains(&b0) {
+                                    format!("'{}'", b0 as char)
+                                } else if b0 == 0 {
+                                    "\\0".to_string()
+                                } else if b0 == 9 {
+                                    "\\t".to_string()
+                                } else if b0 == 10 {
+                                    "\\n".to_string()
+                                } else if b0 == 13 {
+                                    "\\r".to_string()
+                                } else {
+                                    format!("non-printable 0x{:02x}", b0)
+                                };
+                                output.push_str(&format!("    (ASCII LSB: {})\n", ascii));
                             }
                         }
                     } else {
@@ -459,122 +701,46 @@ fn capture_symbolic_arguments_evaluation(
     output
 }
 
-/// Capture Go arguments evaluation as string
-fn capture_go_arguments_evaluation(
+/// Build a unified evaluation content string used for both file output and terminal logs
+fn build_unified_evaluation_content(
     model: &z3::Model,
     executor: &ConcolicExecutor,
-    binary_path: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let mut output = String::new();
-    let ascii_profile = std::env::var("ARG_ASCII_PROFILE")
-        .unwrap_or_default()
-        .to_lowercase();
+    conditional_flag: Option<&ConcolicVar>,
+) -> String {
+    let mut content = String::new();
 
-    // Get address of os.Args
-    let os_args_addr = get_os_args_address(binary_path)?;
+    // Include current conditional flag expression to aid constrained input detection
+    let mut extra_exprs: Vec<String> = Vec::new();
+    if let Some(cf) = conditional_flag.as_ref() {
+        match &cf.symbolic {
+            SymbolicVar::Bool(b) => extra_exprs.push(format!("{:?}", b.simplify())),
+            SymbolicVar::Int(bv) => extra_exprs.push(format!("{:?}", bv.simplify())),
+            _ => {}
+        }
+    }
 
-    // Read slice pointer and length
-    let slice_ptr_bv = executor
-        .state
-        .memory
-        .read_u64(os_args_addr, &mut executor.state.logger.clone())?
-        .symbolic
-        .to_bv(executor.context);
-    let slice_ptr_val = model.eval(&slice_ptr_bv, true).unwrap().as_u64().unwrap();
-
-    let slice_len_bv = executor
-        .state
-        .memory
-        .read_u64(os_args_addr + 8, &mut executor.state.logger.clone())?
-        .symbolic
-        .to_bv(executor.context);
-    let slice_len_val = model.eval(&slice_len_bv, true).unwrap().as_u64().unwrap();
-
-    output.push_str(&format!(
-        "To take the panic-branch => os.Args ptr=0x{:x}, len={}\n",
-        slice_ptr_val, slice_len_val
+    // Constrained values first
+    content.push_str(&capture_constrained_values_section(
+        executor,
+        model,
+        &executor.function_symbolic_arguments,
+        &extra_exprs,
+    ));
+    content.push_str("(If the result is not in the expected format, try to set the ARG_ASCII_PROFILE environment variable to 'printable' or 'digits', by running 'ARG_ASCII_PROFILE=printable zorya ...' for instance)\n");
+    content.push_str("------------------------------------------------------------\n");
+    // Then full tracked/untracked variable evaluation
+    content.push_str(&capture_symbolic_arguments_evaluation(
+        model,
+        &executor.function_symbolic_arguments,
     ));
 
-    // Process each argument
-    for i in 1..slice_len_val {
-        let string_struct_addr = slice_ptr_val + i * 16;
 
-        let str_data_ptr_bv = executor
-            .state
-            .memory
-            .read_u64(string_struct_addr, &mut executor.state.logger.clone())?
-            .symbolic
-            .to_bv(executor.context);
-        let str_data_ptr_val = model
-            .eval(&str_data_ptr_bv, true)
-            .unwrap()
-            .as_u64()
-            .unwrap();
-
-        let str_data_len_bv = executor
-            .state
-            .memory
-            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone())?
-            .symbolic
-            .to_bv(executor.context);
-        let str_data_len_val = model
-            .eval(&str_data_len_bv, true)
-            .unwrap()
-            .as_u64()
-            .unwrap();
-
-        if str_data_ptr_val == 0 || str_data_len_val == 0 {
-            output.push_str(&format!("Arg[{}] => (empty or null)\n", i));
-            continue;
-        }
-
-        let mut arg_bytes = Vec::new();
-        for j in 0..str_data_len_val {
-            let byte_read = executor
-                .state
-                .memory
-                .read_byte(str_data_ptr_val + j)
-                .map_err(|e| format!("Could not read arg[{}][{}]: {}", i, j, e))?;
-            let byte_bv = byte_read.symbolic.to_bv(executor.context);
-            let byte_val = model.eval(&byte_bv, true).unwrap().as_u64().unwrap() as u8;
-            arg_bytes.push(byte_val);
-        }
-
-        let arg_str = String::from_utf8_lossy(&arg_bytes);
-        output.push_str(&format!(
-            "The user input nr.{} must be => \"{}\", the raw value being {:?} (len={})\n",
-            i, arg_str, arg_bytes, str_data_len_val
-        ));
-        // Append conversions: unsigned bytes, signed bytes, and ASCII rendering
-        let signed_bytes: Vec<i8> = arg_bytes.iter().map(|&b| b as i8).collect();
-        let ascii_str = ascii_pretty(&arg_bytes);
-        output.push_str(&format!("  as unsigned bytes: {:?}\n", arg_bytes));
-        output.push_str(&format!("  as signed bytes: {:?}\n", signed_bytes));
-        output.push_str(&format!("  as ASCII: {}\n", ascii_str));
-        // If digits mode or value looks numeric, also print parsed integer form
-        let looks_numeric = {
-            let s = arg_str.trim();
-            let bytes = s.as_bytes();
-            !bytes.is_empty()
-                && bytes
-                    .iter()
-                    .enumerate()
-                    .all(|(idx, b)| (*b >= b'0' && *b <= b'9') || (idx == 0 && *b == b'-'))
-        };
-        if ascii_profile == "digits" || looks_numeric {
-            if let Ok(parsed) = arg_str.trim().parse::<i64>() {
-                output.push_str(&format!("  as integer: {}\n", parsed));
-            }
-        }
-        output.push_str(&format!("(If the result is not in the expected format, try to set the ARG_ASCII_PROFILE environment variable to 'printable' or 'digits', by running 'ARG_ASCII_PROFILE=printable zorya ...' for instance)"));
-    }
-    Ok(output)
+    content
 }
 
 pub fn evaluate_args_z3<'ctx>(
     executor: &mut ConcolicExecutor<'ctx>,
     inst: &Inst,
-    address_of_negated_path_exploration: u64,
     conditional_flag: Option<ConcolicVar<'ctx>>,
     instruction_addr: Option<u64>,
     branch_target_addr: Option<u64>,
@@ -595,7 +761,7 @@ pub fn evaluate_args_z3<'ctx>(
             executor.solver.push();
 
             // When evaluating arguments during a CBRANCH leading to a panic, we want to assert the condition that leads to the panic.
-            if let Some(conditional_flag) = conditional_flag {
+            if let Some(ref conditional_flag) = conditional_flag {
                 let panic_causing_flag_u64 = conditional_flag.concrete.to_u64().clone();
                 // Handle both Bool and BV types
                 let condition = match &conditional_flag.symbolic {
@@ -639,12 +805,13 @@ pub fn evaluate_args_z3<'ctx>(
                     }
                 };
                 // Assert the new condition
+                let simplified = condition.simplify();
                 log!(
                     executor.state.logger,
                     "Asserting branch condition to the solver: {:?}",
-                    condition.simplify()
+                    simplified
                 );
-                executor.solver.assert(&condition);
+                executor.solver.assert(&simplified);
             } else {
                 log!(
                     executor.state.logger,
@@ -724,18 +891,17 @@ pub fn evaluate_args_z3<'ctx>(
                         "To enter a panic function, the following conditions must be satisfied:"
                     );
 
-                    // Log the symbolic arguments evaluation (to terminal)
-                    log_symbolic_arguments_evaluation(
-                        &mut executor.state.logger,
+                    // Build unified evaluation content
+                    let evaluation_content = build_unified_evaluation_content(
                         &model,
-                        &executor.function_symbolic_arguments,
+                        executor,
+                        conditional_flag.as_ref(),
                     );
 
-                    // Capture the evaluation content for file writing
-                    let evaluation_content = capture_symbolic_arguments_evaluation(
-                        &model,
-                        &executor.function_symbolic_arguments,
-                    );
+                    // Log to terminal using the same structure
+                    for line in evaluation_content.lines() {
+                        log!(executor.state.logger, "{}", line);
+                    }
 
                     // Write to file
                     let elapsed = START_INSTANT.get().map(|s| s.elapsed());
@@ -837,137 +1003,18 @@ pub fn evaluate_args_z3<'ctx>(
                 log!(executor.state.logger, "~~~~~~~~~~~");
 
                 let model = executor.solver.get_model().unwrap();
-                let lang = std::env::var("SOURCE_LANG")
-                    .unwrap_or_default()
-                    .to_lowercase();
 
-                let mut evaluation_content = if lang == "go" {
-                    // Capture Go arguments evaluation
-                    match capture_go_arguments_evaluation(&model, executor, &binary_path) {
-                        Ok(go_eval) => {
-                            // Also log to terminal (existing behavior)
-                            let os_args_addr = get_os_args_address(&binary_path).unwrap();
-                            let slice_ptr_bv = executor
-                                .state
-                                .memory
-                                .read_u64(os_args_addr, &mut executor.state.logger.clone())
-                                .unwrap()
-                                .symbolic
-                                .to_bv(executor.context);
-                            let slice_ptr_val =
-                                model.eval(&slice_ptr_bv, true).unwrap().as_u64().unwrap();
-
-                            let slice_len_bv = executor
-                                .state
-                                .memory
-                                .read_u64(os_args_addr + 8, &mut executor.state.logger.clone())
-                                .unwrap()
-                                .symbolic
-                                .to_bv(executor.context);
-                            let slice_len_val =
-                                model.eval(&slice_len_bv, true).unwrap().as_u64().unwrap();
-
-                            log!(
-                                executor.state.logger,
-                                "To take the panic-branch => os.Args ptr=0x{:x}, len={}",
-                                slice_ptr_val,
-                                slice_len_val
-                            );
-
-                            // Log arguments to terminal (existing behavior)
-                            for i in 1..slice_len_val {
-                                let string_struct_addr = slice_ptr_val + i * 16;
-
-                                let str_data_ptr_bv = executor
-                                    .state
-                                    .memory
-                                    .read_u64(
-                                        string_struct_addr,
-                                        &mut executor.state.logger.clone(),
-                                    )
-                                    .unwrap()
-                                    .symbolic
-                                    .to_bv(executor.context);
-                                let str_data_ptr_val = model
-                                    .eval(&str_data_ptr_bv, true)
-                                    .unwrap()
-                                    .as_u64()
-                                    .unwrap();
-
-                                let str_data_len_bv = executor
-                                    .state
-                                    .memory
-                                    .read_u64(
-                                        string_struct_addr + 8,
-                                        &mut executor.state.logger.clone(),
-                                    )
-                                    .unwrap()
-                                    .symbolic
-                                    .to_bv(executor.context);
-                                let str_data_len_val = model
-                                    .eval(&str_data_len_bv, true)
-                                    .unwrap()
-                                    .as_u64()
-                                    .unwrap();
-
-                                if str_data_ptr_val == 0 || str_data_len_val == 0 {
-                                    log!(executor.state.logger, "Arg[{}] => (empty or null)", i);
-                                    continue;
-                                }
-
-                                let mut arg_bytes = Vec::new();
-                                for j in 0..str_data_len_val {
-                                    let byte_read = executor
-                                        .state
-                                        .memory
-                                        .read_byte(str_data_ptr_val + j)
-                                        .map_err(|e| {
-                                            format!("Could not read arg[{}][{}]: {}", i, j, e)
-                                        })
-                                        .unwrap();
-                                    let byte_bv = byte_read.symbolic.to_bv(executor.context);
-                                    let byte_val =
-                                        model.eval(&byte_bv, true).unwrap().as_u64().unwrap() as u8;
-                                    arg_bytes.push(byte_val);
-                                }
-
-                                let arg_str = String::from_utf8_lossy(&arg_bytes);
-                                log!(executor.state.logger, "The user input nr.{} must be => \"{}\", the raw value being {:?} (len={})", i, arg_str, arg_bytes, str_data_len_val);
-                                let signed_bytes: Vec<i8> =
-                                    arg_bytes.iter().map(|&b| b as i8).collect();
-                                let ascii_str = ascii_pretty(&arg_bytes);
-                                log!(
-                                    executor.state.logger,
-                                    "  as unsigned bytes: {:?}",
-                                    arg_bytes
-                                );
-                                log!(
-                                    executor.state.logger,
-                                    "  as signed bytes: {:?}",
-                                    signed_bytes
-                                );
-                                log!(executor.state.logger, "  as ASCII: {}", ascii_str);
-                            }
-
-                            go_eval // Return the captured evaluation
-                        }
-                        Err(e) => {
-                            format!("Error capturing Go arguments: {}", e)
-                        }
-                    }
-                } else {
-                    let msg = format!(">>> SOURCE_LANG is '{}'. Argument inspection is not implemented for these binaries yet.", lang);
-                    log!(executor.state.logger, "{}", msg);
-                    msg
-                };
-
-                // Also include tracked Z3 variables evaluation (unsigned, signed, ASCII) like function mode
-                let tracked_eval = capture_symbolic_arguments_evaluation(
+                // Build unified evaluation content
+                let evaluation_content = build_unified_evaluation_content(
                     &model,
-                    &executor.function_symbolic_arguments,
+                    executor,
+                    conditional_flag.as_ref(),
                 );
-                evaluation_content.push_str("\n");
-                evaluation_content.push_str(&tracked_eval);
+
+                // Log to terminal using the same structure
+                for line in evaluation_content.lines() {
+                    log!(executor.state.logger, "{}", line);
+                }
 
                 // Write to file
                 let elapsed = START_INSTANT.get().map(|s| s.elapsed());
@@ -1043,123 +1090,4 @@ pub fn get_os_args_address(binary_path: &str) -> Result<u64, Box<dyn Error>> {
     Err("Could not find os.Args in objdump output".into())
 }
 
-/// Logs evaluation of symbolic arguments using the current model
-fn log_symbolic_arguments_evaluation(
-    logger: &mut Logger,
-    model: &z3::Model,
-    symbolic_arguments: &std::collections::BTreeMap<String, SymbolicVar>,
-) {
-    log!(logger, "=== EVALUATING TRACKED Z3 VARIABLES ===");
-
-    for (arg_name, sym_var) in symbolic_arguments.iter() {
-        log!(logger, "");
-        log!(logger, "Argument '{}': ", arg_name);
-
-        match sym_var {
-            SymbolicVar::Int(bv_var) => {
-                let var_name = bv_var.to_string();
-                match model.eval(bv_var, true) {
-                    Some(val) => {
-                        log!(logger, "  {} = {}", var_name, val);
-                        if let Some(u64_val) = val.as_u64() {
-                            if var_name.contains("ptr") || var_name.contains("R8") {
-                                log!(logger, "    (hex: 0x{:x})", u64_val);
-                            } else {
-                                let signed_val = u64_val as i64;
-                                log!(logger, "    (unsigned: {})", u64_val);
-                                log!(logger, "    (signed: {})", signed_val);
-
-                                // Add ASCII interpretation when value fits in a byte
-                                if u64_val <= 255 {
-                                    let byte_val = u64_val as u8;
-                                    if byte_val >= 32 && byte_val <= 126 {
-                                        // Printable ASCII
-                                        log!(logger, "    (ASCII: '{}')", char::from(byte_val));
-                                    } else if byte_val == 0 {
-                                        log!(logger, "    (ASCII: '\\0' - null byte)");
-                                    } else if byte_val == 9 {
-                                        log!(logger, "    (ASCII: '\\t' - tab)");
-                                    } else if byte_val == 10 {
-                                        log!(logger, "    (ASCII: '\\n' - newline)");
-                                    } else if byte_val == 13 {
-                                        log!(logger, "    (ASCII: '\\r' - carriage return)");
-                                    } else {
-                                        log!(
-                                            logger,
-                                            "    (ASCII: non-printable, code {})",
-                                            byte_val
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        log!(logger, "  {} = <could not evaluate>", var_name);
-                    }
-                }
-            }
-            SymbolicVar::Slice(slice) => {
-                let ptr_name = slice.pointer.to_string();
-                let len_name = slice.length.to_string();
-                let cap_name = slice.capacity.to_string();
-
-                log!(logger, "  Slice components:");
-
-                // Evaluate pointer
-                match model.eval(&slice.pointer, true) {
-                    Some(val) => {
-                        log!(logger, "    pointer ({}) = {}", ptr_name, val);
-                        if let Some(u64_val) = val.as_u64() {
-                            log!(logger, "      (hex: 0x{:x})", u64_val);
-                        }
-                    }
-                    None => {
-                        log!(logger, "    pointer ({}) = <could not evaluate>", ptr_name);
-                    }
-                }
-
-                // Evaluate length
-                match model.eval(&slice.length, true) {
-                    Some(val) => {
-                        log!(logger, "    length ({}) = {}", len_name, val);
-                        if let Some(u64_val) = val.as_u64() {
-                            log!(logger, "      (decimal: {})", u64_val);
-                        }
-                    }
-                    None => {
-                        log!(logger, "    length ({}) = <could not evaluate>", len_name);
-                    }
-                }
-
-                // Evaluate capacity
-                match model.eval(&slice.capacity, true) {
-                    Some(val) => {
-                        log!(logger, "    capacity ({}) = {}", cap_name, val);
-                        if let Some(u64_val) = val.as_u64() {
-                            log!(logger, "      (decimal: {})", u64_val);
-                        }
-                    }
-                    None => {
-                        log!(logger, "    capacity ({}) = <could not evaluate>", cap_name);
-                    }
-                }
-            }
-            SymbolicVar::Bool(bool_var) => {
-                let var_name = bool_var.to_string();
-                match model.eval(bool_var, true) {
-                    Some(val) => {
-                        log!(logger, "  {} = {}", var_name, val);
-                    }
-                    None => {
-                        log!(logger, "  {} = <could not evaluate>", var_name);
-                    }
-                }
-            }
-            _ => {
-                log!(logger, "  <unsupported symbolic type>");
-            }
-        }
-    }
-    log!(logger, "=== END TRACKED Z3 VARIABLES EVALUATION ===");
-}
+// removed: log_symbolic_arguments_evaluation (replaced by build_unified_evaluation_content)
