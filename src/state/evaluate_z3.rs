@@ -333,7 +333,6 @@ fn write_sat_state_to_file(
     Ok(())
 }
 
-
 /// Capture simple value assignments for constrained inputs (e.g., indices.len = 1)
 fn capture_constrained_values_section(
     executor: &ConcolicExecutor,
@@ -465,10 +464,7 @@ fn capture_constrained_values_section(
                         None => format!("  - The input '{}' has unknown value\n", label),
                     },
                     "ptr" => match model.eval(&slice.pointer, true).and_then(|v| v.as_u64()) {
-                        Some(v) => format!(
-                            "  - The pointer '{}' must be 0x{:x}\n",
-                            label, v
-                        ),
+                        Some(v) => format!("  - The pointer '{}' must be 0x{:x}\n", label, v),
                         None => format!("  - The pointer '{}' has unknown value\n", label),
                     },
                     _ => String::new(),
@@ -486,30 +482,36 @@ fn capture_constrained_values_section(
                     SymbolicVar::Slice(slice) => {
                         if idx < slice.elements.len() {
                             match &slice.elements[idx] {
-                                SymbolicVar::Int(bv) => match model.eval(bv, true).and_then(|v| v.as_u64()) {
-                                    Some(v) => {
-                                        let signed = v as i64;
-                                        let ascii = ascii_desc(v);
-                                        format!(
+                                SymbolicVar::Int(bv) => {
+                                    match model.eval(bv, true).and_then(|v| v.as_u64()) {
+                                        Some(v) => {
+                                            let signed = v as i64;
+                                            let ascii = ascii_desc(v);
+                                            format!(
                                             "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
                                             label, v, v, signed, ascii
                                         )
+                                        }
+                                        None => {
+                                            format!("  - The input '{}' has unknown value\n", label)
+                                        }
                                     }
-                                    None => format!("  - The input '{}' has unknown value\n", label),
-                                },
-                                SymbolicVar::Bool(b) => match model.eval(b, true).and_then(|v| v.as_bool()) {
-                                    Some(v) => format!(
-                                        "  - The input '{}' must be {}\n",
-                                        label, v
-                                    ),
+                                }
+                                SymbolicVar::Bool(b) => match model
+                                    .eval(b, true)
+                                    .and_then(|v| v.as_bool())
+                                {
+                                    Some(v) => format!("  - The input '{}' must be {}\n", label, v),
                                     None => format!("  -The input '{}' has unknown value\n", label),
                                 },
-                                SymbolicVar::Float(f) => match model.eval(f, true).map(|v| v.to_string()) {
-                                    Some(s) => format!(
-                                        "  -The input '{}' must be {}\n",
-                                        label, s
-                                    ),
-                                    None => format!("  - The input '{}' has unknown value\n", label),
+                                SymbolicVar::Float(f) => match model
+                                    .eval(f, true)
+                                    .map(|v| v.to_string())
+                                {
+                                    Some(s) => format!("  -The input '{}' must be {}\n", label, s),
+                                    None => {
+                                        format!("  - The input '{}' has unknown value\n", label)
+                                    }
                                 },
                                 _ => format!("  {} = <complex>\n", label),
                             }
@@ -733,7 +735,6 @@ fn build_unified_evaluation_content(
         model,
         &executor.function_symbolic_arguments,
     ));
-
 
     content
 }
@@ -1005,11 +1006,8 @@ pub fn evaluate_args_z3<'ctx>(
                 let model = executor.solver.get_model().unwrap();
 
                 // Build unified evaluation content
-                let evaluation_content = build_unified_evaluation_content(
-                    &model,
-                    executor,
-                    conditional_flag.as_ref(),
-                );
+                let evaluation_content =
+                    build_unified_evaluation_content(&model, executor, conditional_flag.as_ref());
 
                 // Log to terminal using the same structure
                 for line in evaluation_content.lines() {

@@ -446,6 +446,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         log!(executor.state.logger, "[WARNING] Custom mode used : Be aware that the arguments of the binary are not 'fresh symbolic' in that mode, the concolic exploration might not work correctly.");
     }
 
+    // Precompute reverse panic reachability set (O(V+E)), then O(1) queries
+    let (panic_reach_set, panic_reach_ranges, _panic_reach_statss) =
+        precompute_panic_reach(&binary_path)?;
+
     // *****************************
     // CORE COMMAND
     println!("**************************************************************************");
@@ -456,8 +460,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Find the logs in results/execution_log.txt and results/execution_trace.txt");
     }
     println!("**************************************************************************");
-    // Precompute reverse panic reachability set (O(V+E)), then O(1) queries
-    let (panic_reach_set, panic_reach_ranges) = precompute_panic_reach(&binary_path)?;
 
     execute_instructions_from(
         &mut executor,
@@ -484,7 +486,6 @@ fn execute_instructions_from(
     let mut current_rip = start_address;
     let mut local_line_number: i64 = 0; // Index of the current instruction within the block
     let end_address: u64 = 0x0; //no specific end address
-    
 
     // For debugging
     //let address: u64 = 0x7fffffffe4b0;
@@ -498,7 +499,6 @@ fn execute_instructions_from(
     let panic_addresses = read_panic_addresses(executor, "xref_addresses.txt")
         .expect("Failed to read panic addresses from results directory");
 
-  
     log!(
         executor.state.logger,
         "Beginning execution from address: 0x{:x}",
@@ -576,8 +576,7 @@ fn execute_instructions_from(
 
         let current_rip_hex = format!("{:x}", current_rip);
 
-
-        // This block is only to get data about the execution in results/execution_trace.txt  
+        // This block is only to get data about the execution in results/execution_trace.txt
         if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) {
             // If entering strconv numeric parsing, proactively constrain argument bytes to digits
             if symbol_name == "strconv.Atoi" || symbol_name == "strconv.ParseInt" {
@@ -707,7 +706,6 @@ fn execute_instructions_from(
         // Inner loop: process each instruction in the current block.
         let mut end_of_block = false;
 
-
         while local_line_number < instructions.len().try_into().unwrap() && !end_of_block {
             // Calculate the potential next address taken by RIP, for the purpose of updating the symbolic part of CBRANCH and the speculative exploration
             let (next_addr_in_map, _) = instructions_map.range((current_rip + 1)..).next().unwrap();
@@ -746,18 +744,19 @@ fn execute_instructions_from(
                     }
                     _ => false,
                 };
-                
+
                 // Gate: allow if current block is reachable OR branch target is within any
                 // panic-reachable range OR target matches a known panic xref
-                let panic_reach_ok = is_panic_reachable_addr(current_rip, panic_reach, panic_ranges)
-                    || is_panic_reachable_addr(
-                        branch_target_address_tmp,
-                        panic_reach,
-                        panic_ranges,
-                    )
-                    || panic_addresses
-                        .iter()
-                        .any(|&a| a == branch_target_address_tmp);
+                let panic_reach_ok =
+                    is_panic_reachable_addr(current_rip, panic_reach, panic_ranges)
+                        || is_panic_reachable_addr(
+                            branch_target_address_tmp,
+                            panic_reach,
+                            panic_ranges,
+                        )
+                        || panic_addresses
+                            .iter()
+                            .any(|&a| a == branch_target_address_tmp);
                 if !panic_reach_ok {
                     inc_gated_by_reach();
                     log!(
@@ -822,7 +821,7 @@ fn execute_instructions_from(
                         .any(|arg_name| expr_string.contains(arg_name));
                     // If the condition involves tracked variables or the constraint vector is not empty, we want to explore the negated path
                     let should_explore = involves_tracked || !executor.constraint_vector.is_empty();
-                    
+
                     if is_internal_target {
                         log!(executor.state.logger, ">>> Internal p-code branch target detected; skipping AST exploration and negated-path SMT.");
                     } else if !should_explore {
@@ -902,7 +901,6 @@ fn execute_instructions_from(
 
             // Calculate the potential next address taken by RIP, for the purpose of updating the symbolic part of CBRANCH
             let (next_addr_in_map, _) = instructions_map.range((current_rip + 1)..).next().unwrap();
-
 
             // MAIN PART OF THE CODE
             // Execute the instruction and handle errors

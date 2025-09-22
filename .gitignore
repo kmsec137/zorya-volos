@@ -23,3 +23,7 @@
 /results/execution_log_panic.txt
 /results/execution_log_error.txt
 /results/panic_reachable.txt
+/results/panic_coverage.json
+/results/tainted_functions.txt
+/results/unreachable_summary.txt
+/results/unreachable_summary.json

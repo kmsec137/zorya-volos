@@ -4,14 +4,24 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
-use std::time::SystemTime;
 
 pub type PanicReachSet = Arc<HashSet<u64>>;
 pub type PanicReachRanges = Arc<BTreeMap<u64, u64>>; // start -> end
 
+#[derive(Debug, Clone)]
+pub struct PanicReachStats {
+    pub total_blocks: usize,
+    pub tainted_functions: usize,
+    pub iterations: usize,
+    pub coverage_percentage: f64,
+    pub analysis_time_seconds: f64,
+    pub cache_hit_rate: f64,
+    pub function_summary_reuse_rate: f64,
+}
+
 pub fn precompute_panic_reach(
     binary_path: &str,
-) -> Result<(PanicReachSet, PanicReachRanges), Box<dyn Error>> {
+) -> Result<(PanicReachSet, PanicReachRanges, PanicReachStats), Box<dyn Error>> {
     let out_file = "results/panic_reachable.txt";
     let xref_file = "results/xref_addresses.txt";
     // Run the Python precompute if output is missing/empty, or xrefs are newer, or forced via env
@@ -46,15 +56,110 @@ pub fn precompute_panic_reach(
         }
     }
 
-    // Load the set and ranges from file
+    // Load the set and ranges from file, and parse statistics from header comments
     let mut set = HashSet::new();
     let mut ranges = BTreeMap::new();
+    let mut stats = PanicReachStats {
+        total_blocks: 0,
+        tainted_functions: 0,
+        iterations: 0,
+        coverage_percentage: 0.0,
+        analysis_time_seconds: 0.0,
+        cache_hit_rate: 0.0,
+        function_summary_reuse_rate: 0.0,
+    };
+
     if let Ok(content) = fs::read_to_string(out_file) {
         for line in content.lines() {
             let s = line.trim();
             if s.is_empty() {
                 continue;
             }
+
+            // Parse header comments for statistics
+            if s.starts_with('#') {
+                if s.contains("Generated in") && s.contains("iterations") {
+                    // Parse: "# Generated in 1.23s, 45 iterations"
+                    if let Some(time_part) = s.split("Generated in ").nth(1) {
+                        if let Some(time_str) = time_part.split('s').next() {
+                            stats.analysis_time_seconds = time_str.parse().unwrap_or(0.0);
+                        }
+                    }
+                    if let Some(iter_part) = s.split(", ").nth(1) {
+                        if let Some(iter_str) = iter_part.split(' ').next() {
+                            stats.iterations = iter_str.parse().unwrap_or(0);
+                        }
+                    }
+                }
+                if s.contains("Coverage:") && s.contains("blocks") {
+                    // Parse: "# Coverage: 1234 blocks (45.6% of program), 567 tainted functions"
+                    if let Some(blocks_part) = s.split("Coverage: ").nth(1) {
+                        if let Some(blocks_str) = blocks_part.split(' ').next() {
+                            stats.total_blocks = blocks_str.parse().unwrap_or(0);
+                        }
+                    }
+                    if s.contains("(") && s.contains("% of program)") {
+                        if let Some(pct_part) = s.split('(').nth(1) {
+                            if let Some(pct_str) = pct_part.split('%').next() {
+                                stats.coverage_percentage = pct_str.parse().unwrap_or(0.0);
+                            }
+                        }
+                    }
+                    if s.contains("tainted functions") {
+                        let parts: Vec<&str> = s.split_whitespace().collect();
+                        for (i, part) in parts.iter().enumerate() {
+                            if *part == "tainted" && i > 0 {
+                                stats.tainted_functions = parts[i - 1].parse().unwrap_or(0);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if s.contains("Cache stats:") {
+                    // Parse: "# Cache stats: 12/34 indirect call hits, 56/78 summary reuse"
+                    if s.contains("indirect call hits") {
+                        if let Some(hits_part) = s.split("Cache stats: ").nth(1) {
+                            if let Some(ratio_str) = hits_part.split(' ').next() {
+                                let parts: Vec<&str> = ratio_str.split('/').collect();
+                                if parts.len() == 2 {
+                                    let hits: f64 = parts[0].parse().unwrap_or(0.0);
+                                    let total: f64 = parts[1].parse().unwrap_or(1.0);
+                                    stats.cache_hit_rate = if total > 0.0 {
+                                        hits / total * 100.0
+                                    } else {
+                                        0.0
+                                    };
+                                }
+                            }
+                        }
+                    }
+                    if s.contains("summary reuse") {
+                        let parts: Vec<&str> = s.split_whitespace().collect();
+                        for (i, part) in parts.iter().enumerate() {
+                            if part.contains('/')
+                                && i + 1 < parts.len()
+                                && parts[i + 1] == "summary"
+                            {
+                                let ratio_parts: Vec<&str> = part.split('/').collect();
+                                if ratio_parts.len() == 2 {
+                                    let reused: f64 = ratio_parts[0].parse().unwrap_or(0.0);
+                                    let computed: f64 = ratio_parts[1].parse().unwrap_or(1.0);
+                                    stats.function_summary_reuse_rate = if (reused + computed) > 0.0
+                                    {
+                                        reused / (reused + computed) * 100.0
+                                    } else {
+                                        0.0
+                                    };
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Parse block addresses
             let parts: Vec<&str> = s.split_whitespace().collect();
             if parts.is_empty() {
                 continue;
@@ -71,7 +176,7 @@ pub fn precompute_panic_reach(
             }
         }
     }
-    Ok((Arc::new(set), Arc::new(ranges)))
+    Ok((Arc::new(set), Arc::new(ranges), stats))
 }
 
 pub fn is_panic_reachable_addr(

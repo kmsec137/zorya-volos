@@ -148,6 +148,32 @@ This is it, you have entered the concrete value "a", and Zorya tells you that if
 - Can analyse the concolic handling of the jump tables, a specific type of switch tables that replace binary search by more efficient jumping mechanism for close number labels (see ```jump_table.json```),
 - Can generate a file witht the cross-reference addresses leading to all the panic functions that are in the target binary (see ```xref_addresses.txt```),
 - Is able to translate the executable part of libc.so and ld-linux-x86-64.so as P-Code after its dynamic loading.
+- Precomputes reverse panic reachability from panic callsites using a CFG reverse BFS (with interprocedural callers), then answers O(1) reachability queries during execution (see ```panic_reachable.txt```),
+- Reports tainted coverage and fixpoint completion statistics (iteration counts, elapsed time, totals) and exports machine-readable metrics (see ```panic_coverage.json```),
+- Produces an unreachable summary grouped by categories and function names to help review what remains outside the panic-reaching subgraph (see ```unreachable_summary.txt``` / ```.json```),
+- Integrates optional jump-table and xref expansion to improve predecessor discovery (consumes ```results/jump_tables.json``` if present),
+- Allows tuning of analysis via environment flags (exhaustiveness and function-body xref sampling budget/stride).
+
+### Reverse panic reachability precompute
+This step runs automatically at startup and computes the set of basic blocks that can reach a panic callsite. It accelerates gating decisions (e.g., whether to symbolically explore a branch) and provides coverage insights.
+
+Outputs written to ```results/```:
+- ```panic_reachable.txt```: one line per reachable basic block range: ```0x<start> 0x<end>``` (with header metadata)
+- ```tainted_functions.txt```: functions containing panic-reachable blocks
+- ```panic_coverage.json```: totals, coverage percentage, iteration breakdown, cache counters
+- ```unreachable_summary.txt``` / ```unreachable_summary.json```: unreachable blocks grouped by categories, listing function names (with counts)
+
+Configuration (optional):
+```
+# Keep exploring past early fixpoint if desired
+PANIC_REACH_EXHAUSTIVE=1
+
+# Function-body xref sampling (addresses from function body examined for incoming references)
+PANIC_REACH_BODY_XREF_BUDGET=50000   # default
+PANIC_REACH_BODY_XREF_STRIDE=1       # default
+```
+Notes:
+- Coverage is reported relative to all program basic blocks. Many blocks (libc stubs, init paths, helpers) do not lie on any path-to-panic and will remain outside the reverse slice. For evaluation, prefer the provided unreachable summary grouped by function names.
 
 ### Invariants writing
 - Has integrated Z3 capabilities for writing invariants over the instructions and CPU registers, through the Rust crate.
