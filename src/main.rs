@@ -726,24 +726,8 @@ fn execute_instructions_from(
                     .from_varnode_var_to_branch_address(&branch_target_varnode_tmp)
                     .map_err(|e| e.to_string())
                     .unwrap();
-                // Treat tiny Const targets (e.g., 0x3/0x6) as p-code internal (jump table/sub-instruction): skip AST/speculation later
-                let is_internal_target = match &inst.inputs[0].var {
-                    Var::Const(s) => {
-                        let stripped = s.trim();
-                        let hex = stripped
-                            .strip_prefix("0x")
-                            .or_else(|| stripped.strip_prefix("0X"))
-                            .unwrap_or(stripped);
-                        if let Ok(v) = u64::from_str_radix(hex, 16) {
-                            v <= 0xff
-                        } else if let Ok(v) = stripped.parse::<u64>() {
-                            v <= 0xff
-                        } else {
-                            false
-                        }
-                    }
-                    _ => false,
-                };
+                // Treat Const targets as p-code internal (jump table/sub-instruction): skip AST/speculation later
+                let is_internal_target = matches!(&inst.inputs[0].var, Var::Const(_));
 
                 // Gate: allow if current block is reachable OR branch target is within any
                 // panic-reachable range OR target matches a known panic xref
@@ -765,7 +749,6 @@ fn execute_instructions_from(
                         current_rip,
                         branch_target_address_tmp
                     );
-                    local_line_number += 1;
                 } else {
                     if !panic_reach.contains(&current_rip) {
                         inc_allowed_by_xref_fallback();

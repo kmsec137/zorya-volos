@@ -199,7 +199,7 @@ Link to the overall presentation of Zorya at EthCC 2025 : [Presentation](https:/
 ## :spiral_calendar: Roadmap 
 Zorya has been developeped and tested for now on Linux Ubuntu as the execution environement with x86-64 binaries targets. The roadmap below details the features that have been added over time and those that are planned:
 <div align="left">
-  <img src="doc/github_roadmap-zorya_may-2025.png" alt="Roadmap" width="900"/>
+  <img src="doc/roadmap-zorya_october-2025.png" alt="Roadmap" width="900"/>
 </div>
 
 ## :memo: Academic work
