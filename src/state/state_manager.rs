@@ -131,12 +131,6 @@ impl<'a> State<'a> {
             jump_tables: BTreeMap::new(),
         };
 
-        log!(state.logger.clone(), "Initializing jump tables...\n");
-        state
-            .initialize_jump_tables()
-            .map_err(|e| format!("Failed to initialize jump tables: {}", e))?;
-        //state.print_memory_content(address, range);
-
         log!(state.logger.clone(), "Creating the P-Code for the executable sections of libc.so and ld-linux-x86-64.so...\n");
         state.initialize_libc_and_ld_linux().map_err(|e| {
             format!(
@@ -144,6 +138,12 @@ impl<'a> State<'a> {
                 e
             )
         })?;
+
+        log!(state.logger.clone(), "Initializing jump tables...\n");
+        state
+            .initialize_jump_tables()
+            .map_err(|e| format!("Failed to initialize jump tables: {}", e))?;
+        //state.print_memory_content(address, range);
 
         Ok(state)
     }

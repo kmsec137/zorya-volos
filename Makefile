@@ -58,9 +58,9 @@ setup:
 	RUSTFLAGS="--cap-lints=allow" cargo build --release -j$$(nproc)
 
 ghidra-config:
-	@echo ">>> Ensuring OpenJDK 21 and snapd..."
+	@echo ">>> Ensuring OpenJDK 21, snapd, and pipx..."
 	sudo apt-get -qq update
-	sudo apt-get -y install openjdk-21-jdk snapd
+	sudo apt-get -y install openjdk-21-jdk snapd pipx
 
 	@echo ">>> Checking for an existing Ghidra..."
 	@if [ -n "$$GHIDRA_INSTALL_DIR" ] && [ -d "$$GHIDRA_INSTALL_DIR" ]; then \
@@ -76,7 +76,7 @@ ghidra-config:
 	fi
 
 	@echo ">>> Installing/Updating Pyhidra…"
-	pip install -q --upgrade pyhidra
+	pipx install pyhidra 2>/dev/null || pipx upgrade pyhidra
 
 	@echo ">>> Exporting GHIDRA_INSTALL_DIR for future shells…"
 	@if ! grep -q "GHIDRA_INSTALL_DIR" $$HOME/.bashrc; then \
@@ -86,7 +86,7 @@ ghidra-config:
 		echo "   ~/.bashrc already contains GHIDRA_INSTALL_DIR"; \
 	fi
 
-	@echo ">>> Done – open a new shell or ‘source ~/.bashrc’ before continuing."
+	@echo ">>> Done – open a new shell or 'source ~/.bashrc' before continuing."
 
 install:
 	@echo "Installing zorya command..."

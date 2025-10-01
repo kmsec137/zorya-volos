@@ -4,6 +4,13 @@
 
 <br>
 
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License: Apache-2.0"></a>
+  <img src="https://img.shields.io/badge/version-0.0.3-green" alt="Version">
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Made%20with-Rust-orange?logo=rust" alt="Made with Rust"/></a>
+  
+</p>
+
 Zorya is a **concolic execution framework** designed to detect **logic-related bugs, language-specific vulnerabilities, and identify new patterns of security issues mainly in Go binaries**. The analysis begins by generating CPU register and memory dumps using ```gdb```. Zorya loads these dumps to initialize execution from a specified starting address, ensuring a realistic and accurate representation of the program state.
 
 The core methodology involves **translating binary code into Ghidra's raw P-Code**, a low-level intermediate representation, which is subsequently parsed for precise execution path analysis. Other programs like C programs can also be translated to P-Code.
@@ -14,6 +21,8 @@ Zorya supports both concrete and symbolic data types, x86-64 instructions and sy
 
 > The owl sees what darkness keeps —
 > Zorya comes, and nothing sleeps.
+
+> 🚧 Zorya is under active development. Expect breaking changes.
 
 ## :inbox_tray: Install
 Make sure to have Rust, Golang and Python properly installed. FYI, the project is beeing developped and maintained under a Linux Ubuntu distrubution.
@@ -213,11 +222,4 @@ You can find the preprint of our first paper on ArXiv under the title : [Exposin
   year={2025}
   note={Accepted at the 23rd IEEE/ACIS International Conference on Software Engineering, Management and Applications (SERA 2025)}
 }
-```
-
-## Troubleshooting
-When building the project, if you have issues related to C++, it might be necessary to also specify the path to ```libclang.so```:
-```
-sudo locate libclang.so
-export LIBCLANG_PATH=/path/to/lib/libclang.so
 ```
