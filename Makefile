@@ -45,8 +45,8 @@ setup:
 	@if ! command -v cargo >/dev/null 2>&1; then \
 		echo "Rust is not installed. Installing Rust..."; \
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; \
-		echo ">>> Rust installed. Open a new shell or 'source $$HOME/.cargo/env' before rerunning make if this step fails later."; \
-		source $$HOME/.cargo/env; \
+		echo ">>> Rust installed. Open a new shell or '. $$HOME/.cargo/env' before rerunning make if this step fails later."; \
+		. $$HOME/.cargo/env; \
 	fi
 	@echo "Initializing submodules..."
 	git submodule update --init --recursive
