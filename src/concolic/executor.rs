@@ -1444,7 +1444,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         };
 
         // Check if condition involves tracked symbolic variables and add to constraint vector
-        if self.contains_tracked_symbolic_variable(&condition_symbolic) {
+        if self.contains_tracked_symbolic_variable(&condition_symbolic.simplify()) {
             log!(
                 self.state.logger.clone(),
                 "Branch condition involves tracked symbolic variables, adding to constraint vector"
@@ -1464,6 +1464,12 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             );
 
             self.constraint_vector.push(condition_symbolic);
+        } else {
+            log!(
+                self.state.logger.clone(),
+                "Branch condition does not involve tracked symbolic variables, skipping : {}",
+                condition_symbolic.simplify()
+            );
         }
 
         // Check if the branch target is a memory address or a constant

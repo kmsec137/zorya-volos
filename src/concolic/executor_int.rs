@@ -1333,6 +1333,8 @@ pub fn handle_int_sborrow(
         return Err("Invalid instruction format for INT_SBORROW".to_string());
     }
 
+    log!(executor.state.logger, "=== STARTING INT_SBORROW DEBUG ===");
+
     log!(
         executor.state.logger,
         "* Fetching instruction.input[0] for INT_SBORROW"
@@ -1377,6 +1379,18 @@ pub fn handle_int_sborrow(
     let input0_bv = input0_var.symbolic.to_bv(executor.context);
     let input1_bv = input1_var.symbolic.to_bv(executor.context);
 
+    log!(executor.state.logger, "=== AFTER to_bv() CONVERSION ===");
+    log!(
+        executor.state.logger,
+        "input0_bv: {:?}",
+        input0_bv.simplify()
+    );
+    log!(
+        executor.state.logger,
+        "input1_bv: {:?}",
+        input1_bv.simplify()
+    );
+
     let input0_bit_width = input0_bv.get_size();
     let input1_bit_width = input1_bv.get_size();
 
@@ -1402,8 +1416,91 @@ pub fn handle_int_sborrow(
         input1_bv
     };
 
+    log!(executor.state.logger, "=== AFTER SIGN EXTENSION ===");
+    log!(
+        executor.state.logger,
+        "bv0 (extended): {:?}",
+        bv0.simplify()
+    );
+    log!(
+        executor.state.logger,
+        "bv1 (extended): {:?}",
+        bv1.simplify()
+    );
+
+    // Replace with actual constants if they simplify to numerals
+    log!(
+        executor.state.logger,
+        "=== CONVERTING TO TRUE CONSTANTS IF POSSIBLE ==="
+    );
+
+    let bv0 = {
+        let simplified = bv0.simplify();
+        if let Some(val) = simplified.as_u64() {
+            log!(
+                executor.state.logger,
+                "Converting bv0 to true constant: 0x{:x}",
+                val
+            );
+            BV::from_u64(executor.context, val, common_bit_width)
+        } else {
+            log!(
+                executor.state.logger,
+                "bv0 is not a constant, keeping symbolic"
+            );
+            bv0
+        }
+    };
+
+    let bv1 = {
+        let simplified = bv1.simplify();
+        if let Some(val) = simplified.as_u64() {
+            log!(
+                executor.state.logger,
+                "Converting bv1 to true constant: 0x{:x}",
+                val
+            );
+            BV::from_u64(executor.context, val, common_bit_width)
+        } else {
+            log!(
+                executor.state.logger,
+                "bv1 is not a constant, keeping symbolic"
+            );
+            bv1
+        }
+    };
+
+    // Check if inputs are constants
+    log!(
+        executor.state.logger,
+        "=== CHECKING IF INPUTS ARE CONSTANTS ==="
+    );
+
+    let bv0_is_const = bv0.as_u64().is_some();
+    let bv1_is_const = bv1.as_u64().is_some();
+
+    log!(executor.state.logger, "bv0.is_numeral(): {}", bv0_is_const);
+    log!(executor.state.logger, "bv1.is_numeral(): {}", bv1_is_const);
+
+    if let Some(val) = bv0.as_u64() {
+        log!(executor.state.logger, "bv0 is constant: 0x{:x}", val);
+    }
+    if let Some(val) = bv1.as_u64() {
+        log!(executor.state.logger, "bv1 is constant: 0x{:x}", val);
+    }
+
     // Use Z3's built-in signed overflow detection (negated because we want overflow, not no-overflow)
-    let borrow_symbolic_bool = bv0.bvsub_no_overflow(&bv1).not();
+    log!(executor.state.logger, "=== CALLING bvsub_no_overflow ===");
+
+    let no_overflow = bv0.bvsub_no_overflow(&bv1);
+
+    log!(
+        executor.state.logger,
+        "no_overflow (before NOT): {:?}",
+        no_overflow.simplify()
+    );
+
+    let borrow_symbolic_bool = no_overflow.not();
 
     log!(
         executor.state.logger,
@@ -1424,6 +1521,13 @@ pub fn handle_int_sborrow(
         )
     };
 
+    log!(executor.state.logger, "=== AFTER ITE CONVERSION ===");
+    log!(
+        executor.state.logger,
+        "borrow_bv (simplified): {:?}",
+        borrow_bv.simplify()
+    );
+
     // Concrete computation - proper signed overflow detection
     let input0_concrete_signed = input0_var
         .get_concrete_value_signed(common_bit_width)
@@ -1433,13 +1537,16 @@ pub fn handle_int_sborrow(
         .map_err(|e| format!("Failed to get signed value for input1: {}", e))?;
 
     // Check for signed overflow using Rust's built-in overflow detection
-    let (_, overflow_concrete) = input0_concrete_signed.overflowing_sub(input1_concrete_signed);
+    let (result_concrete, overflow_concrete) =
+        input0_concrete_signed.overflowing_sub(input1_concrete_signed);
 
+    log!(executor.state.logger, "=== CONCRETE COMPUTATION ===");
     log!(
         executor.state.logger,
-        "Signed subtraction: {} - {} = overflow: {}",
+        "Signed subtraction: {} - {} = {} (overflow: {})",
         input0_concrete_signed,
         input1_concrete_signed,
+        result_concrete,
         overflow_concrete
     );
 
@@ -1455,10 +1562,16 @@ pub fn handle_int_sborrow(
         executor.context,
     );
 
+    log!(executor.state.logger, "=== FINAL RESULT ===");
     log!(
         executor.state.logger,
         "*** The result of INT_SBORROW is: {}",
         overflow_concrete as u64
+    );
+    log!(
+        executor.state.logger,
+        "result_value.concrete: {}",
+        result_value.concrete.to_u64()
     );
 
     log!(executor.state.logger, "=== CALLING handle_output ===");

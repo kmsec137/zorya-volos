@@ -4,6 +4,8 @@ import sys
 import pyhidra
 import os
 import shutil
+import subprocess
+import glob
 
 def main():
     if len(sys.argv) < 2:
@@ -11,13 +13,52 @@ def main():
         sys.exit(1)
     
     binary_path = sys.argv[1]
-    project_name = os.path.basename(binary_path)  # Use binary name as project name
-    project_dir = os.path.join(os.getcwd(), project_name + ".rep")  # Default Ghidra project directory
+    # Resolve project location: <binary_dir>/<binary_name>_ghidra/<binary_name>_ghidra.gpr
+    bin_path = os.path.abspath(binary_path)
+    parent = os.path.dirname(bin_path)
+    base = os.path.basename(bin_path)
+    project_name = f"{base}_ghidra"
+    project_dir = os.path.join(parent, project_name)
+    gpr_path = os.path.join(project_dir, f"{project_name}.gpr")
 
-    # Delete the project if it already exists
-    if os.path.exists(project_dir):
-        print(f"[INFO] Deleting existing Ghidra project: {project_dir}")
-        shutil.rmtree(project_dir, ignore_errors=True)
+    # Ensure project directory exists and contains a .gpr; create via headless if missing
+    need_create = (not os.path.isdir(project_dir)) or (not os.path.isfile(gpr_path))
+    if need_create:
+        os.makedirs(project_dir, exist_ok=True)
+        # Clean any stale lock files
+        for pattern in ("*.lock", "~*.lock"):
+            for lock in glob.glob(os.path.join(project_dir, pattern)):
+                try:
+                    os.remove(lock)
+                    print(f"[INFO] Removed stale lock file: {lock}")
+                except Exception as e:
+                    print(f"[WARN] Failed to remove lock file {lock}: {e}")
+
+        # Locate analyzeHeadless
+        ghidra_home = os.environ.get("GHIDRA_INSTALL_DIR")
+        headless = None
+        if ghidra_home:
+            candidate = os.path.join(ghidra_home, "support", "analyzeHeadless")
+            if os.path.exists(candidate):
+                headless = candidate
+        if headless is None:
+            headless = shutil.which("analyzeHeadless")
+        if headless is None:
+            raise RuntimeError("Could not find analyzeHeadless. Set GHIDRA_INSTALL_DIR or ensure analyzeHeadless is in PATH.")
+
+        print(f"[INFO] Creating Ghidra project via headless at {project_dir}")
+        try:
+            subprocess.run([
+                headless,
+                str(parent),            # project_location (parent directory)
+                project_name,           # project_name
+                "-import", str(bin_path),
+                "-overwrite",
+                "-noanalysis",
+            ], check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError as e:
+            print("[ERROR] analyzeHeadless failed:\n" + e.stdout.decode(errors="ignore"))
+            raise
 
     print(f"[INFO] Starting Pyhidra for {binary_path}")
 
@@ -28,8 +69,8 @@ def main():
     from ghidra.program.model.block import BasicBlockModel
     from ghidra.util.task import ConsoleTaskMonitor
 
-    # Open the binary with Pyhidra
-    with pyhidra.open_program(binary_path, analyze=True) as flat_api:
+    # Open the binary with Pyhidra using the persistent project we ensured exists
+    with pyhidra.open_program(binary_path, project_location=parent, project_name=project_name, analyze=True) as flat_api:
         # Get the Program object
         program = flat_api.getCurrentProgram()
 

@@ -333,7 +333,7 @@ fn write_sat_state_to_file(
     Ok(())
 }
 
-/// Capture simple value assignments for constrained inputs (e.g., indices.len = 1)
+/// Capture simple value assignments for constrained inputs
 fn capture_constrained_values_section(
     executor: &ConcolicExecutor,
     model: &z3::Model,
@@ -404,6 +404,7 @@ fn capture_constrained_values_section(
         }
     }
 
+    // Collect only arguments that appear in constraints
     for (arg, sym) in symbolic_arguments.iter() {
         collect_symbols(arg, sym, &mut label_set, &constraint_strings);
     }
@@ -477,7 +478,33 @@ fn capture_constrained_values_section(
             let arg = &label[..bracket];
             let idx_str = &label[bracket + 1..label.len() - 1];
             let idx = idx_str.parse::<usize>().unwrap_or(usize::MAX);
-            if let Some(sym) = symbolic_arguments.get(arg) {
+
+            // First, try direct lookup for cases where "indices[0]" itself is a tracked variable
+            if let Some(sym) = symbolic_arguments.get(&label) {
+                match sym {
+                    SymbolicVar::Int(bv) => match model.eval(bv, true).and_then(|v| v.as_u64()) {
+                        Some(v) => {
+                            let signed = v as i64;
+                            let ascii = ascii_desc(v);
+                            format!(
+                                    "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
+                                    label, v, v, signed, ascii
+                                )
+                        }
+                        None => format!("  - The input '{}' has unknown value\n", label),
+                    },
+                    SymbolicVar::Bool(b) => match model.eval(b, true).and_then(|v| v.as_bool()) {
+                        Some(v) => format!("  - The input '{}' must be {}\n", label, v),
+                        None => format!("  - The input '{}' has unknown value\n", label),
+                    },
+                    SymbolicVar::Float(f) => match model.eval(f, true).map(|v| v.to_string()) {
+                        Some(s) => format!("  - The input '{}' must be {}\n", label, s),
+                        None => format!("  - The input '{}' has unknown value\n", label),
+                    },
+                    _ => format!("  {} = <complex>\n", label),
+                }
+            } else if let Some(sym) = symbolic_arguments.get(arg) {
+                // Otherwise, lookup parent slice and access element
                 match sym {
                     SymbolicVar::Slice(slice) => {
                         if idx < slice.elements.len() {
@@ -761,7 +788,7 @@ pub fn evaluate_args_z3<'ctx>(
 
             executor.solver.push();
 
-            // When evaluating arguments during a CBRANCH leading to a panic, we want to assert the condition that leads to the panic.
+            // When evaluating arguments during a CBRANCH leading to a panic, assert the simple boolean condition that leads to the panic.
             if let Some(ref conditional_flag) = conditional_flag {
                 let panic_causing_flag_u64 = conditional_flag.concrete.to_u64().clone();
                 // Handle both Bool and BV types
@@ -788,16 +815,13 @@ pub fn evaluate_args_z3<'ctx>(
                             "Conditional flag BV simplified: {:?}",
                             bv.simplify()
                         );
-                        let bit_width = bv.get_size();
-                        let zero = BV::from_u64(executor.context, 0, bit_width);
-                        // Flip the observed condition: if observed 0 (false), require non-zero (true);
-                        // if observed non-zero (true), require zero (false).
-                        let condition = if panic_causing_flag_u64 == 0 {
-                            bv._eq(&zero).not()
+                        // Extract underlying Bool from BV and assert the negation of observed path
+                        let bool_cond = crate::state::simplify_z3::bv_to_bool_smart(bv);
+                        if panic_causing_flag_u64 == 0 {
+                            bool_cond
                         } else {
-                            bv._eq(&zero)
-                        };
-                        condition
+                            bool_cond.not()
+                        }
                     }
                     _ => {
                         return Err("Unsupported symbolic variable type for conditional flag"
@@ -858,10 +882,14 @@ pub fn evaluate_args_z3<'ctx>(
                                     let squared = &signed_int * &signed_int;
                                     executor.solver.minimize(&squared);
                                 }
+                                SymbolicVar::Slice(slice_elem) => {
+                                    let len_int = Int::from_bv(&slice_elem.length, false);
+                                    executor.solver.minimize(&len_int);
+                                }
                                 _ => {
                                     log!(
                                         executor.state.logger,
-                                        "Skipping non-Int slice element during minimize"
+                                        "Skipping non-Int/non-Slice element during minimize"
                                     );
                                 }
                             }
@@ -945,16 +973,6 @@ pub fn evaluate_args_z3<'ctx>(
             target_info.binary_path.clone()
         };
 
-        let cf_reg = executor
-            .state
-            .cpu_state
-            .lock()
-            .unwrap()
-            .get_register_by_offset(0x200, 64)
-            .unwrap();
-        let cf_bv = cf_reg.symbolic.to_bv(executor.context).simplify();
-        log!(executor.state.logger, "CF BV simplified: {:?}", cf_bv);
-
         // 1) Push the solver context.
         executor.solver.push();
 
@@ -971,6 +989,14 @@ pub fn evaluate_args_z3<'ctx>(
         // List constraints and assert them to solver
         add_constraints_from_vector(&executor);
 
+        // Minimize only slice lengths to prefer smaller witnesses (no other variable objectives)
+        for symbolic_var in executor.function_symbolic_arguments.values() {
+            if let SymbolicVar::Slice(slice) = symbolic_var {
+                let len_int = Int::from_bv(&slice.length, false);
+                executor.solver.minimize(&len_int);
+            }
+        }
+
         // Optionally enforce ASCII profiles for argv bytes (off by default)
         if let Ok(profile) = std::env::var("ARG_ASCII_PROFILE") {
             let prof = profile.to_lowercase();
@@ -980,18 +1006,26 @@ pub fn evaluate_args_z3<'ctx>(
         }
 
         // We are exploring the negated path: assert the opposite of the observed flag
-        let zero_bv = z3::ast::BV::from_u64(executor.context, 0, cond_bv.get_size());
         let observed_flag = cond_concolic.concrete.to_u64();
-        let branch_condition = if observed_flag == 0 {
-            // Observed false -> require true
-            cond_bv._eq(&zero_bv).not()
+        // Convert the BV flag to a Bool like in function mode and assert/negate accordingly
+        let branch_bool = crate::state::simplify_z3::bv_to_bool_smart(&cond_bv);
+        let condition = if observed_flag == 0 {
+            branch_bool
         } else {
-            // Observed true -> require false
-            cond_bv._eq(&zero_bv)
+            branch_bool.not()
         };
-
-        // 3) Assert the branch condition.
-        executor.solver.assert(&branch_condition);
+        let simplified = condition.simplify();
+        log!(
+            executor.state.logger,
+            "Asserting branch condition to the solver: {:?}",
+            simplified
+        );
+        log!(
+            executor.state.logger,
+            "Simplified branch condition: {:?}",
+            simplified
+        );
+        executor.solver.assert(&simplified);
 
         // 4) check feasibility
         match executor.solver.check(&[]) {
@@ -1087,5 +1121,3 @@ pub fn get_os_args_address(binary_path: &str) -> Result<u64, Box<dyn Error>> {
     }
     Err("Could not find os.Args in objdump output".into())
 }
-
-// removed: log_symbolic_arguments_evaluation (replaced by build_unified_evaluation_content)

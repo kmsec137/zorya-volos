@@ -118,27 +118,21 @@ def main():
     sub_gpr = project_dir / f"{project_name}.gpr"
     sub_rep = project_dir / f"{project_name}.rep"
 
-    # Case 1: Headless created .gpr/.rep in parent; move into subdir expected by Pyhidra
+    # Always recreate project: remove any existing artifacts in both possible layouts
     try:
-        if parent_gpr.exists() and not sub_gpr.exists():
-            project_dir.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(parent_gpr), str(sub_gpr))
-            if parent_rep.exists() and not sub_rep.exists():
-                shutil.move(str(parent_rep), str(sub_rep))
-    except Exception as move_err:
-        print(f"Warning: could not relocate existing Ghidra project files: {move_err}")
-
-    # Case 2: Avoid empty pre-created directory causing NotFoundException
-    try:
-        if project_dir.exists():
-            try:
-                contents = list(project_dir.iterdir())
-            except Exception:
-                contents = []
-            if len(contents) == 0:
-                project_dir.rmdir()
-    except Exception:
-        pass
+        # Parent-level artifacts
+        if parent_gpr.exists():
+            parent_gpr.unlink()
+        if parent_rep.exists():
+            shutil.rmtree(parent_rep, ignore_errors=True)
+        # Subdir artifacts
+        if sub_gpr.exists():
+            sub_gpr.unlink()
+        if sub_rep.exists():
+            shutil.rmtree(sub_rep, ignore_errors=True)
+        # Do not pre-create subdir; let headless do it
+    except Exception as cleanup_err:
+        print(f"Warning: could not fully clean existing Ghidra project: {cleanup_err}")
 
     try:
         pyhidra.start()
@@ -153,8 +147,26 @@ def main():
     from ghidra.program.model.listing import Instruction
     from ghidra.program.model.data import PointerDataType
 
+    # Ensure project exists by creating it with headless first (no pre-created dir)
     try:
-        # Prefer explicit project location/name to avoid ambiguous defaults
+        ghidra_dir = os.environ.get("GHIDRA_INSTALL_DIR", "/opt/ghidra")
+        headless = os.path.join(ghidra_dir, "support", "analyzeHeadless")
+        if not os.path.exists(headless):
+            raise RuntimeError(f"analyzeHeadless not found at {headless}")
+        cmd = [
+            headless,
+            str(project_dir),            # let headless create <parent>/<name>_ghidra
+            project_name,
+            "-import", str(bin_path),
+            "-overwrite",
+            "-noanalysis",
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except Exception as e:
+        print(f"Warning: headless project creation encountered an issue: {e}")
+
+    try:
+        # Open using explicit project selection that matches headless layout
         with pyhidra.open_program(
             str(bin_path),
             project_location=str(bin_parent),
@@ -177,62 +189,9 @@ def main():
             print(f"Jump tables saved to {output_file}")
             print(f"Total jump tables found: {len(jump_tables)}")
 
-    except Exception as e:
-        # Fallback: attempt headless project creation, then retry once
-        msg = str(e)
-        print(f"Error processing binary: {msg}")
-        need_headless = (
-            "Project marker file not found" in msg
-            or "NotFoundException" in msg
-        )
-        if need_headless:
-            try:
-                ghidra_dir = os.environ.get("GHIDRA_INSTALL_DIR", "/opt/ghidra")
-                headless = os.path.join(ghidra_dir, "support", "analyzeHeadless")
-                if not os.path.exists(headless):
-                    raise RuntimeError(f"analyzeHeadless not found at {headless}")
-                # Create parent-level project, then relocate into subdir if needed
-                cmd = [
-                    headless,
-                    str(bin_parent),
-                    project_name,
-                    "-import",
-                    str(bin_path),
-                    "-overwrite",
-                    "-noanalysis",
-                ]
-                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                # Move created artifacts into subdir for Pyhidra's expected layout
-                if parent_gpr.exists():
-                    project_dir.mkdir(parents=True, exist_ok=True)
-                    if not sub_gpr.exists():
-                        shutil.move(str(parent_gpr), str(sub_gpr))
-                    if parent_rep.exists() and not sub_rep.exists():
-                        shutil.move(str(parent_rep), str(sub_rep))
-                # Retry once with explicit project
-                with pyhidra.open_program(
-                    str(bin_path),
-                    project_location=str(bin_parent),
-                    project_name=project_name,
-                    analyze=True,
-                ) as flat_api:
-                    program = flat_api.getCurrentProgram()
-                    jump_tables = extract_jump_tables(program)
-
-                    output_dir = "results"
-                    os.makedirs(output_dir, exist_ok=True)
-                    output_file = os.path.join(output_dir, "jump_tables.json")
-                    with open(output_file, "w") as f:
-                        json.dump(jump_tables, f, indent=4)
-                    print(f"Jump tables saved to {output_file}")
-                    print(f"Total jump tables found: {len(jump_tables)}")
-            except Exception as e2:
-                print(f"Fallback headless creation failed: {e2}")
-                import traceback
-                traceback.print_exc()
-        else:
-            import traceback
-            traceback.print_exc()
+    except Exception:
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":

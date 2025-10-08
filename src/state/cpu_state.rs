@@ -438,7 +438,16 @@ impl<'ctx> CpuState<'ctx> {
         // Parse general registers
         for line in gdb_output.lines() {
             if let Some(caps) = re_general.captures(line) {
-                let register_name = caps.get(1).unwrap().as_str().to_uppercase();
+                let mut register_name = caps.get(1).unwrap().as_str().to_uppercase();
+
+                // Map GDB register names to SLEIGH register names
+                // GDB uses "FS_BASE" and "GS_BASE", but SLEIGH uses "FS_OFFSET" and "GS_OFFSET"
+                if register_name == "FS_BASE" {
+                    register_name = "FS_OFFSET".to_string();
+                } else if register_name == "GS_BASE" {
+                    register_name = "GS_OFFSET".to_string();
+                }
+
                 let value_concrete = u64::from_str_radix(caps.get(2).unwrap().as_str(), 16)
                     .map_err(|e| {
                         anyhow!("Failed to parse hex value for {}: {}", register_name, e)
