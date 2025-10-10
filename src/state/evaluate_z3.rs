@@ -1,19 +1,11 @@
 use std::io::Write;
-use std::sync::OnceLock;
-use std::time::{Duration, Instant};
-use std::{error::Error, process::Command};
 
-// use super::explore_ast::explore_ast_for_panic;  // Removed to avoid duplication
-use crate::concolic::{ConcolicExecutor, ConcolicVar, SymbolicVar};
-use crate::state::simplify_z3::add_constraints_from_vector;
-use crate::target_info::GLOBAL_TARGET_INFO;
-use chrono::{DateTime, Utc};
-use parser::parser::Inst;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fs::OpenOptions;
-use std::path::Path;
-use z3::ast::{Ast, Int, BV};
-use z3::SatResult;
+use z3::{
+    ast::{Ast, Bool, Dynamic, BV},
+    DeclKind, SatResult, Solver,
+};
+
+use crate::concolic::{ConcolicExecutor, Logger};
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
@@ -21,1103 +13,483 @@ macro_rules! log {
     }};
 }
 
-// Global timer to measure elapsed time until first SAT state is found
-static START_INSTANT: OnceLock<Instant> = OnceLock::new();
-static INVOCATION_CMDLINE: OnceLock<String> = OnceLock::new();
-
-/// Initialize the global SAT timer start. Safe to call multiple times; only first wins.
-pub fn init_sat_timer_start() {
-    let _ = START_INSTANT.set(Instant::now());
+/// Is the given Z3 expression a big number (constant)?
+fn is_bnum<'ctx>(expr: &impl Ast<'ctx>) -> bool {
+    let Ok(decl) = expr.safe_decl() else {
+        return false;
+    };
+    if decl.kind() != DeclKind::BNUM {
+        return false;
+    }
+    assert!(expr.children().is_empty());
+    true
 }
 
-/// Initialize the recorded command line invocation including key environment variables.
-pub fn init_invocation_command_line() {
-    // Try to reconstruct the full wrapper-style command
-    let zorya_dir = std::env::var("ZORYA_DIR").ok();
-    let bin_path = std::env::var("BIN_PATH").ok();
-    let start_point = std::env::var("START_POINT").ok();
-    let mode = std::env::var("MODE").ok();
-    let source_lang = std::env::var("SOURCE_LANG").ok();
-    let compiler = std::env::var("COMPILER").ok();
-    let args_env = std::env::var("ARGS").ok();
-    let negate_flag = std::env::var("NEGATE_PATH_FLAG").ok();
+/// Is the given Z3 expression an If-Then-Else construction?
+fn is_ite<'ctx>(expr: &impl Ast<'ctx>) -> bool {
+    let Ok(decl) = expr.safe_decl() else {
+        return false;
+    };
+    decl.kind() == DeclKind::ITE
+}
 
-    let reconstructed = match (zorya_dir, bin_path, start_point, mode) {
-        (Some(zdir), Some(bin), Some(start), Some(mode_val)) => {
-            let mut s = format!("{}/zorya {} --mode {} {}", zdir, bin, mode_val, start);
-            if let Some(lang) = source_lang {
-                if !lang.is_empty() {
-                    s.push_str(&format!(" --lang {}", lang));
+/// Retrieve the constant boolean from a Z3 expression
+fn get_constant_bool<'ctx>(expr: &impl Ast<'ctx>) -> Option<bool> {
+    let Ok(decl) = expr.safe_decl() else {
+        return None;
+    };
+    match decl.kind() {
+        DeclKind::FALSE => Some(false),
+        DeclKind::TRUE => Some(true),
+        _ => None,
+    }
+}
+
+/// Simplify a Z3 Dynamic AST in a similar way as
+/// https://theory.stanford.edu/~nikolaj/programmingz3.html#sec-subterm-simplification
+pub fn simplify_dynamic<'ctx>(expr: &Dynamic<'ctx>) -> Dynamic<'ctx> {
+    let Ok(decl) = expr.safe_decl() else {
+        // I don't know how this can happen
+        todo!();
+        // return expr.to_owned()
+    };
+    let children: Vec<Dynamic<'ctx>> = expr
+        .children()
+        .iter()
+        .map(|x| simplify_dynamic(x))
+        .collect();
+    if children.is_empty() {
+        // There is no sub-expression
+        return expr.to_owned();
+    }
+    // println!("> simpl {:?} {:?}", decl.kind(), children);
+    match decl.kind() {
+        DeclKind::EQ => {
+            let [left, right] = children
+                .clone()
+                .try_into()
+                .expect("Unexpected arguments of EQ");
+            if is_ite(&left) && is_bnum(&right) {
+                // Transform ITE(cond, t, f) == r into ITE(cond, t == r, f == r)
+                let [cond, val_true, val_false] = left.children().try_into().unwrap();
+                let cond = cond.as_bool().unwrap();
+                let new_val_true = simplify_dynamic(&(val_true._eq(&right)).simplify().into());
+                let new_val_false = simplify_dynamic(&(val_false._eq(&right)).simplify().into());
+                let new_expr = simplify_dynamic(&cond.ite(&new_val_true, &new_val_false));
+                // println!("  => {new_expr}");
+                return new_expr;
+            }
+        }
+        DeclKind::ITE => {
+            // If-then-else
+            let [cond, val_true, val_false] = children.clone().try_into().unwrap();
+            if let Some(bool_val_true) = get_constant_bool(&val_true) {
+                if let Some(bool_val_false) = get_constant_bool(&val_false) {
+                    // Transform ITE(cond, true or false, true or false) into a simpler expression
+                    let new_expr = match (bool_val_true, bool_val_false) {
+                        (false, false) => val_true,
+                        (false, true) => {
+                            let cond = cond.as_bool().unwrap();
+                            simplify_dynamic(&cond.not().simplify().into())
+                        }
+                        (true, false) => cond,
+                        (true, true) => val_true,
+                    };
+                    // println!("  => {new_expr}");
+                    return new_expr;
                 }
             }
-            if let Some(comp) = compiler {
-                if !comp.is_empty() {
-                    s.push_str(&format!(" --compiler {}", comp));
-                }
-            }
-            if let Some(a) = args_env {
-                if !a.is_empty() && a != "none" {
-                    s.push_str(&format!(" --arg \"{}\"", a));
-                }
-            }
-            if let Some(neg) = negate_flag {
-                if neg == "true" {
-                    s.push_str(" --negate-path-exploration");
-                } else if neg == "false" {
-                    s.push_str(" --no-negate-path-exploration");
-                }
-            }
-            s
+        }
+        _ => {}
+    }
+    // Complex conversion of children, cf. https://github.com/prove-rs/z3.rs/issues/351
+    decl.apply(
+        &children
+            .iter()
+            .map(|x| x as &dyn Ast<'ctx>)
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// Simplify a Z3 Dynamic AST and prove the result is equivalent to the given expression
+pub fn simplify_dynamic_proven<'ctx>(expr: &Dynamic<'ctx>) -> Dynamic<'ctx> {
+    let simplified = simplify_dynamic(expr);
+
+    // Prove expr == simplified
+    let solver = Solver::new(expr.get_ctx());
+    solver.assert(&expr._eq(&simplified).not());
+    assert_eq!(solver.check(), SatResult::Unsat);
+    return simplified;
+}
+
+/// Check if a Z3 expression is an equality
+fn is_eq<'ctx>(expr: &impl Ast<'ctx>) -> bool {
+    let Ok(decl) = expr.safe_decl() else {
+        return false;
+    };
+    decl.kind() == DeclKind::EQ
+}
+
+/// Get constant value from a BV if it's a constant
+fn get_constant_bv_value<'ctx>(expr: &BV<'ctx>) -> Option<u64> {
+    if is_bnum(expr) {
+        expr.as_u64()
+    } else {
+        None
+    }
+}
+
+/// Convert a BV to Bool while preserving symbolic information using AST inspection
+pub fn bv_to_bool_smart<'ctx>(bv: &BV<'ctx>) -> Bool<'ctx> {
+    let ctx = bv.get_ctx();
+
+    // Case 1: Check if it's an ITE expression like (ite condition #x01 #x00)
+    if is_ite(bv) {
+        if let Some(condition) = extract_condition_from_ite_bv_ast(bv) {
+            return condition;
+        }
+    }
+
+    // Case 2: Check if it's already a simple flag (0 or 1)
+    if bv.get_size() == 1 {
+        let zero = BV::from_u64(ctx, 0, 1);
+        return bv._eq(&zero).not(); // bv != 0
+    }
+
+    // Case 3: Fallback - treat as non-zero test
+    let zero = BV::from_u64(ctx, 0, bv.get_size());
+    bv._eq(&zero).not() // bv != 0
+}
+
+/// Extract the underlying condition from an ITE BV expression using AST inspection
+fn extract_condition_from_ite_bv_ast<'ctx>(bv: &BV<'ctx>) -> Option<Bool<'ctx>> {
+    if !is_ite(bv) {
+        return None;
+    }
+
+    let children = bv.children();
+    if children.len() != 3 {
+        return None;
+    }
+
+    let condition = children[0].as_bool()?;
+    let then_val = children[1].as_bv()?;
+    let else_val = children[2].as_bv()?;
+
+    // Check if this is a flag pattern: (ite condition #x01 #x00) or (ite condition #x00 #x01)
+    let then_const = get_constant_bv_value(&then_val);
+    let else_const = get_constant_bv_value(&else_val);
+
+    match (then_const, else_const) {
+        (Some(1), Some(0)) => {
+            // Pattern: (ite condition #x01 #x00) - condition is the flag meaning
+            Some(condition)
+        }
+        (Some(0), Some(1)) => {
+            // Pattern: (ite condition #x00 #x01) - negated condition is the flag meaning
+            Some(condition.not())
         }
         _ => {
-            // Fallback: argv join
-            let mut parts: Vec<String> = Vec::new();
-            for arg in std::env::args() {
-                let needs_quotes = arg.contains(' ') || arg.contains('\t');
-                let escaped = arg.replace('"', "\\\"");
-                if needs_quotes {
-                    parts.push(format!("\"{}\"", escaped));
-                } else {
-                    parts.push(escaped);
-                }
-            }
-            parts.join(" ")
+            // Not a simple flag pattern, treat as non-zero test
+            let zero = BV::from_u64(bv.get_ctx(), 0, bv.get_size());
+            Some(bv._eq(&zero).not())
         }
-    };
-
-    let _ = INVOCATION_CMDLINE.set(reconstructed);
+    }
 }
 
-/// Add ASCII constraints for argument bytes to ensure readable output
-fn add_ascii_constraints_for_args<'ctx>(
-    executor: &mut ConcolicExecutor<'ctx>,
-    binary_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let ascii_profile = std::env::var("ARG_ASCII_PROFILE")
-        .unwrap_or_else(|_| "auto".to_string())
-        .to_lowercase();
+/// High-level function to extract the underlying condition from a flag BV using AST inspection
+pub fn extract_underlying_condition_from_flag_ast<'ctx>(
+    flag_bv: &BV<'ctx>,
+    branch_taken: bool,
+    logger: &mut Logger,
+) -> Bool<'ctx> {
+    // Case 1: Handle ITE expressions
+    if is_ite(flag_bv) {
+        let children = flag_bv.children();
+        if children.len() == 3 {
+            if let (Some(condition), Some(then_val), Some(else_val)) = (
+                children[0].as_bool(),
+                children[1].as_bv(),
+                children[2].as_bv(),
+            ) {
+                let then_const = get_constant_bv_value(&then_val);
+                let else_const = get_constant_bv_value(&else_val);
 
-    // Auto-detect numeric arguments by parsing the execution trace for calls
-    // to strconv.Atoi / strconv.ParseInt and capture the first argument pointer.
-    let mut numeric_arg_ptrs: HashSet<u64> = HashSet::new();
-    if ascii_profile == "auto" {
-        if let Ok(trace) = std::fs::read_to_string("results/execution_trace.txt") {
-            for line in trace.lines() {
-                if line.contains("Symbol: strconv.Atoi")
-                    || line.contains("Symbol: strconv.ParseInt")
-                {
-                    // Heuristic: find the first "=0x..." after the arrow
-                    if let Some(arrow_idx) = line.find("->") {
-                        let after = &line[arrow_idx + 2..];
-                        if let Some(s_idx) = after.find("=0x") {
-                            let hex_start = s_idx + 3;
-                            let mut hex_end = hex_start;
-                            let bytes = after.as_bytes();
-                            while hex_end < after.len() && bytes[hex_end].is_ascii_hexdigit() {
-                                hex_end += 1;
-                            }
-                            if let Ok(val) = u64::from_str_radix(&after[hex_start..hex_end], 16) {
-                                numeric_arg_ptrs.insert(val);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    if let Ok(os_args_addr) = get_os_args_address(binary_path) {
-        if let Ok(slice_ptr_bv) = executor
-            .state
-            .memory
-            .read_u64(os_args_addr, &mut executor.state.logger.clone())
-        {
-            if let Ok(slice_len_bv) = executor
-                .state
-                .memory
-                .read_u64(os_args_addr + 8, &mut executor.state.logger.clone())
-            {
-                let slice_ptr_val = slice_ptr_bv.concrete.to_u64();
-                let slice_len_val = slice_len_bv.concrete.to_u64();
-
-                // Add ASCII constraints for each argument byte
-                for i in 1..slice_len_val.min(10) {
-                    // Limit to first 10 args for performance
-                    let string_struct_addr = slice_ptr_val + i * 16;
-
-                    if let Ok(str_data_ptr_cv) = executor
-                        .state
-                        .memory
-                        .read_u64(string_struct_addr, &mut executor.state.logger.clone())
-                    {
-                        if let Ok(str_data_len_cv) = executor
-                            .state
-                            .memory
-                            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone())
-                        {
-                            let str_data_ptr_val = str_data_ptr_cv.concrete.to_u64();
-                            let str_data_len_val = str_data_len_cv.concrete.to_u64();
-                            let str_data_len_bv_sym =
-                                str_data_len_cv.symbolic.to_bv(executor.context);
-
-                            if str_data_ptr_val != 0 && str_data_len_val > 0 {
-                                // Decide constraint profile for this specific arg (auto/digits/printable)
-                                let apply_digits_for_this_arg = match ascii_profile.as_str() {
-                                    "digits" => true,
-                                    "printable" => false,
-                                    _ => numeric_arg_ptrs.contains(&str_data_ptr_val),
-                                };
-                                // Limit string length for performance
-                                let max_len = str_data_len_val.min(256);
-                                let mut first_byte_bv_opt: Option<z3::ast::BV> = None;
-                                for j in 0..max_len {
-                                    if let Ok(byte_read) =
-                                        executor.state.memory.read_byte(str_data_ptr_val + j)
-                                    {
-                                        let byte_bv = byte_read.symbolic.to_bv(executor.context);
-                                        if j == 0 {
-                                            first_byte_bv_opt = Some(byte_bv.clone());
-                                        }
-                                        if apply_digits_for_this_arg {
-                                            // Allow only digits '0'-'9'; allow optional leading '-' at position 0
-                                            let zero = z3::ast::BV::from_u64(
-                                                executor.context,
-                                                b'0' as u64,
-                                                8,
-                                            );
-                                            let nine = z3::ast::BV::from_u64(
-                                                executor.context,
-                                                b'9' as u64,
-                                                8,
-                                            );
-                                            let is_digit =
-                                                byte_bv.bvuge(&zero) & byte_bv.bvule(&nine);
-
-                                            if j == 0 {
-                                                let dash = z3::ast::BV::from_u64(
-                                                    executor.context,
-                                                    b'-' as u64,
-                                                    8,
-                                                );
-                                                let is_dash = byte_bv._eq(&dash);
-                                                let allowed = z3::ast::Bool::or(
-                                                    executor.context,
-                                                    &[&is_dash, &is_digit],
-                                                );
-                                                executor.solver.assert(&allowed);
-                                            } else {
-                                                executor.solver.assert(&is_digit);
-                                            }
-                                        } else {
-                                            // Default: printable ASCII (32-126)
-                                            let printable_min =
-                                                z3::ast::BV::from_u64(executor.context, 32, 8);
-                                            let printable_max =
-                                                z3::ast::BV::from_u64(executor.context, 126, 8);
-                                            let printable_constraint = byte_bv
-                                                .bvuge(&printable_min)
-                                                & byte_bv.bvule(&printable_max);
-                                            executor.solver.assert(&printable_constraint);
-                                        }
-                                    }
-                                }
-                                // For digits profile, forbid a lone '-' when length == 1
-                                if apply_digits_for_this_arg {
-                                    if let Some(first_byte_bv) = first_byte_bv_opt {
-                                        let one64 = z3::ast::BV::from_u64(executor.context, 1, 64);
-                                        let len_eq_one = str_data_len_bv_sym._eq(&one64);
-                                        let dash8 =
-                                            z3::ast::BV::from_u64(executor.context, b'-' as u64, 8);
-                                        let first_is_dash = first_byte_bv._eq(&dash8);
-                                        let lone_dash = z3::ast::Bool::and(
-                                            executor.context,
-                                            &[&len_eq_one, &first_is_dash],
-                                        );
-                                        let not_lone_dash = lone_dash.not();
-                                        executor.solver.assert(&not_lone_dash);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                match ascii_profile.as_str() {
-                    "digits" => log!(executor.state.logger, "Added ASCII constraints for argument bytes (digits mode)"),
-                    "printable" => log!(executor.state.logger, "Added ASCII constraints for argument bytes (printable mode)"),
-                    _ => log!(executor.state.logger, "Added ASCII constraints for argument bytes (auto mode: digits applied to detected numeric args)"),
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Write SAT state details to file and log to terminal
-use crate::state::gating_stats::{get_allowed_by_xref_fallback, get_gated_by_reach};
-
-fn write_sat_state_to_file(
-    evaluation_content: &str,
-    mode: &str,
-    panic_addr: Option<u64>,
-    elapsed_since_start: Option<Duration>,
-    instruction_addr: Option<u64>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Create results directory if it doesn't exist
-    std::fs::create_dir_all("results")?;
-
-    let file_path = "results/FOUND_SAT_STATE.txt";
-    let file_exists = Path::new(file_path).exists();
-
-    // Open file in append mode (creates if doesn't exist)
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(file_path)?;
-
-    // Get current timestamp
-    let timestamp: DateTime<Utc> = Utc::now();
-    let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string();
-
-    // Write header separator
-    if file_exists {
-        writeln!(file, "\n{}", "=".repeat(80))?;
-    }
-
-    // Write SAT state entry
-    if let Some(inv) = INVOCATION_CMDLINE.get() {
-        writeln!(file, "Running command: {}", inv)?;
-    }
-    writeln!(file, "[*] SATISFIABLE STATE FOUND")?;
-    writeln!(file, "Timestamp: {}", timestamp_str)?;
-    writeln!(file, "Mode: {}", mode)?;
-    if let Some(dur) = elapsed_since_start {
-        let secs = dur.as_secs();
-        let millis = dur.subsec_millis();
-        writeln!(file, "Elapsed since start: {}.{:03}s", secs, millis)?;
-    }
-    if let Some(addr) = instruction_addr {
-        writeln!(file, "Instruction Address: 0x{:x}", addr)?;
-    }
-    if let Some(addr) = panic_addr {
-        writeln!(file, "Panic Address: 0x{:x}", addr)?;
-    }
-
-    writeln!(file, "{}", "-".repeat(60))?;
-    // Gating stats summary
-    let gated = get_gated_by_reach();
-    let allowed = get_allowed_by_xref_fallback();
-    writeln!(file, "Panic gating stats:")?;
-    writeln!(
-        file,
-        "  gated_by_reach = {} (branches skipped by reverse CFG reachability)",
-        gated
-    )?;
-    writeln!(file, "  allowed_by_xref_fallback = {} (branches allowed because target matched a known panic xref)", allowed)?;
-    writeln!(file, "{}", "-".repeat(60))?;
-    writeln!(file, "{}", evaluation_content)?;
-    writeln!(file, "{}", "=".repeat(80))?;
-
-    file.flush()?;
-
-    println!("\n~~~~~~~~~~~");
-    println!(
-        "[*] SATISFIABLE STATE AND POTENTIAL BUG FOUND! You can find the details in: {}",
-        file_path
-    );
-    if let Some(dur) = elapsed_since_start {
-        let secs = dur.as_secs_f64();
-        println!("[*] Elapsed since start: {:.3}s", secs);
-    }
-    println!("~~~~~~~~~~~\n");
-
-    Ok(())
-}
-
-/// Capture simple value assignments for constrained inputs
-fn capture_constrained_values_section(
-    executor: &ConcolicExecutor,
-    model: &z3::Model,
-    symbolic_arguments: &BTreeMap<String, SymbolicVar>,
-    extra_expressions: &[String],
-) -> String {
-    // Recompute constrained labels similarly to capture_constrained_inputs_section
-    let mut constraint_strings: Vec<String> = Vec::new();
-    for c in &executor.constraint_vector {
-        constraint_strings.push(format!("{:?}", c.simplify()));
-    }
-    constraint_strings.extend(extra_expressions.iter().cloned());
-
-    // Build label set we will evaluate
-    let mut label_set: BTreeSet<String> = BTreeSet::new();
-
-    fn collect_symbols<'ctx>(
-        label: &str,
-        sym: &SymbolicVar<'ctx>,
-        labels: &mut BTreeSet<String>,
-        constraints: &[String],
-    ) {
-        match sym {
-            SymbolicVar::Int(bv) => {
-                let name = bv.to_string();
-                if constraints.iter().any(|s| s.contains(&name)) {
-                    labels.insert(label.to_string());
-                }
-            }
-            SymbolicVar::Bool(b) => {
-                let name = b.to_string();
-                if constraints.iter().any(|s| s.contains(&name)) {
-                    labels.insert(label.to_string());
-                }
-            }
-            SymbolicVar::Float(f) => {
-                let name = f.to_string();
-                if constraints.iter().any(|s| s.contains(&name)) {
-                    labels.insert(label.to_string());
-                }
-            }
-            SymbolicVar::Slice(slice) => {
-                let p = slice.pointer.to_string();
-                if constraints.iter().any(|s| s.contains(&p)) {
-                    labels.insert(format!("{}.ptr", label));
-                }
-                let l = slice.length.to_string();
-                if constraints.iter().any(|s| s.contains(&l)) {
-                    labels.insert(format!("{}.len", label));
-                }
-                let c = slice.capacity.to_string();
-                if constraints.iter().any(|s| s.contains(&c)) {
-                    labels.insert(format!("{}.cap", label));
-                }
-                for (i, elem) in slice.elements.iter().enumerate() {
-                    let child = format!("{}[{}]", label, i);
-                    collect_symbols(&child, elem, labels, constraints);
-                }
-            }
-            SymbolicVar::LargeInt(vec_bv) => {
-                for (i, bv) in vec_bv.iter().enumerate() {
-                    let name = bv.to_string();
-                    if constraints.iter().any(|s| s.contains(&name)) {
-                        labels.insert(format!("{}[{}]", label, i));
-                    }
-                }
-            }
-        }
-    }
-
-    // Collect only arguments that appear in constraints
-    for (arg, sym) in symbolic_arguments.iter() {
-        collect_symbols(arg, sym, &mut label_set, &constraint_strings);
-    }
-
-    // Helper to render ASCII description for small integers
-    fn ascii_desc(v: u64) -> String {
-        if v <= 0xff {
-            let b = v as u8;
-            match b {
-                32..=126 => format!("'{}'", b as char),
-                0 => "\\0".to_string(),
-                9 => "\\t".to_string(),
-                10 => "\\n".to_string(),
-                13 => "\\r".to_string(),
-                _ => format!("non-printable 0x{:02x}", b),
-            }
-        } else {
-            "n/a".to_string()
-        }
-    }
-
-    // Render sentences for labels we can evaluate
-    let mut out = String::new();
-    if label_set.is_empty() {
-        return out;
-    }
-    out.push_str("RESULTS\n");
-    out.push_str("The program can panic if its inputs are the following:\n");
-
-    for label in label_set {
-        // Try to evaluate by pattern-matching against the arguments
-        let rendered = if let Some(dot) = label.rfind('.') {
-            // Possibly slice comp: arg.len/cap/ptr
-            let (arg, field) = label.split_at(dot);
-            let field = &field[1..];
-            if let Some(SymbolicVar::Slice(slice)) = symbolic_arguments.get(arg) {
-                match field {
-                    "len" => match model.eval(&slice.length, true).and_then(|v| v.as_u64()) {
-                        Some(v) => {
-                            let signed = v as i64;
-                            let ascii = ascii_desc(v);
-                            format!(
-                                "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
-                                label, v, v, signed, ascii
-                            )
-                        }
-                        None => format!("  - The input '{}' has unknown value\n", label),
-                    },
-                    "cap" => match model.eval(&slice.capacity, true).and_then(|v| v.as_u64()) {
-                        Some(v) => {
-                            let signed = v as i64;
-                            let ascii = ascii_desc(v);
-                            format!(
-                                "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
-                                label, v, v, signed, ascii
-                            )
-                        }
-                        None => format!("  - The input '{}' has unknown value\n", label),
-                    },
-                    "ptr" => match model.eval(&slice.pointer, true).and_then(|v| v.as_u64()) {
-                        Some(v) => format!("  - The pointer '{}' must be 0x{:x}\n", label, v),
-                        None => format!("  - The pointer '{}' has unknown value\n", label),
-                    },
-                    _ => String::new(),
-                }
-            } else {
-                String::new()
-            }
-        } else if let Some(bracket) = label.find('[') {
-            // Element access: arg[i]
-            let arg = &label[..bracket];
-            let idx_str = &label[bracket + 1..label.len() - 1];
-            let idx = idx_str.parse::<usize>().unwrap_or(usize::MAX);
-
-            // First, try direct lookup for cases where "indices[0]" itself is a tracked variable
-            if let Some(sym) = symbolic_arguments.get(&label) {
-                match sym {
-                    SymbolicVar::Int(bv) => match model.eval(bv, true).and_then(|v| v.as_u64()) {
-                        Some(v) => {
-                            let signed = v as i64;
-                            let ascii = ascii_desc(v);
-                            format!(
-                                    "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
-                                    label, v, v, signed, ascii
-                                )
-                        }
-                        None => format!("  - The input '{}' has unknown value\n", label),
-                    },
-                    SymbolicVar::Bool(b) => match model.eval(b, true).and_then(|v| v.as_bool()) {
-                        Some(v) => format!("  - The input '{}' must be {}\n", label, v),
-                        None => format!("  - The input '{}' has unknown value\n", label),
-                    },
-                    SymbolicVar::Float(f) => match model.eval(f, true).map(|v| v.to_string()) {
-                        Some(s) => format!("  - The input '{}' must be {}\n", label, s),
-                        None => format!("  - The input '{}' has unknown value\n", label),
-                    },
-                    _ => format!("  {} = <complex>\n", label),
-                }
-            } else if let Some(sym) = symbolic_arguments.get(arg) {
-                // Otherwise, lookup parent slice and access element
-                match sym {
-                    SymbolicVar::Slice(slice) => {
-                        if idx < slice.elements.len() {
-                            match &slice.elements[idx] {
-                                SymbolicVar::Int(bv) => {
-                                    match model.eval(bv, true).and_then(|v| v.as_u64()) {
-                                        Some(v) => {
-                                            let signed = v as i64;
-                                            let ascii = ascii_desc(v);
-                                            format!(
-                                            "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
-                                            label, v, v, signed, ascii
-                                        )
-                                        }
-                                        None => {
-                                            format!("  - The input '{}' has unknown value\n", label)
-                                        }
-                                    }
-                                }
-                                SymbolicVar::Bool(b) => match model
-                                    .eval(b, true)
-                                    .and_then(|v| v.as_bool())
-                                {
-                                    Some(v) => format!("  - The input '{}' must be {}\n", label, v),
-                                    None => format!("  -The input '{}' has unknown value\n", label),
-                                },
-                                SymbolicVar::Float(f) => match model
-                                    .eval(f, true)
-                                    .map(|v| v.to_string())
-                                {
-                                    Some(s) => format!("  -The input '{}' must be {}\n", label, s),
-                                    None => {
-                                        format!("  - The input '{}' has unknown value\n", label)
-                                    }
-                                },
-                                _ => format!("  {} = <complex>\n", label),
-                            }
+                match (then_const, else_const) {
+                    (Some(1), Some(0)) => {
+                        // Pattern: (ite condition #x01 #x00)
+                        // Flag = 1 when condition is true, Flag = 0 when condition is false
+                        return if branch_taken {
+                            // Branch taken: flag was 1, so condition was true
+                            condition
                         } else {
-                            String::new()
-                        }
-                    }
-                    SymbolicVar::LargeInt(vec_bv) => {
-                        if idx < vec_bv.len() {
-                            match model.eval(&vec_bv[idx], true).and_then(|v| v.as_u64()) {
-                                Some(v) => {
-                                    let signed = v as i64;
-                                    let ascii = ascii_desc(v);
-                                    format!(
-                                        "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
-                                        label, v, v, signed, ascii
-                                    )
-                                }
-                                None => format!("  - The input '{}' has unknown value\n", label),
-                            }
-                        } else {
-                            String::new()
-                        }
-                    }
-                    _ => String::new(),
-                }
-            } else {
-                String::new()
-            }
-        } else {
-            // Base arg (Int/Bool/Float)
-            if let Some(sym) = symbolic_arguments.get(&label) {
-                match sym {
-                    SymbolicVar::Int(bv) => match model.eval(bv, true).and_then(|v| v.as_u64()) {
-                        Some(v) => {
-                            let signed = v as i64;
-                            let ascii = ascii_desc(v);
-                            format!(
-                                "  - The input '{}' must be {} (unsigned: {}; signed: {}; ASCII: {})\n",
-                                label, v, v, signed, ascii
-                            )
-                        }
-                        None => format!("  - The input '{}' has unknown value\n", label),
-                    },
-                    SymbolicVar::Bool(b) => match model.eval(b, true).and_then(|v| v.as_bool()) {
-                        Some(v) => format!("  - The input '{}' must be {}\n", label, v),
-                        None => format!("  - The input '{}' has unknown value\n", label),
-                    },
-                    SymbolicVar::Float(f) => match model.eval(f, true).map(|v| v.to_string()) {
-                        Some(s) => format!("  - The input '{}' must be {}\n", label, s),
-                        None => format!("  - The input '{}' has unknown value\n", label),
-                    },
-                    _ => String::new(),
-                }
-            } else {
-                String::new()
-            }
-        };
-        out.push_str(&rendered);
-    }
-
-    out.push_str("\n");
-    out
-}
-
-/// Capture the evaluation content as a string (similar to what goes to the logger)
-fn capture_symbolic_arguments_evaluation(
-    model: &z3::Model,
-    function_symbolic_arguments: &std::collections::BTreeMap<String, SymbolicVar>,
-) -> String {
-    let mut output = String::new();
-
-    output.push_str("=== FULL EVALUATION OF Z3 VARIABLES (TRACKED AND UNTRACKED) ===\n\n");
-
-    for (arg_name, symbolic_var) in function_symbolic_arguments {
-        match symbolic_var {
-            SymbolicVar::Slice(slice) => {
-                output.push_str(&format!("Argument '{}':\n", arg_name));
-                output.push_str("  Slice components:\n");
-
-                // Evaluate slice metadata
-                if let Some(ptr_val) = model.eval(&slice.pointer, true) {
-                    if let Some(ptr_u64) = ptr_val.as_u64() {
-                        output.push_str(&format!(
-                            "    pointer ({}) = #x{:016x}\n",
-                            slice.pointer, ptr_u64
-                        ));
-                        output.push_str(&format!("      (hex: 0x{:x})\n", ptr_u64));
-                    }
-                }
-
-                if let Some(len_val) = model.eval(&slice.length, true) {
-                    if let Some(len_u64) = len_val.as_u64() {
-                        output.push_str(&format!(
-                            "    length ({}) = #x{:016x}\n",
-                            slice.length, len_u64
-                        ));
-                        output.push_str(&format!("      (decimal: {})\n", len_u64));
-                    }
-                }
-
-                if let Some(cap_val) = model.eval(&slice.capacity, true) {
-                    if let Some(cap_u64) = cap_val.as_u64() {
-                        output.push_str(&format!(
-                            "    capacity ({}) = #x{:016x}\n",
-                            slice.capacity, cap_u64
-                        ));
-                        output.push_str(&format!("      (decimal: {})\n", cap_u64));
-                    }
-                }
-
-                output.push_str("\n");
-            }
-            SymbolicVar::Int(bv) => {
-                if let Some(val) = model.eval(bv, true) {
-                    output.push_str(&format!("Argument '{}':\n", arg_name));
-
-                    if bv.get_size() <= 64 {
-                        if let Some(val_u64) = val.as_u64() {
-                            output.push_str(&format!("  {} = #x{:016x}\n", bv, val_u64));
-                            let signed_val = val_u64 as i64;
-                            output.push_str(&format!("    (unsigned: {})\n", val_u64));
-                            output.push_str(&format!("    (signed: {})\n", signed_val));
-
-                            // Add ASCII interpretation when value fits in a byte
-                            if val_u64 <= 255 {
-                                let byte_val = val_u64 as u8;
-                                if byte_val >= 32 && byte_val <= 126 {
-                                    // Printable ASCII
-                                    output.push_str(&format!(
-                                        "    (ASCII: '{}')\n",
-                                        char::from(byte_val)
-                                    ));
-                                } else if byte_val == 0 {
-                                    output.push_str(&format!("    (ASCII: '\\0' - null byte)\n"));
-                                } else if byte_val == 9 {
-                                    output.push_str(&format!("    (ASCII: '\\t' - tab)\n"));
-                                } else if byte_val == 10 {
-                                    output.push_str(&format!("    (ASCII: '\\n' - newline)\n"));
-                                } else if byte_val == 13 {
-                                    output.push_str(&format!(
-                                        "    (ASCII: '\\r' - carriage return)\n"
-                                    ));
-                                } else {
-                                    output.push_str(&format!(
-                                        "    (ASCII: non-printable, code {})\n",
-                                        byte_val
-                                    ));
-                                }
-                            } else {
-                                // Always provide LSB ASCII hint for larger integers
-                                let b0 = (val_u64 & 0xff) as u8;
-                                let ascii = if (32..=126).contains(&b0) {
-                                    format!("'{}'", b0 as char)
-                                } else if b0 == 0 {
-                                    "\\0".to_string()
-                                } else if b0 == 9 {
-                                    "\\t".to_string()
-                                } else if b0 == 10 {
-                                    "\\n".to_string()
-                                } else if b0 == 13 {
-                                    "\\r".to_string()
-                                } else {
-                                    format!("non-printable 0x{:02x}", b0)
-                                };
-                                output.push_str(&format!("    (ASCII LSB: {})\n", ascii));
-                            }
-                        }
-                    } else {
-                        // For large bit vectors (like 256-bit arrays)
-                        output.push_str(&format!("  {} = {}\n", bv, val));
-                        output.push_str(&format!("    (unsigned: n/a)\n"));
-                        output.push_str(&format!("    (signed: n/a)\n"));
-                    }
-
-                    output.push_str("\n");
-                }
-            }
-            _ => {
-                output.push_str(&format!(
-                    "Argument '{}': (unsupported type for evaluation)\n\n",
-                    arg_name
-                ));
-            }
-        }
-    }
-
-    output.push_str("=== END TRACKED Z3 VARIABLES EVALUATION ===\n");
-    output
-}
-
-/// Build a unified evaluation content string used for both file output and terminal logs
-fn build_unified_evaluation_content(
-    model: &z3::Model,
-    executor: &ConcolicExecutor,
-    conditional_flag: Option<&ConcolicVar>,
-) -> String {
-    let mut content = String::new();
-
-    // Include current conditional flag expression to aid constrained input detection
-    let mut extra_exprs: Vec<String> = Vec::new();
-    if let Some(cf) = conditional_flag.as_ref() {
-        match &cf.symbolic {
-            SymbolicVar::Bool(b) => extra_exprs.push(format!("{:?}", b.simplify())),
-            SymbolicVar::Int(bv) => extra_exprs.push(format!("{:?}", bv.simplify())),
-            _ => {}
-        }
-    }
-
-    // Constrained values first
-    content.push_str(&capture_constrained_values_section(
-        executor,
-        model,
-        &executor.function_symbolic_arguments,
-        &extra_exprs,
-    ));
-    content.push_str("(If the result is not in the expected format, try to set the ARG_ASCII_PROFILE environment variable to 'printable' or 'digits', by running 'ARG_ASCII_PROFILE=printable zorya ...' for instance)\n");
-    content.push_str("------------------------------------------------------------\n");
-    // Then full tracked/untracked variable evaluation
-    content.push_str(&capture_symbolic_arguments_evaluation(
-        model,
-        &executor.function_symbolic_arguments,
-    ));
-
-    content
-}
-
-pub fn evaluate_args_z3<'ctx>(
-    executor: &mut ConcolicExecutor<'ctx>,
-    inst: &Inst,
-    conditional_flag: Option<ConcolicVar<'ctx>>,
-    instruction_addr: Option<u64>,
-    branch_target_addr: Option<u64>,
-    panic_addr: Option<u64>, // Add panic address parameter to avoid re-exploration
-) -> Result<(), Box<dyn std::error::Error>> {
-    use std::env;
-    let mode = env::var("MODE").expect("MODE environment variable is not set");
-
-    if mode == "function" {
-        // Use panic_addr passed from caller instead of re-doing AST exploration
-        if let Some(parsed_addr) = panic_addr {
-            log!(
-                executor.state.logger,
-                ">>> Using panic address from caller: 0x{:x}",
-                parsed_addr
-            );
-
-            executor.solver.push();
-
-            // When evaluating arguments during a CBRANCH leading to a panic, assert the simple boolean condition that leads to the panic.
-            if let Some(ref conditional_flag) = conditional_flag {
-                let panic_causing_flag_u64 = conditional_flag.concrete.to_u64().clone();
-                // Handle both Bool and BV types
-                let condition = match &conditional_flag.symbolic {
-                    SymbolicVar::Bool(bool_expr) => {
-                        log!(
-                            executor.state.logger,
-                            "Conditional flag Bool simplified: {:?}",
-                            bool_expr.simplify()
-                        );
-                        // Flip the observed condition to explore the negated branch
-                        let condition = if panic_causing_flag_u64 == 0 {
-                            // Observed false; require true
-                            bool_expr.not().not() // i.e., bool_expr == true
-                        } else {
-                            // Observed true; require false
-                            bool_expr.not()
+                            // Branch not taken: flag was 0, so condition was false
+                            condition.not()
                         };
-                        condition
                     }
-                    SymbolicVar::Int(bv) => {
-                        log!(
-                            executor.state.logger,
-                            "Conditional flag BV simplified: {:?}",
-                            bv.simplify()
-                        );
-                        // Extract underlying Bool from BV and assert the negation of observed path
-                        let bool_cond = crate::state::simplify_z3::bv_to_bool_smart(bv);
-                        if panic_causing_flag_u64 == 0 {
-                            bool_cond
+                    (Some(0), Some(1)) => {
+                        // Pattern: (ite condition #x00 #x01)
+                        // Flag = 0 when condition is true, Flag = 1 when condition is false
+                        return if branch_taken {
+                            // Branch taken: flag was 1, so condition was false
+                            condition.not()
                         } else {
-                            bool_cond.not()
-                        }
+                            // Branch not taken: flag was 0, so condition was true
+                            condition
+                        };
                     }
                     _ => {
-                        return Err("Unsupported symbolic variable type for conditional flag"
-                            .to_string()
-                            .into());
+                        // Complex ITE, fall through to general handling
+                        log!(
+                            logger,
+                            "DEBUG: Complex ITE pattern - then_const: {:?}, else_const: {:?}",
+                            then_const,
+                            else_const
+                        );
                     }
-                };
-                // Assert the new condition
-                let simplified = condition.simplify();
-                log!(
-                    executor.state.logger,
-                    "Asserting branch condition to the solver: {:?}",
-                    simplified
-                );
-                executor.solver.assert(&simplified);
+                }
             } else {
                 log!(
-                    executor.state.logger,
-                    "No conditional flag provided, continuing."
+                    logger,
+                    "DEBUG: Could not extract condition/then/else from ITE"
                 );
-            }
-
-            // List constraints and assert them to solver
-            add_constraints_from_vector(&executor);
-
-            // Minimize symbolic variables; for integer values prefer smallest signed magnitude
-            for symbolic_var in executor.function_symbolic_arguments.values() {
-                match symbolic_var {
-                    SymbolicVar::Int(bv_var) => {
-                        let signed_int = Int::from_bv(bv_var, true);
-                        // approximate |x| by minimizing x^2 to avoid missing abs()
-                        let squared = &signed_int * &signed_int;
-                        executor.solver.minimize(&squared);
-                    }
-                    SymbolicVar::Slice(slice) => {
-                        // Prefer smallest slice length first (lexicographic objective)
-                        executor.solver.minimize(&slice.length);
-
-                        // Heuristic domain constraints for slice length
-                        let len_int = Int::from_bv(&slice.length, false);
-                        executor.solver.minimize(&len_int);
-
-                        let zero = Int::from_i64(executor.context, 0);
-                        executor.solver.assert(&len_int.ge(&zero));
-
-                        let materialized = slice.elements.len() as i64;
-                        if materialized > 0 {
-                            let max_len = Int::from_i64(executor.context, materialized);
-                            executor.solver.assert(&len_int.le(&max_len));
-                        }
-
-                        // Then minimize each element magnitude
-                        for elem in &slice.elements {
-                            match elem {
-                                SymbolicVar::Int(bv_elem) => {
-                                    let signed_int = Int::from_bv(bv_elem, true);
-                                    // approximate |x| by minimizing x^2 to avoid missing abs()
-                                    let squared = &signed_int * &signed_int;
-                                    executor.solver.minimize(&squared);
-                                }
-                                SymbolicVar::Slice(slice_elem) => {
-                                    let len_int = Int::from_bv(&slice_elem.length, false);
-                                    executor.solver.minimize(&len_int);
-                                }
-                                _ => {
-                                    log!(
-                                        executor.state.logger,
-                                        "Skipping non-Int/non-Slice element during minimize"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    _ => {
-                        log!(
-                            executor.state.logger,
-                            "Skipping non-minimizable symbolic var"
-                        );
-                    }
-                }
-            }
-
-            match executor.solver.check(&[]) {
-                SatResult::Sat => {
-                    log!(executor.state.logger, "~~~~~~~~~~~");
-                    log!(
-                        executor.state.logger,
-                        "SATISFIABLE: Symbolic execution can lead to a panic function."
-                    );
-                    log!(executor.state.logger, "~~~~~~~~~~~");
-
-                    let model = executor.solver.get_model().unwrap();
-
-                    log!(
-                        executor.state.logger,
-                        "To enter a panic function, the following conditions must be satisfied:"
-                    );
-
-                    // Build unified evaluation content
-                    let evaluation_content = build_unified_evaluation_content(
-                        &model,
-                        executor,
-                        conditional_flag.as_ref(),
-                    );
-
-                    // Log to terminal using the same structure
-                    for line in evaluation_content.lines() {
-                        log!(executor.state.logger, "{}", line);
-                    }
-
-                    // Write to file
-                    let elapsed = START_INSTANT.get().map(|s| s.elapsed());
-                    if let Err(e) = write_sat_state_to_file(
-                        &evaluation_content,
-                        &mode,
-                        panic_addr,
-                        elapsed,
-                        instruction_addr,
-                    ) {
-                        log!(
-                            executor.state.logger,
-                            "WARNING: Failed to write SAT state to file: {}",
-                            e
-                        );
-                    }
-
-                    log!(executor.state.logger, "~~~~~~~~~~~");
-                }
-                SatResult::Unsat => {
-                    log!(executor.state.logger, "~~~~~~~~~~~");
-                    log!(
-                        executor.state.logger,
-                        "Branch to panic is UNSAT => no input can make that branch lead to panic"
-                    );
-                    log!(executor.state.logger, "~~~~~~~~~~~");
-                }
-                SatResult::Unknown => {
-                    log!(executor.state.logger, "Solver => Unknown feasibility");
-                }
-            }
-
-            executor.solver.pop();
-        } else {
-            log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
-        }
-    } else if mode == "start" || mode == "main" {
-        let binary_path = {
-            let target_info = GLOBAL_TARGET_INFO.lock().unwrap();
-            target_info.binary_path.clone()
-        };
-
-        // 1) Push the solver context.
-        executor.solver.push();
-
-        // 2) Process the branch condition.
-        let cond_varnode = &inst.inputs[1];
-        let cond_concolic = executor
-            .varnode_to_concolic(cond_varnode)
-            .map_err(|e| e.to_string())
-            .unwrap()
-            .to_concolic_var()
-            .unwrap();
-        let cond_bv = cond_concolic.symbolic.to_bv(executor.context);
-
-        // List constraints and assert them to solver
-        add_constraints_from_vector(&executor);
-
-        // Minimize only slice lengths to prefer smaller witnesses (no other variable objectives)
-        for symbolic_var in executor.function_symbolic_arguments.values() {
-            if let SymbolicVar::Slice(slice) = symbolic_var {
-                let len_int = Int::from_bv(&slice.length, false);
-                executor.solver.minimize(&len_int);
-            }
-        }
-
-        // Optionally enforce ASCII profiles for argv bytes (off by default)
-        if let Ok(profile) = std::env::var("ARG_ASCII_PROFILE") {
-            let prof = profile.to_lowercase();
-            if prof == "printable" || prof == "digits" || prof == "auto" {
-                let _ = add_ascii_constraints_for_args(executor, &binary_path);
-            }
-        }
-
-        // We are exploring the negated path: assert the opposite of the observed flag
-        let observed_flag = cond_concolic.concrete.to_u64();
-        // Convert the BV flag to a Bool like in function mode and assert/negate accordingly
-        let branch_bool = crate::state::simplify_z3::bv_to_bool_smart(&cond_bv);
-        let condition = if observed_flag == 0 {
-            branch_bool
-        } else {
-            branch_bool.not()
-        };
-        let simplified = condition.simplify();
-        log!(
-            executor.state.logger,
-            "Asserting branch condition to the solver: {:?}",
-            simplified
-        );
-        log!(
-            executor.state.logger,
-            "Simplified branch condition: {:?}",
-            simplified
-        );
-        executor.solver.assert(&simplified);
-
-        // 4) check feasibility
-        match executor.solver.check(&[]) {
-            z3::SatResult::Sat => {
-                log!(executor.state.logger, "~~~~~~~~~~~");
                 log!(
-                    executor.state.logger,
-                    "SATISFIABLE: Symbolic execution can lead to a panic function."
+                    logger,
+                    "DEBUG: children[0] as_bool: {:?}",
+                    children[0].as_bool().is_some()
                 );
-                log!(executor.state.logger, "~~~~~~~~~~~");
-
-                let model = executor.solver.get_model().unwrap();
-
-                // Build unified evaluation content
-                let evaluation_content =
-                    build_unified_evaluation_content(&model, executor, conditional_flag.as_ref());
-
-                // Log to terminal using the same structure
-                for line in evaluation_content.lines() {
-                    log!(executor.state.logger, "{}", line);
-                }
-
-                // Write to file
-                let elapsed = START_INSTANT.get().map(|s| s.elapsed());
-                if let Err(e) = write_sat_state_to_file(
-                    &evaluation_content,
-                    &mode,
-                    branch_target_addr,
-                    elapsed,
-                    instruction_addr,
-                ) {
-                    log!(
-                        executor.state.logger,
-                        "WARNING: Failed to write SAT state to file: {}",
-                        e
-                    );
-                }
-
-                log!(executor.state.logger, "~~~~~~~~~~~");
-            }
-
-            z3::SatResult::Unsat => {
-                log!(executor.state.logger, "~~~~~~~~~~~");
                 log!(
-                    executor.state.logger,
-                    "Branch to panic is UNSAT => no input can make that branch lead to panic"
+                    logger,
+                    "DEBUG: children[1] as_bv: {:?}",
+                    children[1].as_bv().is_some()
                 );
-                log!(executor.state.logger, "~~~~~~~~~~~");
+                log!(
+                    logger,
+                    "DEBUG: children[2] as_bv: {:?}",
+                    children[2].as_bv().is_some()
+                );
             }
-            z3::SatResult::Unknown => {
-                log!(executor.state.logger, "Solver => Unknown feasibility");
-            }
+        } else {
+            log!(
+                logger,
+                "DEBUG: ITE doesn't have 3 children, has: {}",
+                children.len()
+            );
         }
-        // 6) pop the solver context
-        executor.solver.pop();
     } else {
-        log!(
-            executor.state.logger,
-            "Unsupported mode for evaluating arguments: {}",
-            mode
-        );
+        log!(logger, "DEBUG: Not an ITE expression");
     }
-    Ok(())
+
+    // Case 2: Handle direct equality comparisons
+    if is_eq(flag_bv) {
+        let children = flag_bv.children();
+        if children.len() == 2 {
+            if let (Some(left), Some(right)) = (children[0].as_bv(), children[1].as_bv()) {
+                // Check if one side is a constant zero
+                if let Some(const_val) = get_constant_bv_value(&right) {
+                    if const_val == 0 {
+                        // Pattern: (= variable #x00)
+                        return if branch_taken {
+                            // Branch taken: equality was true, so variable == 0
+                            left._eq(&right)
+                        } else {
+                            // Branch not taken: equality was false, so variable != 0
+                            left._eq(&right).not()
+                        };
+                    }
+                }
+                if let Some(const_val) = get_constant_bv_value(&left) {
+                    if const_val == 0 {
+                        // Pattern: (#x00 = variable)
+                        return if branch_taken {
+                            // Branch taken: equality was true, so variable == 0
+                            right._eq(&left)
+                        } else {
+                            // Branch not taken: equality was false, so variable != 0
+                            right._eq(&left).not()
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    // Case 3: Fallback - use smart BV to Bool conversion
+    log!(logger, "DEBUG: Using fallback conversion for flag_bv");
+    let condition = bv_to_bool_smart(flag_bv);
+
+    if branch_taken {
+        condition
+    } else {
+        condition.not()
+    }
 }
 
-// Function to get the address of the os.Args slice in the target binary
-pub fn get_os_args_address(binary_path: &str) -> Result<u64, Box<dyn Error>> {
-    let output = Command::new("objdump")
-        .arg("-t")
-        .arg(binary_path)
-        .output()?;
+/// Convert a Bool to BV while preserving symbolic information
+pub fn bool_to_bv_smart<'ctx>(bool_expr: &Bool<'ctx>, target_size: u32) -> BV<'ctx> {
+    let ctx = bool_expr.get_ctx();
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("objdump failed: {}", stderr).into());
-    }
+    // For boolean expressions, use ite to preserve symbolic information
+    let one = BV::from_u64(ctx, 1, target_size);
+    let zero = BV::from_u64(ctx, 0, target_size);
+    bool_expr.ite(&one, &zero)
+}
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+/// Simplify a BV condition by extracting the underlying boolean condition
+pub fn simplify_bv_condition<'ctx>(bv: &BV<'ctx>) -> Dynamic<'ctx> {
+    // Use the same simplification technique as your existing code
+    if is_ite(bv) && is_eq(bv) {
+        let children = bv.children();
+        if children.len() == 2 {
+            let left = &children[0];
+            let right = &children[1];
 
-    // Example line we might see:
-    // 0000000000236e68 l     O .bss   0000000000000018 os.Args
-    for line in stdout.lines() {
-        if line.contains("os.Args") {
-            // The first token is the address in hex, like "0000000000236e68"
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if !parts.is_empty() {
-                let addr_hex = parts[0];
-                // Convert from hex string to u64
-                let addr = u64::from_str_radix(addr_hex, 16)?;
-                return Ok(addr);
+            if is_ite(left) && is_bnum(right) {
+                // Transform ITE(cond, t, f) == r into ITE(cond, t == r, f == r)
+                let ite_children = left.children();
+                if ite_children.len() == 3 {
+                    if let Some(cond) = ite_children[0].as_bool() {
+                        let val_true = &ite_children[1];
+                        let val_false = &ite_children[2];
+
+                        let new_val_true = val_true._eq(right).simplify();
+                        let new_val_false = val_false._eq(right).simplify();
+
+                        return cond.ite(&new_val_true, &new_val_false).into();
+                    }
+                }
             }
         }
     }
-    Err("Could not find os.Args in objdump output".into())
+
+    // No simplification possible, return as-is
+    bv.clone().into()
+}
+
+/// Displays constraints and simplifies them with Z3 and custom simplifier
+pub fn add_constraints_from_vector<'ctx>(executor: &ConcolicExecutor<'ctx>) {
+    let logger = &mut executor.state.logger.clone();
+    log!(logger, "=== CONSTRAINT ANALYSIS ===");
+
+    let assertions = executor.constraint_vector.clone();
+
+    //log!(logger, "=== Z3 SIMPLIFIED CONSTRAINTS ===");
+    // Display and collect Z3 simplified constraints
+    let mut z3_simplified_constraints = Vec::new();
+    for (_i, constraint) in assertions.iter().enumerate() {
+        let z3_simplified = constraint.simplify();
+        // log!(
+        //     logger,
+        //     "Constraint #{} (Bool) Simplified with Z3: {:?}",
+        //     i + 1,
+        //     z3_simplified
+        // );
+        z3_simplified_constraints.push(z3_simplified);
+    }
+
+    log!(logger, "=== CUSTOM SIMPLIFIED CONSTRAINTS ===");
+    // Display and collect custom simplified constraints
+    let mut custom_simplified_constraints = Vec::new();
+    for (i, z3_simplified) in z3_simplified_constraints.iter().enumerate() {
+        let custom_simplified = simplify_dynamic(&Dynamic::from(z3_simplified));
+        log!(
+            logger,
+            "Constraint #{} (Bool) with Custom Simplification: {}",
+            i + 1,
+            custom_simplified
+        );
+
+        // Try to use the simplified Bool directly
+        match custom_simplified.as_bool() {
+            Some(bool_constraint) => {
+                custom_simplified_constraints.push(bool_constraint);
+            }
+            None => {
+                log!(
+                    logger,
+                    "WARNING: Cannot convert constraint #{} to Bool, using original",
+                    i + 1
+                );
+                // Try to convert Dynamic to Bool, fallback to panic if not possible
+                match custom_simplified.as_bool() {
+                    Some(bool_constraint) => {
+                        custom_simplified_constraints.push(bool_constraint);
+                    }
+                    None => {
+                        panic!(
+                            "Constraint #{} could not be converted to Bool for solver assertion.",
+                            i + 1
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    log!(logger, "=== ASSERTING SIMPLIFIED CONSTRAINTS TO SOLVER ===");
+
+    // Assert the custom simplified constraints to the solver
+    log!(
+        logger,
+        "Adding {} simplified constraints to solver...",
+        custom_simplified_constraints.len()
+    );
+    for simplified_constraint in custom_simplified_constraints.iter() {
+        executor.solver.assert(simplified_constraint);
+    }
+
+    log!(logger, "=== END CONSTRAINT ANALYSIS ===");
+}
+
+#[cfg(test)]
+mod tests {
+    use z3::{Config, Context};
+
+    use super::*;
+
+    #[test]
+    fn test_simplify_constraint() {
+        let cfg = Config::new();
+        let ctx = Context::new(&cfg);
+        let bit_0 = BV::from_u64(&ctx, 0, 1);
+        let bit_1 = BV::from_u64(&ctx, 1, 1);
+        let u8_0 = BV::from_u64(&ctx, 0, 8);
+        let u8_1 = BV::from_u64(&ctx, 1, 8);
+        let u64_0 = BV::from_u64(&ctx, 0, 64);
+        let x = BV::new_const(&ctx, "x", 64);
+
+        // Test simplifying (ite (= (ite (= indices_len_R9!259 #x0000000000000000) #x01 #x00) #x00) #b1 #b0)
+        let expr = x
+            ._eq(&u64_0)
+            .ite(&u8_1, &u8_0)
+            ._eq(&u8_0)
+            .ite(&bit_1, &bit_0);
+        println!("expr: {expr}");
+        assert_eq!(
+            expr.to_string(),
+            "(ite (= (ite (= x #x0000000000000000) #x01 #x00) #x00) #b1 #b0)"
+        );
+
+        let expr_simpl = expr.simplify();
+        println!("simplified: {expr_simpl}");
+        assert_eq!(expr.to_string(), expr_simpl.to_string()); // No change
+
+        let expr_simpl = simplify_dynamic(&expr.clone().into()).as_bv().unwrap();
+        println!("simplified2: {expr_simpl}");
+        assert_eq!(
+            expr_simpl.to_string(),
+            "(ite (not (= x #x0000000000000000)) #b1 #b0)"
+        );
+
+        // Prove expr == expr_simpl
+        let solver = Solver::new(&ctx);
+        solver.assert(&expr._eq(&expr_simpl).not());
+        assert_eq!(solver.check(), SatResult::Unsat);
+
+        // Use simplify_dynamic_proven directly
+        let expr_simpl2 = simplify_dynamic_proven(&expr.clone().into())
+            .as_bv()
+            .unwrap();
+        assert_eq!(expr_simpl, expr_simpl2);
+    }
 }
