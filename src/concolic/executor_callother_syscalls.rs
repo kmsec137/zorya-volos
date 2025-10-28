@@ -1294,34 +1294,94 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             );
 
             match code {
-                // Constants assumed to be defined. Replace placeholders with actual values.
+                // Constants per Linux arch_prctl for x86_64
                 arch::ARCH_SET_FS => {
                     log!(executor.state.logger, "Setting FS base to {:#x}", addr);
-                    // Perform the operation to set FS base
+                    // Set FS base from RSI
                     cpu_state_guard.set_register_value_by_offset(0x110, addr_concolic, 64)?;
-                    addr
+                    // Return 0 in RAX for success
+                    cpu_state_guard.set_register_value_by_offset(
+                        rax_offset,
+                        ConcolicVar::new_concrete_and_symbolic_int(
+                            0,
+                            SymbolicVar::new_int(0, executor.context, 64).to_bv(executor.context),
+                            executor.context,
+                        ),
+                        64,
+                    )?;
                 }
                 arch::ARCH_GET_FS => {
-                    log!(executor.state.logger, "Getting FS base");
-                    // Store the FS base at the address provided in `addr`
-                    cpu_state_guard
+                    log!(
+                        executor.state.logger,
+                        "Getting FS base to memory at 0x{:x}",
+                        addr
+                    );
+                    // Read FS base and write it back to the user pointer (RSI)
+                    let fs_val = cpu_state_guard
                         .get_register_by_offset(0x110, 64)
-                        .unwrap()
-                        .get_concrete_value()?
+                        .ok_or("Failed to read FS base register")?;
+                    let fs_conc = fs_val.get_concrete_value().map_err(|e| e.to_string())?;
+                    let fs_sym = fs_val.symbolic.to_bv(executor.context);
+                    let mem_value = MemoryValue::new(fs_conc, fs_sym, 64);
+                    executor
+                        .state
+                        .memory
+                        .write_value(addr, &mem_value)
+                        .map_err(|e| format!("Failed to write FS base to memory: {:?}", e))?;
+                    // Return 0 in RAX for success
+                    cpu_state_guard.set_register_value_by_offset(
+                        rax_offset,
+                        ConcolicVar::new_concrete_and_symbolic_int(
+                            0,
+                            SymbolicVar::new_int(0, executor.context, 64).to_bv(executor.context),
+                            executor.context,
+                        ),
+                        64,
+                    )?;
                 }
                 arch::ARCH_SET_GS => {
                     log!(executor.state.logger, "Setting GS base to {:#x}", addr);
-                    // Perform the operation to set GS base
-                    cpu_state_guard
-                        .get_register_by_offset(0x118, 64)
-                        .unwrap()
-                        .get_concrete_value()?
+                    // Set GS base from RSI
+                    cpu_state_guard.set_register_value_by_offset(0x118, addr_concolic, 64)?;
+                    // Return 0 in RAX for success
+                    cpu_state_guard.set_register_value_by_offset(
+                        rax_offset,
+                        ConcolicVar::new_concrete_and_symbolic_int(
+                            0,
+                            SymbolicVar::new_int(0, executor.context, 64).to_bv(executor.context),
+                            executor.context,
+                        ),
+                        64,
+                    )?;
                 }
                 arch::ARCH_GET_GS => {
-                    log!(executor.state.logger, "Getting GS base");
-                    // Store the GS base at the address provided in `addr`
-                    cpu_state_guard.set_register_value_by_offset(0x118, addr_concolic, 64)?;
-                    addr
+                    log!(
+                        executor.state.logger,
+                        "Getting GS base to memory at 0x{:x}",
+                        addr
+                    );
+                    // Read GS base and write it back to the user pointer (RSI)
+                    let gs_val = cpu_state_guard
+                        .get_register_by_offset(0x118, 64)
+                        .ok_or("Failed to read GS base register")?;
+                    let gs_conc = gs_val.get_concrete_value().map_err(|e| e.to_string())?;
+                    let gs_sym = gs_val.symbolic.to_bv(executor.context);
+                    let mem_value = MemoryValue::new(gs_conc, gs_sym, 64);
+                    executor
+                        .state
+                        .memory
+                        .write_value(addr, &mem_value)
+                        .map_err(|e| format!("Failed to write GS base to memory: {:?}", e))?;
+                    // Return 0 in RAX for success
+                    cpu_state_guard.set_register_value_by_offset(
+                        rax_offset,
+                        ConcolicVar::new_concrete_and_symbolic_int(
+                            0,
+                            SymbolicVar::new_int(0, executor.context, 64).to_bv(executor.context),
+                            executor.context,
+                        ),
+                        64,
+                    )?;
                 }
                 _ => {
                     log!(
@@ -1331,7 +1391,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     );
                     return Err(format!("Unsupported arch-prctl code: {:#x}", code));
                 }
-            };
+            }
 
             drop(cpu_state_guard);
 

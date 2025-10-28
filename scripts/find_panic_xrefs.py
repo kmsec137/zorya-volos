@@ -50,7 +50,7 @@ def main():
         try:
             subprocess.run([
                 headless,
-                str(parent),            # project_location (parent directory)
+                str(project_dir),       # project_location (actual project directory)
                 project_name,           # project_name
                 "-import", str(bin_path),
                 "-overwrite",

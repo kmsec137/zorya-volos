@@ -371,33 +371,17 @@ fn count_ite_depth<'ctx>(expr: &impl Ast<'ctx>) -> usize {
     if !is_ite(expr) {
         return 0;
     }
-    
+
     let children = expr.children();
     if children.len() != 3 {
         return 1;
     }
-    
+
     let cond_depth = count_ite_depth(&children[0]);
     let then_depth = count_ite_depth(&children[1]);
     let else_depth = count_ite_depth(&children[2]);
-    
-    1 + cond_depth.max(then_depth).max(else_depth)
-}
 
-/// Count the total number of ITE nodes in an expression
-fn count_total_ites<'ctx>(expr: &impl Ast<'ctx>) -> usize {
-    let mut count = 0;
-    
-    if is_ite(expr) {
-        count += 1;
-    }
-    
-    let children = expr.children();
-    for child in children.iter() {
-        count += count_total_ites(&child);
-    }
-    
-    count
+    1 + cond_depth.max(then_depth).max(else_depth)
 }
 
 /// Break down a complex ITE into simpler constraints using Tseitin transformation
@@ -408,28 +392,28 @@ fn break_down_ite<'ctx>(
     aux_counter: &mut usize,
 ) -> (Vec<Bool<'ctx>>, Dynamic<'ctx>) {
     let mut aux_constraints = Vec::new();
-    
+
     // Check if this is a complex ITE that needs breaking down
     if !is_ite(expr) || count_ite_depth(expr) <= depth_threshold {
         return (aux_constraints, expr.clone());
     }
-    
+
     let children = expr.children();
     if children.len() != 3 {
         return (aux_constraints, expr.clone());
     }
-    
+
     let ctx = expr.get_ctx();
-    
+
     // Recursively break down children first
     let (cond_aux, cond_simplified) = break_down_ite(&children[0], depth_threshold, aux_counter);
     let (then_aux, then_simplified) = break_down_ite(&children[1], depth_threshold, aux_counter);
     let (else_aux, else_simplified) = break_down_ite(&children[2], depth_threshold, aux_counter);
-    
+
     aux_constraints.extend(cond_aux);
     aux_constraints.extend(then_aux);
     aux_constraints.extend(else_aux);
-    
+
     // Try to get the condition as Bool
     let cond_bool = if let Some(b) = cond_simplified.as_bool() {
         b
@@ -437,34 +421,36 @@ fn break_down_ite<'ctx>(
         // Can't break down further, return as-is
         return (aux_constraints, expr.clone());
     };
-    
+
     // Check if then and else branches are compatible
     if let (Some(then_bv), Some(else_bv)) = (then_simplified.as_bv(), else_simplified.as_bv()) {
         // Create auxiliary variable for the ITE result
         let aux_name = format!("ite_aux_{}", aux_counter);
         *aux_counter += 1;
-        
+
         let aux_var = BV::new_const(ctx, aux_name.as_str(), then_bv.get_size());
-        
+
         // Add implications: (cond => aux = then) ∧ (¬cond => aux = else)
         aux_constraints.push(cond_bool.implies(&aux_var._eq(&then_bv)));
         aux_constraints.push(cond_bool.not().implies(&aux_var._eq(&else_bv)));
-        
+
         return (aux_constraints, aux_var.into());
-    } else if let (Some(then_bool), Some(else_bool)) = (then_simplified.as_bool(), else_simplified.as_bool()) {
+    } else if let (Some(then_bool), Some(else_bool)) =
+        (then_simplified.as_bool(), else_simplified.as_bool())
+    {
         // Handle boolean ITEs
         let aux_name = format!("ite_aux_bool_{}", aux_counter);
         *aux_counter += 1;
-        
+
         let aux_var = Bool::new_const(ctx, aux_name.as_str());
-        
+
         // Add implications: (cond => aux = then) ∧ (¬cond => aux = else)
         aux_constraints.push(cond_bool.implies(&aux_var._eq(&then_bool)));
         aux_constraints.push(cond_bool.not().implies(&aux_var._eq(&else_bool)));
-        
+
         return (aux_constraints, aux_var.into());
     }
-    
+
     // Fallback: return the ITE with simplified children
     let result = cond_bool.ite(&then_simplified, &else_simplified);
     (aux_constraints, result)
@@ -495,30 +481,31 @@ pub fn add_constraints_from_vector<'ctx>(executor: &ConcolicExecutor<'ctx>) {
     // Display and collect custom simplified constraints
     let mut custom_simplified_constraints = Vec::new();
     let mut aux_counter = 0;
-    
+
     for (i, z3_simplified) in z3_simplified_constraints.iter().enumerate() {
         let custom_simplified = simplify_dynamic(&Dynamic::from(z3_simplified));
-        
+
         // Check ITE depth and break down if too complex
         let ite_depth = count_ite_depth(&custom_simplified);
-        if ite_depth > 1 {
+        if ite_depth > 2 {
             log!(
                 logger,
                 "Constraint #{} has ITE depth {}, breaking down...",
                 i + 1,
                 ite_depth
             );
-            
+
             // Break down the constraint
-            let (aux_constraints, simplified_result) = break_down_ite(&custom_simplified, 1, &mut aux_counter);
-            
+            let (aux_constraints, simplified_result) =
+                break_down_ite(&custom_simplified, 2, &mut aux_counter);
+
             log!(
                 logger,
                 "Constraint #{} (Bool) broken into {} auxiliary constraints",
                 i + 1,
                 aux_constraints.len()
             );
-            
+
             // Add auxiliary constraints
             for (j, aux_constraint) in aux_constraints.iter().enumerate() {
                 log!(
@@ -530,7 +517,7 @@ pub fn add_constraints_from_vector<'ctx>(executor: &ConcolicExecutor<'ctx>) {
                 );
                 custom_simplified_constraints.push(aux_constraint.clone());
             }
-            
+
             // Add the main simplified constraint
             if let Some(bool_constraint) = simplified_result.as_bool() {
                 log!(
