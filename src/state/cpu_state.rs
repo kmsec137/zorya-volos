@@ -428,6 +428,7 @@ impl<'ctx> CpuState<'ctx> {
     fn parse_and_update_cpu_state_from_gdb_output(&mut self, gdb_output: &str) -> Result<()> {
         let re_general = Regex::new(r"^\s*(\w+)\s+0x([\da-f]+)").unwrap();
         let re_flags = Regex::new(r"^\s*eflags\s+0x[0-9a-f]+\s+\[(.*?)\]").unwrap();
+        let re_zmm = Regex::new(r"^\s*zmm(\d+)\s+\{.*v8_int64\s*=\s*\{([^}]*)\}").unwrap();
 
         // Display current state of flag registrations for debugging
         //println!("Flag Registrations:");
@@ -510,6 +511,55 @@ impl<'ctx> CpuState<'ctx> {
                         );
                     } else {
                         println!("Flag {} not found in register_map", flag);
+                    }
+                }
+            }
+        }
+
+        // Parse ZMM registers: map low 256-bits into our YMMn registers (4 x 64-bit lanes)
+        for line in gdb_output.lines() {
+            if let Some(caps) = re_zmm.captures(line) {
+                let idx_str = caps.get(1).unwrap().as_str();
+                let lanes_str = caps.get(2).unwrap().as_str();
+                let idx: usize = idx_str.parse().unwrap_or(0);
+                if idx > 15 {
+                    // We currently model YMM0..YMM15 only; skip higher ZMM indices
+                    continue;
+                }
+
+                // Parse v8_int64 list, take the lowest 4 lanes as low 256-bits
+                let mut parsed: Vec<u64> = Vec::new();
+                for part in lanes_str.split(',') {
+                    let s = part.trim();
+                    // Accept hex like 0x..., else decimal
+                    let val = if let Some(hex) = s.strip_prefix("0x") {
+                        u64::from_str_radix(hex, 16).unwrap_or(0)
+                    } else {
+                        s.parse::<u64>().unwrap_or(0)
+                    };
+                    parsed.push(val);
+                }
+                if parsed.len() < 4 {
+                    continue;
+                }
+
+                // Compute YMM base offset from register map
+                let ymm_name = format!("YMM{}", idx);
+                if let Some(base_off) = self.resolve_offset_from_register_name(&ymm_name) {
+                    for lane in 0..4 {
+                        let lane_val = parsed[lane]; // low to high, 64-bit chunks
+                        let lane_offset = base_off + (lane as u64) * 8;
+                        let value_symbolic = BV::from_u64(&self.ctx, lane_val, 64);
+                        let value_concolic = ConcolicVar::new_concrete_and_symbolic_int(
+                            lane_val,
+                            value_symbolic,
+                            &self.ctx,
+                        );
+                        // Write 64-bit lane into the 256-bit YMM register
+                        self.set_register_value_by_offset(lane_offset, value_concolic, 64)
+                            .map_err(|e| {
+                                anyhow!("Failed to set {} lane {}: {}", ymm_name, lane, e)
+                            })?;
                     }
                 }
             }

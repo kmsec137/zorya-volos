@@ -739,35 +739,79 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     fn extract_and_create_concolic_value(
         &self,
         cpu_state_guard: &MutexGuard<'_, CpuState<'ctx>>,
-        offset: u64,
+        original_offset: u64,
         bit_size: u32,
     ) -> Result<ConcolicEnum<'ctx>, String> {
-        let closest_register = cpu_state_guard
-            .register_map
-            .range(..=offset)
-            .rev()
-            .next()
-            .ok_or(format!("No register found before offset 0x{:x}", offset))?;
-        let (base_register_offset, &(_, register_size)) = closest_register;
+        // Normalize certain SIMD varnode offsets (XMM/YMM) using dynamic info from the register map.
+        // Some pcode streams use a stride equal to 2x the modeled YMM size (e.g., 64B) per register row.
+        // We detect the YMM series and map the offset into the modeled row without relying on fixed constants.
+        let offset = {
+            // Collect YMM registers and their offsets/sizes
+            let mut ymm_entries: Vec<(u64, u32)> = cpu_state_guard
+                .register_map
+                .iter()
+                .filter_map(|(off, (name, sz))| {
+                    if name.starts_with("YMM") {
+                        Some((*off, *sz))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            ymm_entries.sort_by_key(|(off, _)| *off);
+
+            if let Some((base_off, base_sz_bits)) = ymm_entries.first().cloned() {
+                let reg_size_bytes = (base_sz_bits as u64) / 8; // expected YMM size in bytes
+                let count = ymm_entries.len() as u64;
+                if reg_size_bytes > 0 {
+                    let alt_stride = reg_size_bytes * 2; // common pcode stride for XMM/YMM rows
+                    let total_alt_span = alt_stride * count;
+                    if original_offset >= base_off && original_offset < base_off + total_alt_span {
+                        let delta = original_offset - base_off;
+                        let reg_idx = delta / alt_stride;
+                        let lane_off = delta % alt_stride;
+                        let low_lane_bytes = std::cmp::min(16u64, reg_size_bytes / 2); // XMM lower lane
+                        base_off + reg_idx * reg_size_bytes + (lane_off % low_lane_bytes)
+                    } else {
+                        original_offset
+                    }
+                } else {
+                    original_offset
+                }
+            } else {
+                original_offset
+            }
+        };
+
+        // Find a register that CONTAINS the requested [offset, offset+bit_size) range
+        let mut containing: Option<(u64, u32)> = None;
+        for (base, &(_, size_bits)) in cpu_state_guard.register_map.iter() {
+            let size_bytes = (size_bits as u64) / 8;
+            if offset >= *base && (offset + (bit_size as u64 + 7) / 8) <= (*base + size_bytes) {
+                if let Some((best_base, _)) = containing {
+                    if *base > best_base {
+                        containing = Some((*base, size_bits));
+                    }
+                } else {
+                    containing = Some((*base, size_bits));
+                }
+            }
+        }
+
+        let (base_register_offset, register_size) = containing
+            .ok_or_else(|| format!("No containing register found for offset 0x{:x}", offset))?;
+
         log!(
             self.state.logger.clone(),
-            "Closest register found at offset 0x{:x} with size {}",
+            "Containing register found at offset 0x{:x} with size {}",
             base_register_offset,
             register_size
         );
 
         let bit_offset = (offset - base_register_offset) * 8; // Calculate the bit offset within the register
 
-        if bit_offset + u64::from(bit_size) > u64::from(register_size) {
-            return Err(format!(
-                "Attempted to extract beyond the register's limit at offset 0x{:x}. Total bits requested: {}",
-                offset,
-                bit_offset + u64::from(bit_size)
-            ));
-        }
-
         let original_register = cpu_state_guard
-            .get_register_by_offset(*base_register_offset, register_size)
+            .get_register_by_offset(base_register_offset, register_size)
             .ok_or_else(|| {
                 format!(
                     "Failed to retrieve register for extraction at offset 0x{:x}",
@@ -859,23 +903,64 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     log!(self.state.logger.clone(), "Output is a Register type");
                     let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
 
+                    // Normalize SIMD register offsets (XMM/YMM) dynamically using the register map
+                    let write_offset = {
+                        // Collect YMM registers and offsets/sizes
+                        let mut ymm_entries: Vec<(u64, u32)> = cpu_state_guard
+                            .register_map
+                            .iter()
+                            .filter_map(|(off, (name, sz))| {
+                                if name.starts_with("YMM") {
+                                    Some((*off, *sz))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        ymm_entries.sort_by_key(|(off, _)| *off);
+
+                        if let Some((base_off, base_sz_bits)) = ymm_entries.first().cloned() {
+                            let reg_size_bytes = (base_sz_bits as u64) / 8;
+                            let count = ymm_entries.len() as u64;
+                            if reg_size_bytes > 0 {
+                                let alt_stride = reg_size_bytes * 2; // common pcode stride
+                                let total_alt_span = alt_stride * count;
+                                if *offset >= base_off && *offset < base_off + total_alt_span {
+                                    let delta = *offset - base_off;
+                                    let reg_idx = delta / alt_stride;
+                                    let lane_off = delta % alt_stride;
+                                    let low_lane_bytes = std::cmp::min(16u64, reg_size_bytes / 2);
+                                    base_off
+                                        + reg_idx * reg_size_bytes
+                                        + (lane_off % low_lane_bytes)
+                                } else {
+                                    *offset
+                                }
+                            } else {
+                                *offset
+                            }
+                        } else {
+                            *offset
+                        }
+                    };
+
                     match cpu_state_guard.set_register_value_by_offset(
-                        *offset,
+                        write_offset,
                         result_value.clone(),
                         bit_size,
                     ) {
                         Ok(_) => {
                             // check
                             let register = cpu_state_guard
-                                .get_register_by_offset(*offset, bit_size)
+                                .get_register_by_offset(write_offset, bit_size)
                                 .unwrap();
-                            log!(self.state.logger.clone(), "Updated register at offset 0x{:x} with concrete value 0x{:x}, concrete size {} bits and symbolic size {:?} bits", offset, register.concrete.to_u64(), bit_size, register.symbolic.get_size());
+                            log!(self.state.logger.clone(), "Updated register at offset 0x{:x} with concrete value 0x{:x}, concrete size {} bits and symbolic size {:?} bits", write_offset, register.concrete.to_u64(), bit_size, register.symbolic.get_size());
                             Ok(())
                         }
                         Err(e) => {
                             let error_msg = format!(
                                 "Failed to update register at offset 0x{:x}: {}",
-                                offset, e
+                                write_offset, e
                             );
                             log!(self.state.logger.clone(), "{}", error_msg);
                             Err(error_msg)
@@ -2814,29 +2899,46 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             .size
             .to_bitvector_size() as u32;
 
-        let result_concrete = input_var.get_concrete_value().count_ones();
+        // Use the input operand width for correctness (e.g., popcount after AND 0xff)
+        let input_size_bits = instruction.inputs[0].size.to_bitvector_size() as u32;
+
+        // Concrete popcount respecting the input bit width
+        let mask = if input_size_bits >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << input_size_bits) - 1
+        };
+        let result_concrete = (input_var.get_concrete_value() & mask).count_ones();
 
         let symbolic_input = input_var.to_concolic_var().unwrap().symbolic;
         let result_symbolic = match symbolic_input {
             SymbolicVar::Int(bv) => {
-                if bv.get_size() <= 8 {
-                    // Naively popcount 8-bit symbolic by summing extracted bits
-                    let mut bits = vec![];
-                    for i in 0..bv.get_size() {
-                        let b = bv.extract(i, i).zero_ext(output_size_bits); // Fixed: extract(i, i)
-                        bits.push(b);
-                    }
-                    let mut sum = bits[0].clone();
-                    for b in bits.iter().skip(1) {
-                        sum = sum.bvadd(b);
-                    }
-                    sum.extract(output_size_bits - 1, 0)
+                // Exact popcount over the input width; cap very large widths for solver sanity
+                let width = bv.get_size().min(input_size_bits).min(256);
+                let sum_width = std::cmp::max(1u32, std::cmp::min(width, 64));
+                let mut sum = BV::from_u64(self.context, 0, sum_width);
+                for i in 0..width {
+                    let bit1 = bv.extract(i, i);
+                    // zero_ext expects the number of bits to add, not the target size
+                    let bit = if sum_width > 1 {
+                        bit1.zero_ext(sum_width - 1)
+                    } else {
+                        bit1
+                    };
+                    sum = sum.bvadd(&bit);
+                }
+                // Fit to the declared output width (ensure valid width >=1)
+                let out_w = if output_size_bits == 0 {
+                    1
                 } else {
-                    log!(
-                        self.state.logger.clone(),
-                        "Warning: POPCOUNT symbolic input too large, approximating to 0"
-                    );
-                    BV::from_u64(self.context, 0, output_size_bits)
+                    output_size_bits
+                };
+                if sum.get_size() > out_w {
+                    sum.extract(out_w - 1, 0)
+                } else if sum.get_size() < out_w {
+                    sum.zero_ext(out_w - sum.get_size())
+                } else {
+                    sum
                 }
             }
             _ => {
