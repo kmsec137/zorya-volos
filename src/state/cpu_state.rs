@@ -317,9 +317,9 @@ impl<'ctx> CpuState<'ctx> {
             ("YMM13", "0x13a0", "256"),
             ("YMM14", "0x13c0", "256"),
             ("YMM15", "0x13e0", "256"),
-            // Temporary SIMD Registers (for intermediate calculations etc.)
-            ("xmmTmp1", "0x1400", "128"),
-            ("xmmTmp2", "0x1410", "128"),
+            // Temporary SIMD Registers (for intermediate calculations etc.) - from ia.sinc offset 0x1180
+            ("xmmTmp1", "0x1180", "128"),
+            ("xmmTmp2", "0x1190", "128"),
         ];
 
         for &(name, offset_hex, size_str) in register_definitions.iter() {
@@ -329,7 +329,11 @@ impl<'ctx> CpuState<'ctx> {
                 .parse::<u32>()
                 .map_err(|e| anyhow!("Error parsing size for {}: {}", name, e))?;
 
-            if !self.is_valid_register_offset(name, offset) {
+            // Skip validation for temporary registers (e.g., xmmTmp1, xmmTmp2)
+            // These are used by p-code but may not be in the SLEIGH spec
+            let is_temp_register = name.contains("Tmp") || name.contains("tmp");
+            
+            if !is_temp_register && !self.is_valid_register_offset(name, offset) {
                 return Err(anyhow!(
                     "Invalid register offset 0x{:X} for {}",
                     offset,
@@ -578,6 +582,67 @@ impl<'ctx> CpuState<'ctx> {
             .unwrap()
     }
 
+    /// Maps XMM register offsets to YMM register offsets dynamically
+    /// XMM registers (128-bit) are the lower half of YMM registers (256-bit)
+    fn map_xmm_to_ymm_offset(&self, offset: u64, access_size: u32) -> u64 {
+        // Only attempt mapping if this looks like a 128-bit XMM access
+        if access_size != 128 {
+            return offset;
+        }
+
+        // Collect all YMM registers and their offsets
+        let mut ymm_registers: Vec<(u64, &String, u32)> = self
+            .register_map
+            .iter()
+            .filter(|(_, (name, size))| name.starts_with("YMM") && *size == 256)
+            .map(|(off, (name, size))| (*off, name, *size))
+            .collect();
+
+        if ymm_registers.is_empty() {
+            return offset; // No YMM registers defined, no mapping possible
+        }
+
+        ymm_registers.sort_by_key(|(off, _, _)| *off);
+
+        // Determine the YMM stride (spacing between YMM registers)
+        let ymm_stride = if ymm_registers.len() >= 2 {
+            ymm_registers[1].0 - ymm_registers[0].0
+        } else {
+            return offset; // Can't determine stride with only one register
+        };
+
+        let ymm_base = ymm_registers[0].0;
+        
+        // Check if offset could be an XMM access based on common strides
+        // Common strides: 0x40 (64 bytes, Ghidra default), 0x20 (32 bytes, compact)
+        for xmm_stride in &[0x40u64, 0x20u64, 0x80u64] {
+            // Calculate potential XMM base offset
+            // XMM might start at same base as YMM, or might be offset
+            for base_offset in &[ymm_base, ymm_base.saturating_sub(0x80)] {
+                if offset < *base_offset {
+                    continue;
+                }
+                
+                let delta = offset - base_offset;
+                
+                // Check if this offset aligns with the XMM stride
+                if delta % xmm_stride == 0 {
+                    let reg_index = delta / xmm_stride;
+                    
+                    // Calculate corresponding YMM offset
+                    let ymm_offset = ymm_base + (reg_index * ymm_stride);
+                    
+                    // Verify this YMM offset exists in our register map
+                    if self.register_map.contains_key(&ymm_offset) {
+                        return ymm_offset;
+                    }
+                }
+            }
+        }
+
+        offset // No mapping found, return original offset
+    }
+
     /// Sets the value of a register based on its offset
     pub fn set_register_value_by_offset(
         &mut self,
@@ -585,14 +650,18 @@ impl<'ctx> CpuState<'ctx> {
         new_value: ConcolicVar<'ctx>,
         new_size: u32,
     ) -> Result<(), String> {
-        // Find the register that contains the offset
+        // Dynamically map XMM offsets to YMM offsets based on register_map
+        // XMM registers are 128-bit and map to the lower 128 bits of YMM registers
+        let mapped_offset = self.map_xmm_to_ymm_offset(offset, new_size);
+        
+        // Find the register that contains the mapped offset
         for (&reg_offset, reg) in self.registers.iter_mut() {
             let reg_size_bits = reg.symbolic.get_size() as u64;
             let reg_size_bytes = reg_size_bits / 8;
-            if offset >= reg_offset
-                && (offset + (new_size as u64 / 8)) <= (reg_offset + reg_size_bytes)
+            if mapped_offset >= reg_offset
+                && (mapped_offset + (new_size as u64 / 8)) <= (reg_offset + reg_size_bytes)
             {
-                let offset_within_reg = offset - reg_offset;
+                let offset_within_reg = mapped_offset - reg_offset;
                 let bit_offset = offset_within_reg * 8; // Convert byte offset to bit offset within the register
                 let full_reg_size = reg_size_bits; // Full size of the register in bits
 
@@ -809,14 +878,17 @@ impl<'ctx> CpuState<'ctx> {
         offset: u64,
         access_size: u32,
     ) -> Option<CpuConcolicValue<'ctx>> {
+        // Map XMM offsets to YMM offsets dynamically
+        let mapped_offset = self.map_xmm_to_ymm_offset(offset, access_size);
+        
         // Iterate over all registers to find one that spans the requested offset
         for (&base_offset, reg) in &self.registers {
             let reg_size_bits = reg.symbolic.get_size(); // Size of the register in bits
             let reg_size_bytes = reg_size_bits as u64 / 8; // Size of the register in bytes
 
-            // Check if the offset is within the range of this register
-            if offset >= base_offset && offset < base_offset + reg_size_bytes {
-                let byte_offset = offset - base_offset; // Offset within the register in bytes
+            // Check if the mapped offset is within the range of this register
+            if mapped_offset >= base_offset && mapped_offset < base_offset + reg_size_bytes {
+                let byte_offset = mapped_offset - base_offset; // Offset within the register in bytes
                 let bit_offset = byte_offset * 8; // Offset within the register in bits
                 let effective_access_size = access_size.min(reg_size_bits - bit_offset as u32); // Effective bits to access
 

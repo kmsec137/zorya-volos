@@ -70,7 +70,7 @@ def main():
     from ghidra.util.task import ConsoleTaskMonitor
 
     # Try to open the binary, handle lock errors by recreating the project
-    max_retries = 2
+    max_retries = 3
     import time
     
     for attempt in range(max_retries):
@@ -161,17 +161,23 @@ def main():
             
         except Exception as e:
             error_msg = str(e)
+            error_type = type(e).__name__
+            error_repr = repr(e)
             # Check if it's a lock error or project not found error
+            # Check both the error message and the exception type/repr
             if ("LockException" in error_msg or "Unable to lock project" in error_msg or 
-                "NotFoundException" in error_msg or "Project marker file not found" in error_msg):
-                print(f"[WARN] Project issue detected: {type(e).__name__} (attempt {attempt + 1}/{max_retries})")
+                "NotFoundException" in error_msg or "Project marker file not found" in error_msg or
+                "LockException" in error_type or "NotFoundException" in error_type or
+                "LockException" in error_repr or "NotFoundException" in error_repr):
+                print(f"[WARN] Project issue detected: {error_type} (attempt {attempt + 1}/{max_retries})")
+                print(f"[DEBUG] Error details: {error_msg}")
                 if attempt < max_retries - 1:
                     print(f"[INFO] Removing project directory: {project_dir}")
                     try:
                         # Force remove the project directory
                         shutil.rmtree(project_dir, ignore_errors=True)
                         # Give filesystem time to release locks
-                        time.sleep(1)
+                        time.sleep(2)
                         print(f"[INFO] Recreating Ghidra project from scratch...")
                         # Recreate the project directory
                         os.makedirs(project_dir, exist_ok=True)
@@ -186,7 +192,7 @@ def main():
                         ], check=True, capture_output=True, text=True)
                         print(f"[INFO] Project recreated successfully, retrying...")
                         # Small delay before retry
-                        time.sleep(0.5)
+                        time.sleep(1)
                     except subprocess.CalledProcessError as proc_error:
                         print(f"[ERROR] Failed to recreate project via headless:")
                         print(proc_error.stdout)
