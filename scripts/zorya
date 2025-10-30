@@ -224,6 +224,20 @@ echo ""; echo "Generating memory and CPU register dumps…"
 chmod +x "$ZORYA_DIR/scripts/dump_memory.sh"
 "$ZORYA_DIR/scripts/dump_memory.sh" "$BIN_PATH" "$ADDR" "$ENTRY_POINT" "$ARGS"
 
+# Step 2.5: Extract and analyze VDSO
+echo ""; echo "Extracting VDSO from process memory…"
+chmod +x "$ZORYA_DIR/scripts/extract_vdso.sh"
+"$ZORYA_DIR/scripts/extract_vdso.sh" "$BIN_PATH" "$ADDR" "$ARGS"
+
+if [[ -f "$INIT_DATA_DIR/vdso/vdso.so" && -f "$INIT_DATA_DIR/vdso/vdso_base_addr.txt" ]]; then
+  VDSO_BASE=$(cat "$INIT_DATA_DIR/vdso/vdso_base_addr.txt")
+  echo ""; echo "Generating p-code for VDSO (base: $VDSO_BASE)…"
+  chmod +x "$ZORYA_DIR/scripts/generate_vdso_pcode.sh"
+  "$ZORYA_DIR/scripts/generate_vdso_pcode.sh" "$INIT_DATA_DIR/vdso/vdso.so" "$VDSO_BASE"
+else
+  echo "⚠ Warning: VDSO extraction failed, continuing without VDSO support"
+fi
+
 # Step 3: Run Zorya core
 echo ""; 
 echo "*********************************************************************************************"

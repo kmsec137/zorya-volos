@@ -12,6 +12,18 @@ import (
 	"strings"
 )
 
+// Manual overrides for functions whose register usage is known to differ
+// from ABI/DWARF-exposed locations (e.g., due to compiler/runtime conventions
+// or p-code lowering differences).
+var overrideRegs = map[string]map[string][]string{
+	"runtime.timediv": {
+		"v":   {"RAX"},
+		"div": {"RBX"},
+		"rem": {"RCX"},
+		"~r0": {"RAX"},
+	},
+}
+
 type Function struct {
 	Name         string     `json:"name"`
 	Address      string     `json:"address"`
@@ -197,6 +209,14 @@ func main() {
 					currentFunc.Name, argName)
 			}
 
+			// Apply manual overrides when present
+			if ov, ok := overrideRegs[currentFunc.Name]; ok {
+				if regs, ok2 := ov[argName]; ok2 && len(regs) > 0 {
+					registers = regs
+					locationInfo = "override"
+				}
+			}
+
 			arg := Argument{
 				Name:      argName,
 				Type:      argType,
@@ -217,6 +237,26 @@ func main() {
 
 	// Catch any remaining function
 	if currentFunc != nil {
+		// If overrides specify a synthetic return (~r0) and it's not present, add it
+		if ov, ok := overrideRegs[currentFunc.Name]; ok {
+			if regs, ok2 := ov["~r0"]; ok2 {
+				found := false
+				for _, a := range currentFunc.Arguments {
+					if a.Name == "~r0" {
+						found = true
+						break
+					}
+				}
+				if !found {
+					currentFunc.Arguments = append(currentFunc.Arguments, Argument{
+						Name:      "~r0",
+						Type:      "int32",
+						Registers: regs,
+						Location:  "override",
+					})
+				}
+			}
+		}
 		functions = append(functions, *currentFunc)
 	}
 

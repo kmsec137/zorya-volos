@@ -134,8 +134,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         pcode_file_path_str
     );
     // Preprocess the p-code file to get a map of addresses to instructions
-    let instructions_map = preprocess_pcode_file(pcode_file_path_str, &mut executor)
+    let mut instructions_map = preprocess_pcode_file(pcode_file_path_str, &mut executor)
         .expect("Failed to preprocess the p-code file.");
+    
+    // Merge VDSO p-code if available
+    merge_vdso_pcode(&mut instructions_map, &mut executor);
 
     // Get the tables of cross references of potential panics in the programs (for bug detetcion)
     get_cross_references(&binary_path)?;
@@ -1737,6 +1740,68 @@ fn preprocess_pcode_file(
     log!(executor.state.logger, "Completed preprocessing.\n");
 
     Ok(instructions_map)
+}
+
+// Function to merge VDSO p-code into the main instructions map
+fn merge_vdso_pcode(
+    instructions_map: &mut BTreeMap<u64, Vec<Inst>>,
+    executor: &mut ConcolicExecutor,
+) {
+    let zorya_path = env::var("ZORYA_DIR").expect("ZORYA_DIR environment variable is not set");
+    let vdso_pcode_path = Path::new(&zorya_path)
+        .join("results")
+        .join("initialization_data")
+        .join("vdso")
+        .join("vdso_low_pcode.txt");
+
+    // Check if VDSO p-code file exists
+    if !vdso_pcode_path.exists() {
+        log!(
+            executor.state.logger,
+            "VDSO p-code file not found, skipping VDSO merge: {:?}",
+            vdso_pcode_path
+        );
+        return;
+    }
+
+    log!(
+        executor.state.logger,
+        "Merging VDSO p-code from: {:?}",
+        vdso_pcode_path
+    );
+
+    // Parse VDSO p-code file
+    match preprocess_pcode_file(
+        vdso_pcode_path
+            .to_str()
+            .expect("Invalid VDSO p-code path"),
+        executor,
+    ) {
+        Ok(vdso_map) => {
+            let vdso_instr_count = vdso_map.len();
+            // Merge VDSO instructions into main map
+            for (addr, insts) in vdso_map {
+                instructions_map.insert(addr, insts);
+            }
+            log!(
+                executor.state.logger,
+                "Successfully merged {} VDSO instruction blocks",
+                vdso_instr_count
+            );
+            println!(
+                "✓ Merged {} VDSO instruction blocks into execution map",
+                vdso_instr_count
+            );
+        }
+        Err(e) => {
+            log!(
+                executor.state.logger,
+                "Failed to parse VDSO p-code: {}",
+                e
+            );
+            eprintln!("⚠ Warning: Failed to merge VDSO p-code: {}", e);
+        }
+    }
 }
 
 // Function to read the panic addresses from the file
