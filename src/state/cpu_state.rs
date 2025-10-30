@@ -332,7 +332,7 @@ impl<'ctx> CpuState<'ctx> {
             // Skip validation for temporary registers (e.g., xmmTmp1, xmmTmp2)
             // These are used by p-code but may not be in the SLEIGH spec
             let is_temp_register = name.contains("Tmp") || name.contains("tmp");
-            
+
             if !is_temp_register && !self.is_valid_register_offset(name, offset) {
                 return Err(anyhow!(
                     "Invalid register offset 0x{:X} for {}",
@@ -612,7 +612,7 @@ impl<'ctx> CpuState<'ctx> {
         };
 
         let ymm_base = ymm_registers[0].0;
-        
+
         // Check if offset could be an XMM access based on common strides
         // Common strides: 0x40 (64 bytes, Ghidra default), 0x20 (32 bytes, compact)
         for xmm_stride in &[0x40u64, 0x20u64, 0x80u64] {
@@ -622,16 +622,16 @@ impl<'ctx> CpuState<'ctx> {
                 if offset < *base_offset {
                     continue;
                 }
-                
+
                 let delta = offset - base_offset;
-                
+
                 // Check if this offset aligns with the XMM stride
                 if delta % xmm_stride == 0 {
                     let reg_index = delta / xmm_stride;
-                    
+
                     // Calculate corresponding YMM offset
                     let ymm_offset = ymm_base + (reg_index * ymm_stride);
-                    
+
                     // Verify this YMM offset exists in our register map
                     if self.register_map.contains_key(&ymm_offset) {
                         return ymm_offset;
@@ -653,7 +653,7 @@ impl<'ctx> CpuState<'ctx> {
         // Dynamically map XMM offsets to YMM offsets based on register_map
         // XMM registers are 128-bit and map to the lower 128 bits of YMM registers
         let mapped_offset = self.map_xmm_to_ymm_offset(offset, new_size);
-        
+
         // Find the register that contains the mapped offset
         for (&reg_offset, reg) in self.registers.iter_mut() {
             let reg_size_bits = reg.symbolic.get_size() as u64;
@@ -880,7 +880,7 @@ impl<'ctx> CpuState<'ctx> {
     ) -> Option<CpuConcolicValue<'ctx>> {
         // Map XMM offsets to YMM offsets dynamically
         let mapped_offset = self.map_xmm_to_ymm_offset(offset, access_size);
-        
+
         // Iterate over all registers to find one that spans the requested offset
         for (&base_offset, reg) in &self.registers {
             let reg_size_bits = reg.symbolic.get_size(); // Size of the register in bits

@@ -2,6 +2,7 @@ use super::{
     cpu_state::SharedCpuState,
     futex_manager::FutexManager,
     memory_x86_64::{MemoryX86_64, Sigaction},
+    thread_manager::ThreadManager,
     CpuState, VirtualFileSystem,
 };
 use crate::target_info::GLOBAL_TARGET_INFO;
@@ -69,6 +70,7 @@ pub struct State<'a> {
     pub signal_handlers: HashMap<i32, Sigaction<'a>>, // Stores the signal handlers
     pub call_stack: Vec<FunctionFrame>, // Stack of function frames to track local variables
     pub jump_tables: BTreeMap<u64, JumpTable>, // Maps base addresses to jump table metadata
+    pub thread_manager: Arc<Mutex<ThreadManager<'a>>>, // Manages OS threads for Go runtime
 }
 
 impl<'a> State<'a> {
@@ -112,6 +114,14 @@ impl<'a> State<'a> {
 
         log!(logger.clone(), "Initializing the State...\n");
         println!("Initializing the State...\n");
+        // Initialize ThreadManager with the main thread (TID=1)
+        let initial_cpu_for_thread = cpu_state.lock().unwrap().clone();
+        let thread_manager = Arc::new(Mutex::new(ThreadManager::new(
+            1,
+            initial_cpu_for_thread,
+            ctx,
+        )));
+
         let mut state = State {
             concolic_vars: BTreeMap::new(),
             ctx,
@@ -129,6 +139,7 @@ impl<'a> State<'a> {
             signal_handlers: HashMap::new(),
             call_stack: Vec::new(),
             jump_tables: BTreeMap::new(),
+            thread_manager,
         };
 
         log!(state.logger.clone(), "Creating the P-Code for the executable sections of libc.so and ld-linux-x86-64.so...\n");
@@ -174,6 +185,7 @@ impl<'a> State<'a> {
             signal_handlers: HashMap::new(),
             call_stack: Vec::new(),
             jump_tables: BTreeMap::new(),
+            thread_manager: Arc::new(Mutex::new(ThreadManager::new(1, CpuState::new(ctx), ctx))),
         })
     }
 

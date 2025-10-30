@@ -905,6 +905,140 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 )),
             );
         }
+        56 => {
+            // sys_clone - Create a new OS thread (used by Go runtime newosproc)
+            log!(executor.state.logger.clone(), "Syscall type: sys_clone");
+
+            // Arguments for clone syscall (x86-64 ABI):
+            // RDI: clone_flags
+            // RSI: stack_pointer (child stack)
+            // RDX: parent_tid_ptr (CLONE_PARENT_SETTID)
+            // R10: child_tid_ptr (CLONE_CHILD_SETTID)
+            // R8: tls (TLS descriptor)
+
+            let clone_flags = cpu_state_guard
+                .get_register_by_offset(0x38, 64) // RDI
+                .ok_or("Failed to retrieve clone_flags from RDI")?
+                .get_concrete_value()?;
+
+            let child_stack = cpu_state_guard
+                .get_register_by_offset(0x30, 64) // RSI
+                .ok_or("Failed to retrieve child_stack from RSI")?
+                .get_concrete_value()?;
+
+            let parent_tid_ptr_val = cpu_state_guard
+                .get_register_by_offset(0x10, 64) // RDX
+                .ok_or("Failed to retrieve parent_tid_ptr from RDX")?
+                .get_concrete_value()?;
+            let parent_tid_ptr = if parent_tid_ptr_val != 0 {
+                Some(parent_tid_ptr_val)
+            } else {
+                None
+            };
+
+            let child_tid_ptr_val = cpu_state_guard
+                .get_register_by_offset(0x98, 64) // R10
+                .ok_or("Failed to retrieve child_tid_ptr from R10")?
+                .get_concrete_value()?;
+            let child_tid_ptr = if child_tid_ptr_val != 0 {
+                Some(child_tid_ptr_val)
+            } else {
+                None
+            };
+
+            let tls_base = cpu_state_guard
+                .get_register_by_offset(0x80, 64) // R8
+                .ok_or("Failed to retrieve tls from R8")?
+                .get_concrete_value()?;
+
+            log!(
+                executor.state.logger.clone(),
+                "clone: flags=0x{:x}, stack=0x{:x}, tls=0x{:x}",
+                clone_flags,
+                child_stack,
+                tls_base
+            );
+
+            // Get the entry point (instruction after syscall)
+            let entry_point = executor.current_address.unwrap_or(0);
+
+            // Release CPU lock before calling thread_manager
+            drop(cpu_state_guard);
+
+            // Create the new thread using ThreadManager
+            let new_tid = executor
+                .state
+                .thread_manager
+                .lock()
+                .unwrap()
+                .clone_thread(
+                    child_stack,
+                    entry_point,
+                    tls_base,
+                    clone_flags,
+                    child_tid_ptr,
+                    None, // child_cleartid_ptr is set via CLONE_CHILD_CLEARTID flag handling
+                )
+                .map_err(|e| format!("Failed to clone thread: {}", e))?;
+
+            // Handle CLONE_PARENT_SETTID: write new TID to parent's memory
+            if let Some(parent_ptr) = parent_tid_ptr {
+                if clone_flags & 0x00100000 != 0 {
+                    // CLONE_PARENT_SETTID
+                    let tid_symbolic = BV::from_u64(executor.context, new_tid, 64);
+                    let tid_value = MemoryValue::new(new_tid, tid_symbolic, 64);
+                    executor
+                        .state
+                        .memory
+                        .write_u64(parent_ptr, &tid_value)
+                        .map_err(|e| format!("Failed to write parent TID: {:?}", e))?;
+                    log!(
+                        executor.state.logger.clone(),
+                        "clone: wrote TID {} to parent ptr 0x{:x}",
+                        new_tid,
+                        parent_ptr
+                    );
+                }
+            }
+
+            // Handle CLONE_CHILD_SETTID: will be written by child when it runs
+            if let Some(child_ptr) = child_tid_ptr {
+                if clone_flags & 0x01000000 != 0 {
+                    // CLONE_CHILD_SETTID
+                    let tid_symbolic = BV::from_u64(executor.context, new_tid, 64);
+                    let tid_value = MemoryValue::new(new_tid, tid_symbolic, 64);
+                    executor
+                        .state
+                        .memory
+                        .write_u64(child_ptr, &tid_value)
+                        .map_err(|e| format!("Failed to write child TID: {:?}", e))?;
+                    log!(
+                        executor.state.logger.clone(),
+                        "clone: wrote TID {} to child ptr 0x{:x}",
+                        new_tid,
+                        child_ptr
+                    );
+                }
+            }
+
+            // For the parent thread: return the new child TID in RAX
+            let mut cpu_state_guard = executor.state.cpu_state.lock().unwrap();
+            let rax_offset = 0x0; // RAX offset
+            let rax_size = 64;
+            let value_symbolic = BV::from_u64(executor.context, new_tid, rax_size);
+            let value_concolic = ConcolicVar::new_concrete_and_symbolic_int(
+                new_tid,
+                value_symbolic,
+                executor.context,
+            );
+            cpu_state_guard.set_register_value_by_offset(rax_offset, value_concolic, rax_size)?;
+
+            log!(
+                executor.state.logger.clone(),
+                "clone: returned TID {} to parent thread",
+                new_tid
+            );
+        }
         60 => {
             // sys_exit
             log!(executor.state.logger.clone(), "Syscall type: sys_exit");

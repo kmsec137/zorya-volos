@@ -136,7 +136,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Preprocess the p-code file to get a map of addresses to instructions
     let mut instructions_map = preprocess_pcode_file(pcode_file_path_str, &mut executor)
         .expect("Failed to preprocess the p-code file.");
-    
+
     // Merge VDSO p-code if available
     merge_vdso_pcode(&mut instructions_map, &mut executor);
 
@@ -1772,9 +1772,7 @@ fn merge_vdso_pcode(
 
     // Parse VDSO p-code file
     match preprocess_pcode_file(
-        vdso_pcode_path
-            .to_str()
-            .expect("Invalid VDSO p-code path"),
+        vdso_pcode_path.to_str().expect("Invalid VDSO p-code path"),
         executor,
     ) {
         Ok(vdso_map) => {
@@ -1794,11 +1792,7 @@ fn merge_vdso_pcode(
             );
         }
         Err(e) => {
-            log!(
-                executor.state.logger,
-                "Failed to parse VDSO p-code: {}",
-                e
-            );
+            log!(executor.state.logger, "Failed to parse VDSO p-code: {}", e);
             eprintln!("⚠ Warning: Failed to merge VDSO p-code: {}", e);
         }
     }
