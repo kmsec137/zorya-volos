@@ -85,11 +85,6 @@ pub struct FunctionSignature {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct RegisterJsonWrapper {
-    functions: Vec<FunctionSignature>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionSigWrapper {
     pub functions: Vec<FunctionSignature>,
 }

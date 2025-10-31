@@ -2451,8 +2451,16 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             }
             ConcreteVar::Int(value) => {
                 // Handle single values normally
+                // Truncate concrete value to match the size in bits
+                let truncated_value = if data_size_bits < 64 {
+                    let mask = (1u64 << data_size_bits) - 1;
+                    value & mask
+                } else {
+                    *value
+                };
+
                 let mem_value = MemoryValue {
-                    concrete: *value,
+                    concrete: truncated_value,
                     symbolic: data_to_store_symbolic.simplify().clone(),
                     size: data_size_bits,
                 };
@@ -2475,7 +2483,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         log!(
                             self.state.logger.clone(),
                             "Stored single value 0x{:x} to memory at address 0x{:x}",
-                            *value,
+                            truncated_value,
                             pointer_offset_concrete
                         );
                     }
@@ -2546,6 +2554,14 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
             }
             ConcreteVar::Int(expected_value) => {
+                // Truncate expected value to match the size (same as we did for storage)
+                let truncated_expected = if data_size_bits < 64 {
+                    let mask = (1u64 << data_size_bits) - 1;
+                    expected_value & mask
+                } else {
+                    *expected_value
+                };
+
                 // Verify single value was stored correctly
                 match self.state.memory.read_value(
                     pointer_offset_concrete,
@@ -2571,13 +2587,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                             "Verified single value at 0x{:x}: stored=0x{:x}, expected=0x{:x}",
                             pointer_offset_concrete,
                             stored_concrete_value,
-                            expected_value
+                            truncated_expected
                         );
 
-                        if stored_concrete_value != *expected_value {
+                        if stored_concrete_value != truncated_expected {
                             return Err(format!(
                                 "Single value verification failed: expected 0x{:x}, got 0x{:x}",
-                                expected_value, stored_concrete_value
+                                truncated_expected, stored_concrete_value
                             ));
                         }
                     }

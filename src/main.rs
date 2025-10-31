@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let mut config = Config::new();
+    let config = Config::new();
     let context = Context::new(&config);
     // Logging mode: "verbose" (default) writes execution_log.txt; "trace_only" disables it
     let log_mode = env::var("LOG_MODE")

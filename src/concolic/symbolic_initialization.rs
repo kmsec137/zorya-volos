@@ -422,7 +422,7 @@ pub fn initialize_register_argument<'a>(
                     let max_signed = if typed_bits == 64 {
                         u64::MAX >> 1
                     } else {
-                        (((1u128 << (typed_bits - 1)) - 1) as u64)
+                        ((1u128 << (typed_bits - 1)) - 1) as u64
                     };
                     let upper = BV::from_u64(executor.context, max_signed, bit_width);
                     executor.solver.assert(&bv.bvule(&upper));
@@ -559,7 +559,7 @@ pub fn initialize_stack_argument<'a>(
                             let max_signed = if typed_bits == 64 {
                                 u64::MAX >> 1
                             } else {
-                                (((1u128 << (typed_bits - 1)) - 1) as u64)
+                                ((1u128 << (typed_bits - 1)) - 1) as u64
                             };
                             let upper = BV::from_u64(executor.context, max_signed, 64);
                             executor.solver.assert(&bv.bvule(&upper));

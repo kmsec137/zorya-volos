@@ -12,7 +12,7 @@ use parser::parser::Inst;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::OpenOptions;
 use std::path::Path;
-use z3::ast::{Ast, Int, BV};
+use z3::ast::{Ast, Int};
 use z3::SatResult;
 
 macro_rules! log {

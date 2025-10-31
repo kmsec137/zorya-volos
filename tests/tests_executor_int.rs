@@ -913,4 +913,77 @@ mod tests {
             "The result of zero extending 16-bit value 65535 should be 65535."
         );
     }
+
+    #[test]
+    fn test_handle_int_zext_noop_equal_sizes() {
+        let mut executor = setup_executor();
+
+        // No-op case: 16-bit to 16-bit
+        let symbolic_var0 = SymbolicVar::Int(BV::from_u64(&executor.context, 0xABCD, 16));
+        let input0 = ConcolicVar::new_concrete_and_symbolic_int(
+            0xABCD,
+            symbolic_var0.to_bv(&executor.context),
+            &executor.context,
+        );
+        executor
+            .unique_variables
+            .insert("Unique(0x200)".to_string(), input0);
+        let instruction = Inst {
+            opcode: Opcode::IntZExt,
+            output: Some(Varnode {
+                var: Var::Unique(0x201),
+                size: Size::Half,
+            }),
+            inputs: vec![Varnode {
+                var: Var::Unique(0x200),
+                size: Size::Half,
+            }],
+        };
+        let result = handle_int_zext(&mut executor, instruction);
+        assert!(result.is_ok(), "INT_ZEXT equal sizes should be a no-op.");
+        let result_var = executor.unique_variables.get("Unique(0x201)").unwrap();
+        assert_eq!(
+            result_var.concrete,
+            zorya::concolic::ConcreteVar::Int(0xABCD),
+            "INT_ZEXT equal sizes must preserve value."
+        );
+    }
+
+    #[test]
+    fn test_handle_int_zext_truncation_when_smaller_output() {
+        let mut executor = setup_executor();
+
+        // Truncation case: 16-bit to 8-bit (keep low 8 bits)
+        let symbolic_var0 = SymbolicVar::Int(BV::from_u64(&executor.context, 0xABCD, 16));
+        let input0 = ConcolicVar::new_concrete_and_symbolic_int(
+            0xABCD,
+            symbolic_var0.to_bv(&executor.context),
+            &executor.context,
+        );
+        executor
+            .unique_variables
+            .insert("Unique(0x210)".to_string(), input0);
+        let instruction = Inst {
+            opcode: Opcode::IntZExt,
+            output: Some(Varnode {
+                var: Var::Unique(0x211),
+                size: Size::Byte,
+            }),
+            inputs: vec![Varnode {
+                var: Var::Unique(0x210),
+                size: Size::Half,
+            }],
+        };
+        let result = handle_int_zext(&mut executor, instruction);
+        assert!(
+            result.is_ok(),
+            "INT_ZEXT with smaller output should truncate."
+        );
+        let result_var = executor.unique_variables.get("Unique(0x211)").unwrap();
+        assert_eq!(
+            result_var.concrete,
+            zorya::concolic::ConcreteVar::Int(0xCD),
+            "INT_ZEXT smaller output must keep low bits (0xCD)."
+        );
+    }
 }

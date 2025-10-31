@@ -1167,32 +1167,54 @@ pub fn handle_int_zext(executor: &mut ConcolicExecutor, instruction: Inst) -> Re
     let input_var = executor.varnode_to_concolic(&instruction.inputs[0])?;
 
     let output_varnode = instruction.output.as_ref().unwrap();
-    if output_varnode.size.to_bitvector_size() <= instruction.inputs[0].size.to_bitvector_size() {
-        return Err("Output size must be larger than input size for zero-extension".to_string());
-    }
-
     let input_size = instruction.inputs[0].size.to_bitvector_size() as usize;
     let output_size = output_varnode.size.to_bitvector_size() as usize;
 
-    // Correct extraction logic explicitly
+    // Build symbolic result depending on size relation
     let symbolic_input_bv = input_var.get_symbolic_value_bv(executor.context);
-    let extracted_symbolic = symbolic_input_bv
-        .extract((input_size - 1) as u32, 0)
-        .simplify();
-
-    let result_symbolic = extracted_symbolic
-        .zero_ext((output_size - input_size) as u32)
-        .simplify();
-
-    let mask = if input_size >= 64 {
-        u64::MAX
+    let (result_concrete, result_symbolic) = if output_size > input_size {
+        // Zero-extend
+        let extracted_symbolic = symbolic_input_bv
+            .extract((input_size - 1) as u32, 0)
+            .simplify();
+        let sym = extracted_symbolic
+            .zero_ext((output_size - input_size) as u32)
+            .simplify();
+        let mask = if input_size >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << input_size) - 1
+        };
+        let conc = input_var.get_concrete_value() & mask;
+        (conc, sym)
+    } else if output_size == input_size {
+        // Pass-through (mask low bits for safety)
+        let mask = if output_size >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << output_size) - 1
+        };
+        let conc = input_var.get_concrete_value() & mask;
+        let sym = symbolic_input_bv
+            .extract((output_size - 1) as u32, 0)
+            .simplify();
+        (conc, sym)
     } else {
-        (1u64 << input_size) - 1
+        // Truncate low bits
+        let sym = symbolic_input_bv
+            .extract((output_size - 1) as u32, 0)
+            .simplify();
+        let mask = if output_size >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << output_size) - 1
+        };
+        let conc = input_var.get_concrete_value() & mask;
+        (conc, sym)
     };
-    let zero_extended_value = input_var.get_concrete_value() & mask;
 
     let result_value = ConcolicVar::new_concrete_and_symbolic_int(
-        zero_extended_value,
+        result_concrete,
         result_symbolic.clone(),
         executor.context,
     );
@@ -1200,7 +1222,7 @@ pub fn handle_int_zext(executor: &mut ConcolicExecutor, instruction: Inst) -> Re
     log!(
         executor.state.logger.clone(),
         "*** INT_ZEXT concrete result: 0x{:x}",
-        zero_extended_value
+        result_concrete
     );
 
     executor.handle_output(instruction.output.as_ref(), result_value.clone())?;
