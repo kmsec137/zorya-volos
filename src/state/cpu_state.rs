@@ -643,6 +643,72 @@ impl<'ctx> CpuState<'ctx> {
         offset // No mapping found, return original offset
     }
 
+    /// Normalize p-code SIMD virtual offsets (XMM/ZMM row layout) into modeled YMM base + lane
+    /// Handles any p-code stride (32-byte YMM, 64-byte ZMM, etc.) and maps to modeled register layout
+    pub fn map_simd_virtual_offset(&self, offset: u64) -> u64 {
+        // Collect YMM registers and their base offsets
+        let mut ymm_offsets: Vec<u64> = self
+            .register_map
+            .iter()
+            .filter_map(|(off, (name, _sz))| {
+                if name.starts_with("YMM") {
+                    Some(*off)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if ymm_offsets.len() < 2 {
+            return offset;
+        }
+        ymm_offsets.sort_unstable();
+
+        let modeled_stride = ymm_offsets[1] - ymm_offsets[0]; // e.g., 0x20
+        let base_off = ymm_offsets[0];
+        let count = ymm_offsets.len() as u64;
+
+        let base_sz_bits = self
+            .register_map
+            .get(&base_off)
+            .map(|(_, sz)| *sz)
+            .unwrap_or(256);
+        let reg_size_bytes = (base_sz_bits as u64) / 8; // e.g., 32 bytes for YMM
+
+        // Try multiple possible p-code strides (32, 64, 128 bytes corresponding to YMM, ZMM, hypothetical layouts)
+        for pcode_stride in &[modeled_stride, 64u64, 128u64, modeled_stride * 2] {
+            // Determine the p-code base that would produce this offset with this stride
+            // P-code might start at same base or offset by some amount
+            for potential_pcode_base in &[base_off, base_off.saturating_sub(*pcode_stride)] {
+                if offset < *potential_pcode_base {
+                    continue;
+                }
+                let delta = offset - potential_pcode_base;
+
+                // Check if offset aligns with this stride
+                if delta % pcode_stride == 0
+                    || (delta < pcode_stride * count && delta / pcode_stride < count)
+                {
+                    let reg_idx_candidate = delta / pcode_stride;
+                    let lane_off = delta % pcode_stride;
+
+                    // Ensure reg_idx is within valid range
+                    if reg_idx_candidate < count {
+                        // Map lane offset within p-code stride to lane within modeled register
+                        let lane_in_reg = if reg_size_bytes > 0 {
+                            lane_off % reg_size_bytes
+                        } else {
+                            0
+                        };
+                        return ymm_offsets[reg_idx_candidate as usize] + lane_in_reg;
+                    }
+                }
+            }
+        }
+
+        // No mapping found, return original
+        offset
+    }
+
     /// Sets the value of a register based on its offset
     pub fn set_register_value_by_offset(
         &mut self,
@@ -650,35 +716,32 @@ impl<'ctx> CpuState<'ctx> {
         new_value: ConcolicVar<'ctx>,
         new_size: u32,
     ) -> Result<(), String> {
-        // Dynamically map XMM offsets to YMM offsets based on register_map
-        // XMM registers are 128-bit and map to the lower 128 bits of YMM registers
-        let mapped_offset = self.map_xmm_to_ymm_offset(offset, new_size);
+        // Normalize any p-code SIMD virtual offsets into modeled YMM layout, then XMM→YMM if needed
+        let mapped_offset =
+            self.map_xmm_to_ymm_offset(self.map_simd_virtual_offset(offset), new_size);
 
-        // Find the register that contains the mapped offset
+        // Find a register whose range includes the mapped offset; allow partial writes (truncate to fit)
         for (&reg_offset, reg) in self.registers.iter_mut() {
             let reg_size_bits = reg.symbolic.get_size() as u64;
             let reg_size_bytes = reg_size_bits / 8;
-            if mapped_offset >= reg_offset
-                && (mapped_offset + (new_size as u64 / 8)) <= (reg_offset + reg_size_bytes)
-            {
+            if mapped_offset >= reg_offset && mapped_offset < reg_offset + reg_size_bytes {
                 let offset_within_reg = mapped_offset - reg_offset;
                 let bit_offset = offset_within_reg * 8; // Convert byte offset to bit offset within the register
                 let full_reg_size = reg_size_bits; // Full size of the register in bits
 
-                // Ensure the bit offset + new size does not exceed the register size
-                if bit_offset + new_size as u64 > full_reg_size {
-                    println!("Error: Bit offset + new size exceeds full register size.");
-                    return Err(format!(
-                        "Cannot fit value into register starting at offset 0x{:x}: size overflow",
-                        reg_offset
-                    ));
+                // Determine how many bits we can actually write in this register from this bit offset
+                let available_bits = full_reg_size.saturating_sub(bit_offset);
+                let write_bits = std::cmp::min(available_bits, new_size as u64);
+                if write_bits == 0 {
+                    continue;
                 }
+                let write_bits_u32 = write_bits as u32;
 
                 // ----------------------
                 // CONCRETE VALUE HANDLING
                 // ----------------------
                 if let ConcreteVar::LargeInt(ref mut large_concrete) = reg.concrete {
-                    let mut remaining_bits = new_size as u64;
+                    let mut remaining_bits = write_bits;
                     let mut current_bit_offset = bit_offset;
                     let mut value = new_value.concrete.to_u64();
                     while remaining_bits > 0 {
@@ -716,16 +779,16 @@ impl<'ctx> CpuState<'ctx> {
                 } else {
                     // Ensure that small registers remain as Int
                     let safe_shift = if bit_offset < 64 {
-                        (new_value.concrete.to_u64() & Self::safe_left_mask(new_size as u64))
+                        (new_value.concrete.to_u64() & Self::safe_left_mask(write_bits as u64))
                             << bit_offset
                     } else {
                         0 // If bit_offset >= 64, shifting would overflow, so leave as 0
                     };
 
-                    let mask = if new_size >= 64 {
+                    let mask = if write_bits_u32 >= 64 {
                         !0u64
                     } else {
-                        (1u64 << new_size) - 1
+                        (1u64 << write_bits_u32) - 1
                     };
                     let new_concrete_value = safe_shift & (mask << bit_offset);
 
@@ -740,18 +803,28 @@ impl<'ctx> CpuState<'ctx> {
                 // SYMBOLIC VALUE HANDLING
                 // ----------------------
                 if let SymbolicVar::LargeInt(ref mut large_symbolic) = reg.symbolic {
-                    let mut remaining_bits = new_size as u64;
+                    let mut remaining_bits = write_bits; // Use truncated size, not requested size
                     let mut current_bit_offset = bit_offset;
                     let new_symbolic_bv = new_value.symbolic.to_bv(self.ctx);
 
                     // Then resize if needed:
-                    let new_symbolic_bv = if new_symbolic_bv.get_size() == new_size {
+                    let new_symbolic_bv = if new_symbolic_bv.get_size() == write_bits_u32 {
                         new_symbolic_bv
-                    } else if new_symbolic_bv.get_size() > new_size {
-                        new_symbolic_bv.extract(new_size - 1, 0)
+                    } else if new_symbolic_bv.get_size() > write_bits_u32 {
+                        new_symbolic_bv.extract(write_bits_u32 - 1, 0)
                     } else {
-                        new_symbolic_bv.zero_ext(new_size - new_symbolic_bv.get_size())
+                        new_symbolic_bv.zero_ext(write_bits_u32 - new_symbolic_bv.get_size())
                     };
+
+                    // Safety check: ensure we're not extracting out-of-bounds
+                    if new_symbolic_bv.get_size() < write_bits_u32 {
+                        println!(
+                            "Error: Resized symbolic BV size {} < write_bits_u32 {}",
+                            new_symbolic_bv.get_size(),
+                            write_bits_u32
+                        );
+                        return Err("Symbolic BV resize failed".to_string());
+                    }
 
                     while remaining_bits > 0 {
                         let idx = (current_bit_offset / 64) as usize;
@@ -815,27 +888,27 @@ impl<'ctx> CpuState<'ctx> {
                     let new_symbolic_bv = new_value.symbolic.to_bv(self.ctx);
 
                     // Then resize if needed
-                    let new_symbolic_bv = if new_symbolic_bv.get_size() == new_size {
+                    let new_symbolic_bv = if new_symbolic_bv.get_size() == write_bits_u32 {
                         new_symbolic_bv
-                    } else if new_symbolic_bv.get_size() > new_size {
-                        new_symbolic_bv.extract(new_size - 1, 0)
+                    } else if new_symbolic_bv.get_size() > write_bits_u32 {
+                        new_symbolic_bv.extract(write_bits_u32 - 1, 0)
                     } else {
-                        new_symbolic_bv.zero_ext(new_size - new_symbolic_bv.get_size())
+                        new_symbolic_bv.zero_ext(write_bits_u32 - new_symbolic_bv.get_size())
                     };
 
                     // Ensure small symbolic values remain as Int
                     let new_symbolic_value = new_symbolic_bv
-                        .zero_ext(full_reg_size as u32 - new_size)
+                        .zero_ext(full_reg_size as u32 - write_bits_u32)
                         .bvshl(&BV::from_u64(self.ctx, bit_offset, full_reg_size as u32));
 
                     if new_symbolic_value.get_z3_ast().is_null() {
                         println!("Error: New symbolic value is null");
                         return Err("New symbolic value is null".to_string());
                     }
-                    let mask = if new_size >= 64 {
+                    let mask = if write_bits_u32 >= 64 {
                         !0u64
                     } else {
-                        (1u64 << new_size) - 1
+                        (1u64 << write_bits_u32) - 1
                     };
 
                     let reg_symbolic_bv = reg.symbolic.to_bv_with_concrete(
@@ -878,8 +951,9 @@ impl<'ctx> CpuState<'ctx> {
         offset: u64,
         access_size: u32,
     ) -> Option<CpuConcolicValue<'ctx>> {
-        // Map XMM offsets to YMM offsets dynamically
-        let mapped_offset = self.map_xmm_to_ymm_offset(offset, access_size);
+        // Normalize any p-code SIMD virtual offsets into modeled YMM layout, then XMM→YMM if needed
+        let mapped_offset =
+            self.map_xmm_to_ymm_offset(self.map_simd_virtual_offset(offset), access_size);
 
         // Iterate over all registers to find one that spans the requested offset
         for (&base_offset, reg) in &self.registers {

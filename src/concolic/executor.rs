@@ -903,46 +903,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     log!(self.state.logger.clone(), "Output is a Register type");
                     let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
 
-                    // Normalize SIMD register offsets (XMM/YMM) dynamically using the register map
-                    let write_offset = {
-                        // Collect YMM registers and offsets/sizes
-                        let mut ymm_entries: Vec<(u64, u32)> = cpu_state_guard
-                            .register_map
-                            .iter()
-                            .filter_map(|(off, (name, sz))| {
-                                if name.starts_with("YMM") {
-                                    Some((*off, *sz))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        ymm_entries.sort_by_key(|(off, _)| *off);
-
-                        if let Some((base_off, base_sz_bits)) = ymm_entries.first().cloned() {
-                            let reg_size_bytes = (base_sz_bits as u64) / 8;
-                            let count = ymm_entries.len() as u64;
-                            if reg_size_bytes > 0 {
-                                let alt_stride = reg_size_bytes * 2; // common pcode stride
-                                let total_alt_span = alt_stride * count;
-                                if *offset >= base_off && *offset < base_off + total_alt_span {
-                                    let delta = *offset - base_off;
-                                    let reg_idx = delta / alt_stride;
-                                    let lane_off = delta % alt_stride;
-                                    let low_lane_bytes = std::cmp::min(16u64, reg_size_bytes / 2);
-                                    base_off
-                                        + reg_idx * reg_size_bytes
-                                        + (lane_off % low_lane_bytes)
-                                } else {
-                                    *offset
-                                }
-                            } else {
-                                *offset
-                            }
-                        } else {
-                            *offset
-                        }
-                    };
+                    // Normalize SIMD register offsets (XMM/YMM/ZMM) using the CPU state helper
+                    let write_offset = cpu_state_guard.map_simd_virtual_offset(*offset);
 
                     match cpu_state_guard.set_register_value_by_offset(
                         write_offset,

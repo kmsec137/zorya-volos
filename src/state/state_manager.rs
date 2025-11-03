@@ -234,7 +234,7 @@ impl<'a> State<'a> {
                 "Python script failed: {:?}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            return Err("Failed to generate jump table data".into());
+            return Err("Failed to generate jump table data. Maybe Pyhidra is not installed correctly, try 'pipx uninstall pyhidra' / 'pip3 install pyhidra --break-system-packages'.".into());
         }
 
         let json_data = std::fs::read_to_string(json_output)?;
