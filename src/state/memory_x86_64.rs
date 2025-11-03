@@ -360,7 +360,45 @@ impl<'ctx> MemoryX86_64<'ctx> {
         size: u32,
         logger: &mut Logger,
     ) -> Result<ConcolicVar<'ctx>, MemoryError> {
-        if size == 128 {
+        if size > 128 {
+            // Handle large values (256-bit, 512-bit, etc.) by reading in 64-bit chunks
+            log!(
+                logger,
+                "Reading {}-bit value from address 0x{:x}",
+                size,
+                address
+            );
+
+            let num_chunks = ((size + 63) / 64) as usize; // Round up to nearest 64-bit chunk
+            let mut concrete_chunks = Vec::with_capacity(num_chunks);
+            let mut symbolic_chunks = Vec::with_capacity(num_chunks);
+
+            for i in 0..num_chunks {
+                let chunk_addr = address + (i as u64 * 8);
+                let (concrete_bytes, symbolic_bytes) = self.read_memory(chunk_addr, 8)?;
+
+                let chunk_value = u64::from_le_bytes(concrete_bytes.as_slice().try_into().unwrap());
+                concrete_chunks.push(chunk_value);
+
+                let symbolic_chunk = Self::concatenate_symbolic_bytes(
+                    &symbolic_bytes,
+                    &concrete_bytes,
+                    self.ctx,
+                    logger,
+                    chunk_addr,
+                );
+                symbolic_chunks.push(symbolic_chunk);
+            }
+
+            let concrete = ConcreteVar::LargeInt(concrete_chunks);
+            let symbolic = SymbolicVar::LargeInt(symbolic_chunks);
+
+            Ok(ConcolicVar {
+                concrete,
+                symbolic,
+                ctx: self.ctx,
+            })
+        } else if size == 128 {
             log!(logger, "Reading 128-bit value from address 0x{:x}", address);
 
             let (concrete_low, symbolic_low) = self.read_memory(address, 8)?;
