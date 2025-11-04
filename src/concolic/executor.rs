@@ -282,24 +282,14 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     process::exit(0);
                 }
                 if symbol_name == "runtime.recordForPanic" {
-                    // Log all the constraints accumulated in the solver until that point
-                    evaluate_args_z3(
-                        self,
-                        &instruction,
-                        None,
-                        Some(current_addr),
-                        None,
-                        None, // No panic addr for non-CBranch instructions
-                    )
-                    .map_err(|e| e.to_string())?;
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     log!(
                         self.state.logger.clone(),
-                        "Attempt to execute 'runtime.recordForPanic' detected at address 0x{}.",
+                        "Encountered 'runtime.recordForPanic' at address 0x{} (may not be a real panic).",
                         current_addr_hex
                     );
                     log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-                    process::exit(0);
+                    // process::exit(0);
                 }
                 if symbol_name == "runtime.slicePanic" {
                     // Log all the constraints accumulated in the solver until that point

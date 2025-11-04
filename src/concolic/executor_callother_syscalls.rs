@@ -1,5 +1,6 @@
 /// Focuses on implementing the execution of the CALLOTHER opcode, especially syscalls, from Ghidra's Pcode specification
 /// This implementation relies on Ghidra 11.0.1 with the specfiles in /specfiles
+/// https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl
 use crate::{
     concolic::ConcreteVar,
     executor::ConcolicExecutor,

@@ -1,5 +1,6 @@
 /// Focuses on implementing the execution of the CALLOTHER opcode from Ghidra's Pcode specification
 /// This implementation relies on Ghidra 11.0.1 with the specfiles in /specfiles
+///
 use crate::{concolic::ConcreteVar, executor::ConcolicExecutor, state::memory_x86_64::MemoryValue};
 use parser::parser::{Inst, Opcode, Var, Varnode};
 use std::{
@@ -32,6 +33,12 @@ pub fn handle_callother(executor: &mut ConcolicExecutor, instruction: Inst) -> R
         }
     }?;
 
+    log!(
+        executor.trace_logger,
+        "----> Calling the CALLOTHER instruction with number {}",
+        operation_index
+    );
+
     match operation_index {
         // Operations probably used in Go runtime
         0x5 => executor_callother_syscalls::handle_syscall(executor),
@@ -62,8 +69,10 @@ pub fn handle_callother(executor: &mut ConcolicExecutor, instruction: Inst) -> R
         0xdc => handle_aesenc(executor, instruction),
         0x13a => handle_vmovdqu_avx(executor, instruction),
         0x144 => handle_vmovntdq_avx(executor, instruction),
+        0x1a1 => handle_vpmullw_avx(executor, instruction),
         0x1be => handle_vptest_avx(executor, instruction),
         0x1c7 => handle_vpxor_avx(executor, instruction),
+        0x1e2 => handle_vbroadcastsd_avx(executor, instruction),
         0x203 => handle_vpand_avx2(executor, instruction),
         0x209 => handle_vpcmpeqb_avx2(executor, instruction),
         0x25d => handle_vpbroadcastb_avx2(executor, instruction),
@@ -914,4 +923,320 @@ pub fn handle_vpbroadcastb_avx2(
     _instruction: Inst,
 ) -> Result<(), String> {
     panic!("Handle_vpbroadcastb_avx2 is not handled in AMD64 Opteron G1.");
+}
+
+/// Handle VPMULLW (AVX) - Multiply Packed Signed Word Integers and Store Low Result
+///
+/// This instruction performs element-wise multiplication of packed 16-bit signed integers
+/// from two source operands and stores the lower 16 bits of each 32-bit product.
+///
+/// Instruction format: VPMULLW xmm1, xmm2, xmm3/m128 or VPMULLW ymm1, ymm2, ymm3/m256
+/// - Input 0: CALLOTHER index (already processed)
+/// - Input 1: First source operand (128 or 256 bits)
+/// - Input 2: Second source operand (128 or 256 bits)
+/// - Output: Destination register with low 16 bits of each multiplication
+///
+/// For 128-bit (XMM): 8 x 16-bit words
+/// For 256-bit (YMM): 16 x 16-bit words
+pub fn handle_vpmullw_avx(
+    executor: &mut ConcolicExecutor,
+    instruction: Inst,
+) -> Result<(), String> {
+    log!(
+        executor.state.logger.clone(),
+        "This CALLOTHER operation is a VPMULLW (AVX) operation."
+    );
+
+    // Validate instruction format
+    if instruction.inputs.len() < 3 {
+        return Err(format!(
+            "VPMULLW requires at least 3 inputs, got {}",
+            instruction.inputs.len()
+        ));
+    }
+
+    // Input 1 and 2 are the source operands
+    let src1_varnode = &instruction.inputs[1];
+    let src2_varnode = &instruction.inputs[2];
+
+    log!(
+        executor.state.logger.clone(),
+        "VPMULLW src1: {:?}, src2: {:?}",
+        src1_varnode,
+        src2_varnode
+    );
+
+    // Fetch source values
+    let src1 = executor
+        .varnode_to_concolic(src1_varnode)
+        .map_err(|e| format!("Failed to fetch src1: {}", e))?;
+    let src2 = executor
+        .varnode_to_concolic(src2_varnode)
+        .map_err(|e| format!("Failed to fetch src2: {}", e))?;
+
+    // Determine the size (128-bit = 8 words, 256-bit = 16 words)
+    let size_bits = src1_varnode.size.to_bitvector_size();
+    let num_words = (size_bits / 16) as usize; // Number of 16-bit words
+
+    log!(
+        executor.state.logger.clone(),
+        "VPMULLW processing {} x 16-bit words (total {} bits)",
+        num_words,
+        size_bits
+    );
+
+    // Extract src1 words
+    let concrete_val1 = src1.get_full_concrete_value();
+    let concrete_u64s1 = match &concrete_val1 {
+        ConcreteVar::Int(v) => vec![*v],
+        ConcreteVar::LargeInt(v) => v.clone(),
+        _ => vec![0],
+    };
+    let symbolic_bv1 = src1.get_symbolic_value_bv(executor.context);
+    let symbolic_bvs1 = match &src1 {
+        ConcolicEnum::ConcolicVar(var) => match &var.symbolic {
+            SymbolicVar::LargeInt(bvs) => bvs.clone(),
+            _ => vec![symbolic_bv1.clone()],
+        },
+        ConcolicEnum::CpuConcolicValue(cpu) => match &cpu.symbolic {
+            SymbolicVar::LargeInt(bvs) => bvs.clone(),
+            _ => vec![symbolic_bv1.clone()],
+        },
+        _ => vec![symbolic_bv1.clone()],
+    };
+
+    let mut src1_words = Vec::new();
+    let mut src1_symbolic_words = Vec::new();
+    for (chunk_idx, &chunk) in concrete_u64s1.iter().enumerate() {
+        for word_in_chunk in 0..4 {
+            if src1_words.len() >= num_words {
+                break;
+            }
+            src1_words.push(((chunk >> (word_in_chunk * 16)) & 0xFFFF) as u16);
+            let bv_chunk = &symbolic_bvs1[chunk_idx.min(symbolic_bvs1.len() - 1)];
+            let bit_start = word_in_chunk * 16;
+            let bit_end = bit_start + 15;
+            src1_symbolic_words.push(bv_chunk.extract(bit_end as u32, bit_start as u32));
+        }
+    }
+
+    // Extract src2 words
+    let concrete_val2 = src2.get_full_concrete_value();
+    let concrete_u64s2 = match &concrete_val2 {
+        ConcreteVar::Int(v) => vec![*v],
+        ConcreteVar::LargeInt(v) => v.clone(),
+        _ => vec![0],
+    };
+    let symbolic_bv2 = src2.get_symbolic_value_bv(executor.context);
+    let symbolic_bvs2 = match &src2 {
+        ConcolicEnum::ConcolicVar(var) => match &var.symbolic {
+            SymbolicVar::LargeInt(bvs) => bvs.clone(),
+            _ => vec![symbolic_bv2.clone()],
+        },
+        ConcolicEnum::CpuConcolicValue(cpu) => match &cpu.symbolic {
+            SymbolicVar::LargeInt(bvs) => bvs.clone(),
+            _ => vec![symbolic_bv2.clone()],
+        },
+        _ => vec![symbolic_bv2.clone()],
+    };
+
+    let mut src2_words = Vec::new();
+    let mut src2_symbolic_words = Vec::new();
+    for (chunk_idx, &chunk) in concrete_u64s2.iter().enumerate() {
+        for word_in_chunk in 0..4 {
+            if src2_words.len() >= num_words {
+                break;
+            }
+            src2_words.push(((chunk >> (word_in_chunk * 16)) & 0xFFFF) as u16);
+            let bv_chunk = &symbolic_bvs2[chunk_idx.min(symbolic_bvs2.len() - 1)];
+            let bit_start = word_in_chunk * 16;
+            let bit_end = bit_start + 15;
+            src2_symbolic_words.push(bv_chunk.extract(bit_end as u32, bit_start as u32));
+        }
+    }
+
+    // Perform element-wise multiplication and take low 16 bits
+    let mut result_concrete_words = Vec::new();
+    let mut result_symbolic_words = Vec::new();
+
+    let zero_bv = BV::from_u64(executor.context, 0, 16);
+
+    for i in 0..num_words {
+        let w1 = src1_words.get(i).copied().unwrap_or(0) as i16; // Signed 16-bit
+        let w2 = src2_words.get(i).copied().unwrap_or(0) as i16; // Signed 16-bit
+
+        // Multiply (results in 32-bit) and take low 16 bits
+        let product = (w1 as i32).wrapping_mul(w2 as i32);
+        let result_word = (product & 0xFFFF) as u16;
+        result_concrete_words.push(result_word);
+
+        // Symbolic multiplication
+        let sym1 = src1_symbolic_words.get(i).unwrap_or(&zero_bv);
+        let sym2 = src2_symbolic_words.get(i).unwrap_or(&zero_bv);
+
+        let sym_product = sym1.bvmul(sym2); // 16-bit * 16-bit = 16-bit in Z3 (wraps)
+        result_symbolic_words.push(sym_product);
+    }
+
+    log!(
+        executor.state.logger.clone(),
+        "VPMULLW computed {} words",
+        result_concrete_words.len()
+    );
+
+    // Pack result words back into 64-bit chunks
+    let mut result_concrete_chunks = Vec::new();
+    let mut result_symbolic_chunks = Vec::new();
+
+    for chunk_idx in 0..(num_words + 3) / 4 {
+        let base = chunk_idx * 4;
+        let mut concrete_chunk = 0u64;
+
+        // Combine 4x16-bit words into one 64-bit chunk
+        for word_in_chunk in 0..4 {
+            let idx = base + word_in_chunk;
+            if idx < num_words {
+                let word = result_concrete_words[idx] as u64;
+                concrete_chunk |= word << (word_in_chunk * 16);
+            }
+        }
+        result_concrete_chunks.push(concrete_chunk);
+
+        // Combine symbolic words
+        let mut symbolic_chunk = result_symbolic_words[base].clone();
+        for word_in_chunk in 1..4 {
+            let idx = base + word_in_chunk;
+            if idx < num_words {
+                symbolic_chunk = result_symbolic_words[idx].concat(&symbolic_chunk);
+            } else {
+                symbolic_chunk = BV::from_u64(executor.context, 0, 16).concat(&symbolic_chunk);
+            }
+        }
+        result_symbolic_chunks.push(symbolic_chunk);
+    }
+
+    // Create result
+    let result = if result_concrete_chunks.len() == 1 {
+        ConcolicVar::new_concrete_and_symbolic_int(
+            result_concrete_chunks[0],
+            result_symbolic_chunks[0].clone(),
+            executor.context,
+        )
+    } else {
+        ConcolicVar::new_concrete_and_symbolic_large_int(
+            result_concrete_chunks,
+            result_symbolic_chunks,
+            executor.context,
+        )
+    };
+
+    // Write result to output (if output exists)
+    // Some VPMULLW variants may not have an explicit output varnode
+    if instruction.output.is_some() {
+        executor.handle_output(instruction.output.as_ref(), result)?;
+    } else {
+        log!(
+            executor.state.logger.clone(),
+            "VPMULLW: No output varnode, result computed but not stored"
+        );
+    }
+
+    Ok(())
+}
+
+/// Handle VBROADCASTSD - Broadcast double-precision (64-bit) floating-point element
+///
+/// This instruction broadcasts a 64-bit double-precision floating-point value from the source
+/// operand to all 64-bit elements in the destination YMM register (256 bits = 4x64-bit doubles).
+///
+/// Instruction format: VBROADCASTSD ymm1, xmm2/m64
+/// - Input 0: CALLOTHER index (already processed)
+/// - Input 1: Destination YMM register (256 bits)
+/// - Input 2: Source XMM register or memory (64 bits to broadcast)
+pub fn handle_vbroadcastsd_avx(
+    executor: &mut ConcolicExecutor,
+    instruction: Inst,
+) -> Result<(), String> {
+    log!(
+        executor.state.logger.clone(),
+        "This CALLOTHER operation is a VBROADCASTSD (AVX) operation."
+    );
+
+    // Validate instruction format
+    // Expected: CallOther with 3 inputs: [const_index, dest_ymm, src_xmm/mem]
+    if instruction.inputs.len() < 3 {
+        return Err(format!(
+            "VBROADCASTSD requires at least 3 inputs, got {}",
+            instruction.inputs.len()
+        ));
+    }
+
+    // Input 1 is the destination YMM register (256 bits)
+    // Input 2 is the source (64-bit value to broadcast)
+    let source_varnode = &instruction.inputs[2];
+
+    log!(
+        executor.state.logger.clone(),
+        "VBROADCASTSD source: {:?}",
+        source_varnode
+    );
+
+    // Fetch the 64-bit source value
+    let source_value = executor
+        .varnode_to_concolic(source_varnode)
+        .map_err(|e| format!("Failed to fetch source value: {}", e))?;
+
+    // Extract the 64-bit value (concrete and symbolic)
+    let concrete_64bit = source_value.get_concrete_value();
+    let symbolic_64bit_bv = source_value.get_symbolic_value_bv(executor.context);
+
+    log!(
+        executor.state.logger.clone(),
+        "Broadcasting 64-bit value: concrete=0x{:016x}, symbolic_size={}",
+        concrete_64bit,
+        symbolic_64bit_bv.get_size()
+    );
+
+    // Ensure source is 64 bits
+    let symbolic_64bit = if symbolic_64bit_bv.get_size() < 64 {
+        symbolic_64bit_bv.zero_ext(64 - symbolic_64bit_bv.get_size())
+    } else if symbolic_64bit_bv.get_size() > 64 {
+        symbolic_64bit_bv.extract(63, 0)
+    } else {
+        symbolic_64bit_bv.clone()
+    };
+
+    // Broadcast to 4x64-bit values (256 bits total for YMM)
+    // YMM register layout: [bits 0-63, bits 64-127, bits 128-191, bits 192-255]
+    // All four 64-bit lanes get the same value
+    let concrete_chunks = vec![
+        concrete_64bit,
+        concrete_64bit,
+        concrete_64bit,
+        concrete_64bit,
+    ];
+    let symbolic_chunks = vec![
+        symbolic_64bit.clone(),
+        symbolic_64bit.clone(),
+        symbolic_64bit.clone(),
+        symbolic_64bit,
+    ];
+
+    // Create the result as a LargeInt (256 bits = 4 x 64-bit chunks)
+    let result = ConcolicVar::new_concrete_and_symbolic_large_int(
+        concrete_chunks,
+        symbolic_chunks,
+        executor.context,
+    );
+
+    log!(
+        executor.state.logger.clone(),
+        "VBROADCASTSD result: 4 lanes of 0x{:016x}",
+        concrete_64bit
+    );
+
+    // Write result to output (destination YMM register)
+    executor.handle_output(instruction.output.as_ref(), result)?;
+
+    Ok(())
 }
