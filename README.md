@@ -180,10 +180,23 @@ Notes:
 - Has integrated Z3 capabilities for writing invariants over the instructions and CPU registers, through the Rust crate.
 
 ### Strategies to find bugs/panics/vuln
-For more explanation about the bugs/panics/vuln research strategies, read here : [Strategies.md](doc/Strategies.md).
-<div align="left">
-  <img src="doc/github_zorya_panic-exploration_strategies.png" alt="Strategies" width="1000"/>
-</div>
+Zorya uses **compiler-aware detection strategies** to find vulnerabilities in binaries. Different compilers handle errors differently, so Zorya automatically adapts its analysis approach:
+
+**Detection Methods:**
+1. **AST-based panic exploration**: Reverse BFS through the control flow graph to find paths leading to explicit panic functions (e.g., `runtime.nilPanic`, `panic()`).
+2. **Speculative execution**: Lightweight concolic exploration of unexplored branches to detect implicit vulnerabilities like null pointer dereferences and division by zero.
+
+**Automatic Strategy Selection:**
+- **TinyGo binaries**: AST-based exploration only (TinyGo inserts explicit panic calls)
+- **Go GC binaries**: AST + Speculative execution (standard Go uses CPU traps for null derefs)
+- **C/C++ binaries**: Speculative execution only (no panic infrastructure)
+
+Zorya automatically selects the right strategy based on the `--lang` and `--compiler` flags you provide.
+
+For detailed technical information:
+- [Compiler-Aware Strategies](doc/Compiler-Aware-Strategies.md) - Strategy selection and configuration
+- [Speculative Execution](doc/Speculative-Execution.md) - Vulnerability detection without explicit panic calls
+- [General Strategies Overview](doc/Strategies.md) - High-level overview
 
 
 ## :movie_camera: Demo video

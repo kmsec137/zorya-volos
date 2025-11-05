@@ -38,6 +38,16 @@ else
     mkdir -p "$DUMPS_DIR"
 fi
 
+# Clean up and prepare the threads directory
+THREADS_DIR="$RESULTS_DIR/initialization_data/threads"
+if [ -d "$THREADS_DIR" ]; then
+    echo "Cleaning up existing thread dumps from previous runs..."
+    rm -rf "$THREADS_DIR"/*
+else
+    echo "Creating the threads directory..."
+    mkdir -p "$THREADS_DIR"
+fi
+
 # Locate helper scripts
 PARSE_SCRIPT="$SCRIPTS_DUMP/parse_and_generate.py"
 EXECUTE_SCRIPT="$SCRIPTS_DUMP/execute_commands.py"
@@ -123,7 +133,7 @@ if [ $? -ne 0 ]; then
     echo "Continuing anyway..."
 fi
 
-THREADS_DIR="$RESULTS_DIR/initialization_data/threads"
+# Check if thread dumps were created
 if [ -d "$THREADS_DIR" ] && [ "$(ls -A $THREADS_DIR 2>/dev/null)" ]; then
     THREAD_COUNT=$(find "$THREADS_DIR" -name "thread_*.json" | wc -l)
     echo "Successfully dumped $THREAD_COUNT thread(s) to $THREADS_DIR"

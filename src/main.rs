@@ -37,6 +37,7 @@ use zorya::state::panic_reach::{
     is_panic_reachable_addr, precompute_panic_reach, PanicReachRanges, PanicReachSet,
 };
 use zorya::state::simplify_z3::extract_underlying_condition_from_flag_ast;
+use zorya::state::speculative_execution::{speculative_explore_path, SpeculativeResult};
 use zorya::target_info::GLOBAL_TARGET_INFO;
 
 macro_rules! log {
@@ -744,15 +745,53 @@ fn execute_instructions_from(
                         || panic_addresses
                             .iter()
                             .any(|&a| a == branch_target_address_tmp);
-                if !panic_reach_ok {
+
+                // NEW: Also check if branch condition involves symbolic variables
+                // If so, we should explore it regardless of panic reachability
+                let condition_varnode_tmp = inst.inputs[1].clone();
+                let condition_symbolic_tmp = executor
+                    .varnode_to_concolic(&condition_varnode_tmp)
+                    .map_err(|e| e.to_string())
+                    .ok();
+
+                let involves_symbolic = if let Some(cond) = condition_symbolic_tmp {
+                    let cond_var = cond.to_concolic_var().unwrap();
+                    let expr_string = format!("{:?}", cond_var.symbolic);
+                    executor
+                        .function_symbolic_arguments
+                        .keys()
+                        .any(|arg_name| expr_string.contains(arg_name))
+                } else {
+                    false
+                };
+
+                // Get compiler type for gating decision
+                let compiler = env::var("COMPILER").unwrap_or_else(|_| String::new());
+
+                // Explore if panic-reachable OR involves symbolic variables (for vuln detection)
+                // Only skip if: not panic-reachable AND no symbolic vars AND compiler is TinyGo
+                if !panic_reach_ok && !involves_symbolic && compiler == "tinygo" {
                     inc_gated_by_reach();
                     log!(
                         executor.state.logger,
-                        "Skipping SMT analysis: neither block 0x{:x} nor target 0x{:x} are in panic reach or xrefs",
+                        "Skipping SMT analysis: neither block 0x{:x} nor target 0x{:x} are in panic reach or xrefs, no symbolic variables involved, and compiler is TinyGo",
                         current_rip,
                         branch_target_address_tmp
                     );
                 } else {
+                    if involves_symbolic && !panic_reach_ok {
+                        log!(
+                            executor.state.logger,
+                            "Branch at 0x{:x} involves symbolic variables; exploring for potential vulnerabilities...",
+                            current_rip
+                        );
+                    } else if !panic_reach_ok && compiler != "tinygo" {
+                        log!(
+                            executor.state.logger,
+                            "Branch at 0x{:x} not panic-reachable but exploring due to Go GC compiler (may contain implicit runtime panics)",
+                            current_rip
+                        );
+                    }
                     if !panic_reach.contains(&current_rip) {
                         inc_allowed_by_xref_fallback();
                     }
@@ -805,17 +844,48 @@ fn execute_instructions_from(
                         .function_symbolic_arguments
                         .keys()
                         .any(|arg_name| expr_string.contains(arg_name));
+
+                    // Check compiler/language type to decide exploration strategy
+                    let compiler_check = env::var("COMPILER").unwrap_or_else(|_| String::new());
+                    let source_lang_check = env::var("SOURCE_LANG").unwrap_or_default();
+
+                    // Always enable speculative execution for:
+                    // 1. Go GC compiler (implicit runtime panics: nil derefs, bounds checks, etc.)
+                    // 2. C/C++ binaries (implicit vulnerabilities: null derefs, buffer overflows, use-after-free, etc.)
+                    let needs_speculative = compiler_check == "gc"
+                        || (compiler_check.is_empty() && source_lang_check == "go")
+                        || source_lang_check == "c"
+                        || source_lang_check == "c++"
+                        || source_lang_check == "cpp";
+
                     // If the condition involves tracked variables or the constraint vector is not empty, we want to explore the negated path
-                    let should_explore = involves_tracked || !executor.constraint_vector.is_empty();
+                    // For GC compiler and C/C++, ALWAYS explore (may have implicit runtime vulnerabilities)
+                    let should_explore = involves_tracked
+                        || !executor.constraint_vector.is_empty()
+                        || needs_speculative;
 
                     if is_internal_target {
                         log!(executor.state.logger, ">>> Internal p-code branch target detected; skipping AST exploration and negated-path SMT.");
                     } else if !should_explore {
                         log!(
                             executor.state.logger,
-                            "Skipping negated-path exploration: condition has no tracked symbols and constraint vector is empty."
+                            "Skipping negated-path exploration: condition has no tracked symbols, constraint vector is empty, and not a language requiring speculative execution (TinyGo only)."
                         );
                     } else {
+                        if needs_speculative
+                            && !involves_tracked
+                            && executor.constraint_vector.is_empty()
+                        {
+                            log!(
+                                executor.state.logger,
+                                ">>> Enabling negated-path exploration for {} (may contain implicit runtime vulnerabilities)",
+                                if source_lang_check == "c" || source_lang_check == "c++" || source_lang_check == "cpp" {
+                                    "C/C++ binary"
+                                } else {
+                                    "Go GC compiler"
+                                }
+                            );
+                        }
                         // This block is for finding a SAT state for the negated path exploration
                         if negate_path_flag == "true" {
                             log!(
@@ -823,11 +893,154 @@ fn execute_instructions_from(
                                 ">>> Evaluating arguments for the negated path exploration."
                             );
 
-                            let ast_panic_result = explore_ast_for_panic(
-                                executor,
-                                address_of_negated_path_exploration,
-                                &binary_path,
-                            );
+                            // Determine exploration strategy based on compiler/language
+                            let source_lang_inner =
+                                env::var("SOURCE_LANG").unwrap_or_else(|_| "unknown".to_string());
+                            let compiler_inner =
+                                env::var("COMPILER").unwrap_or_else(|_| String::new());
+                            let use_speculative_execution = match (
+                                source_lang_inner.as_str(),
+                                compiler_inner.as_str(),
+                            ) {
+                                // TinyGo: Only AST-based exploration (explicit panic calls)
+                                ("go", "tinygo") => {
+                                    log!(
+                                        executor.state.logger,
+                                        ">>> Strategy: TinyGo binary detected - AST-based panic exploration only"
+                                    );
+                                    false
+                                }
+                                // Go GC compiler: AST + Speculative (implicit null derefs via CPU traps)
+                                ("go", "gc") | ("go", "") => {
+                                    log!(
+                                        executor.state.logger,
+                                        ">>> Strategy: Go GC compiler detected - AST + speculative execution for implicit vulnerabilities"
+                                    );
+                                    true
+                                }
+                                // C/C++: Only speculative execution (no panic infrastructure)
+                                ("c", _) | ("c++", _) | ("cpp", _) => {
+                                    log!(
+                                        executor.state.logger,
+                                        ">>> Strategy: C/C++ binary detected - speculative execution for de facto vulnerabilities"
+                                    );
+                                    true
+                                }
+                                // Default: use both for safety
+                                _ => {
+                                    log!(
+                                        executor.state.logger,
+                                        ">>> Strategy: Unknown compiler/language - using both AST and speculative execution"
+                                    );
+                                    true
+                                }
+                            };
+
+                            // SPECULATIVE EXECUTION: For Go GC and C/C++ binaries
+                            if use_speculative_execution {
+                                log!(
+                                    executor.state.logger,
+                                    ">>> Performing speculative execution on negated path at 0x{:x}...",
+                                    address_of_negated_path_exploration
+                                );
+
+                                let spec_result = speculative_explore_path(
+                                    executor,
+                                    address_of_negated_path_exploration,
+                                    &instructions_map,
+                                    50, // max depth
+                                );
+
+                                match spec_result {
+                                    SpeculativeResult::VulnerabilityFound(
+                                        vuln_type,
+                                        vuln_addr,
+                                        desc,
+                                    ) => {
+                                        log!(
+                                            executor.state.logger,
+                                            "╔═══════════════════════════════════════════════════════════════════"
+                                        );
+                                        log!(
+                                            executor.state.logger,
+                                            "║ 🚨 VULNERABILITY DETECTED VIA SPECULATIVE EXECUTION"
+                                        );
+                                        log!(executor.state.logger, "║ Type: {}", vuln_type);
+                                        log!(
+                                            executor.state.logger,
+                                            "║ Location: 0x{:x}",
+                                            vuln_addr
+                                        );
+                                        log!(executor.state.logger, "║ Description: {}", desc);
+                                        log!(
+                                            executor.state.logger,
+                                            "╚═══════════════════════════════════════════════════════════════════"
+                                        );
+
+                                        // Try to find a satisfying input
+                                        evaluate_args_z3(
+                                            executor,
+                                            inst,
+                                            Some(conditional_flag.clone()),
+                                            Some(current_rip),
+                                            Some(branch_target_address),
+                                            Some(vuln_addr),
+                                        )
+                                        .unwrap_or_else(|e| {
+                                            log!(
+                                                executor.state.logger,
+                                                "Error evaluating arguments for vulnerability at 0x{:x}: {}",
+                                                vuln_addr,
+                                                e
+                                            );
+                                        });
+                                    }
+                                    SpeculativeResult::Safe => {
+                                        log!(
+                                            executor.state.logger,
+                                            ">>> Speculative execution found no vulnerabilities in negated path"
+                                        );
+                                    }
+                                    SpeculativeResult::DepthLimitReached => {
+                                        log!(
+                                            executor.state.logger,
+                                            ">>> Speculative execution reached depth limit"
+                                        );
+                                    }
+                                    SpeculativeResult::Error(e) => {
+                                        log!(
+                                            executor.state.logger,
+                                            ">>> Speculative execution error: {}",
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+
+                            // AST EXPLORATION: For TinyGo and Go GC binaries (detect explicit panic calls)
+                            let use_ast_exploration =
+                                match (source_lang_inner.as_str(), compiler_inner.as_str()) {
+                                    ("go", _) => true, // All Go binaries
+                                    _ => false,        // C/C++ don't have panic infrastructure
+                                };
+
+                            let ast_panic_result = if use_ast_exploration {
+                                log!(
+                                    executor.state.logger,
+                                    ">>> Performing AST-based panic exploration..."
+                                );
+                                explore_ast_for_panic(
+                                    executor,
+                                    address_of_negated_path_exploration,
+                                    &binary_path,
+                                )
+                            } else {
+                                log!(
+                                    executor.state.logger,
+                                    ">>> Skipping AST exploration (not applicable for this language/compiler)"
+                                );
+                                "NO_PANIC_XREF_FOUND".to_string()
+                            };
 
                             if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
                                 if let Some(panic_addr_str) =

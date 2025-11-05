@@ -81,6 +81,19 @@ class DumpThreadsCommand(gdb.Command):
         # Create absolute path
         abs_outdir = os.path.abspath(outdir)
         
+        # Clean up old thread dumps to ensure fresh state for each execution
+        if os.path.exists(abs_outdir):
+            try:
+                import shutil
+                # Remove all existing .json files (thread dumps from previous runs)
+                for filename in os.listdir(abs_outdir):
+                    if filename.endswith('.json') or filename == 'thread_backtraces.txt':
+                        file_path = os.path.join(abs_outdir, filename)
+                        os.remove(file_path)
+                gdb.write(f"Cleaned up old thread dumps from: {abs_outdir}\n")
+            except OSError as e:
+                gdb.write(f"Warning: Could not clean up old thread dumps: {e}\n")
+        
         if not os.path.exists(abs_outdir):
             try:
                 os.makedirs(abs_outdir, exist_ok=True)

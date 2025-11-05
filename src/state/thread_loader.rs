@@ -4,7 +4,7 @@ use crate::state::cpu_state::CpuState;
 use crate::state::thread_manager::ThreadManager;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -55,9 +55,9 @@ pub fn load_threads_from_dumps<'ctx>(
         return Ok(());
     }
 
-    // Try to load the index file to determine main thread
+    // Try to load the index file to determine main thread and valid thread list
     let index_path = threads_dir.join("threads_index.json");
-    let main_tid = if index_path.exists() {
+    let (main_tid, valid_tids) = if index_path.exists() {
         let index_content =
             fs::read_to_string(&index_path).context("Failed to read threads_index.json")?;
         let index: ThreadsIndex =
@@ -78,14 +78,16 @@ pub fn load_threads_from_dumps<'ctx>(
             }
         }
 
-        Some(index.main_tid)
+        // Use the thread list from the index to filter which dumps to load
+        let valid_set: HashSet<u64> = index.threads.iter().copied().collect();
+        (Some(index.main_tid), Some(valid_set))
     } else {
         writeln!(
             logger,
-            "No threads_index.json found, will guess main thread"
+            "No threads_index.json found, will load all thread dumps"
         )
         .ok();
-        None
+        (None, None)
     };
 
     // Find all thread dump files
@@ -114,8 +116,14 @@ pub fn load_threads_from_dumps<'ctx>(
 
     thread_files.sort_by_key(|e| e.path());
 
-    let thread_count = thread_files.len();
-    writeln!(logger, "Loading {} thread dump(s)...", thread_count).ok();
+    writeln!(
+        logger,
+        "Found {} total thread dump(s) on disk",
+        thread_files.len()
+    )
+    .ok();
+
+    let mut loaded_count = 0;
 
     // Load each thread dump
     for entry in thread_files {
@@ -125,6 +133,14 @@ pub fn load_threads_from_dumps<'ctx>(
 
         let dump: ThreadDump = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse thread dump: {:?}", path))?;
+
+        // If we have a valid TID set, skip dumps that aren't in it
+        if let Some(ref valid_set) = valid_tids {
+            if !valid_set.contains(&dump.tid) {
+                // Skip this thread - it's from an old run
+                continue;
+            }
+        }
 
         let thread_desc = if dump.is_at_main {
             format!(
@@ -176,12 +192,14 @@ pub fn load_threads_from_dumps<'ctx>(
         thread_manager
             .create_thread_from_dump(dump.tid, cpu_state, dump.fs_base, dump.gs_base, is_current)
             .with_context(|| format!("Failed to create thread {} from dump", dump.tid))?;
+
+        loaded_count += 1;
     }
 
     writeln!(
         logger,
         "Successfully loaded {} thread(s) from dumps",
-        thread_count
+        loaded_count
     )
     .ok();
 

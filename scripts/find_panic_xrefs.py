@@ -21,8 +21,31 @@ def main():
     project_dir = os.path.join(parent, project_name)
     gpr_path = os.path.join(project_dir, f"{project_name}.gpr")
 
+    # Locate analyzeHeadless early (needed for both initial creation and retries)
+    ghidra_home = os.environ.get("GHIDRA_INSTALL_DIR")
+    headless = None
+    if ghidra_home:
+        candidate = os.path.join(ghidra_home, "support", "analyzeHeadless")
+        if os.path.exists(candidate):
+            headless = candidate
+    if headless is None:
+        headless = shutil.which("analyzeHeadless")
+    if headless is None:
+        raise RuntimeError("Could not find analyzeHeadless. Set GHIDRA_INSTALL_DIR or ensure analyzeHeadless is in PATH.")
+
     # Ensure project directory exists and contains a .gpr; create via headless if missing
     need_create = (not os.path.isdir(project_dir)) or (not os.path.isfile(gpr_path))
+    
+    # If directory exists but .gpr is missing, the project is corrupted - remove it entirely
+    if os.path.isdir(project_dir) and not os.path.isfile(gpr_path):
+        print(f"[WARN] Corrupted Ghidra project detected (missing .gpr), removing: {project_dir}")
+        try:
+            shutil.rmtree(project_dir)
+            need_create = True
+        except Exception as e:
+            print(f"[ERROR] Failed to remove corrupted project: {e}")
+            raise
+    
     if need_create:
         os.makedirs(project_dir, exist_ok=True)
         # Clean any stale lock files
@@ -33,18 +56,6 @@ def main():
                     print(f"[INFO] Removed stale lock file: {lock}")
                 except Exception as e:
                     print(f"[WARN] Failed to remove lock file {lock}: {e}")
-
-        # Locate analyzeHeadless
-        ghidra_home = os.environ.get("GHIDRA_INSTALL_DIR")
-        headless = None
-        if ghidra_home:
-            candidate = os.path.join(ghidra_home, "support", "analyzeHeadless")
-            if os.path.exists(candidate):
-                headless = candidate
-        if headless is None:
-            headless = shutil.which("analyzeHeadless")
-        if headless is None:
-            raise RuntimeError("Could not find analyzeHeadless. Set GHIDRA_INSTALL_DIR or ensure analyzeHeadless is in PATH.")
 
         print(f"[INFO] Creating Ghidra project via headless at {project_dir}")
         try:
