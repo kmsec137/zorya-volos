@@ -17,7 +17,7 @@ The core methodology involves **translating binary code into Ghidra's raw P-Code
 
 Zorya's engine, implemented in Rust, uses the **Z3 SMT solver** and includes a state manager, CPU state, memory model, and virtual file system. It emulates P-Code instructions to track the execution and detect vulnerabilities in the analyzed binaries.
 
-Zorya supports both concrete and symbolic data types, x86-64 instructions and syscalls, and manages the program counter. Currently, Zorya analyzes single-threaded Go programs compiled with TinyGo, with plans to address multithreading and goroutines in future work.
+Zorya supports both concrete and symbolic data types, x86-64 instructions and syscalls, and manages the program counter. Zorya can analyze single-threaded and starts to analyze multi-threaded Go programs, with automatic thread state dumping and restoration for binaries compiled with the gc compiler. For detailed information about multi-threading support, see [Multi-threading.md](doc/Multi-threading.md).
 
 > The owl sees what darkness keeps —
 > Zorya comes, and nothing sleeps.
@@ -157,6 +157,7 @@ This is it, you have entered the concrete value "a", and Zorya tells you that if
 - Can analyse the concolic handling of the jump tables, a specific type of switch tables that replace binary search by more efficient jumping mechanism for close number labels (see ```jump_table.json```),
 - Can generate a file witht the cross-reference addresses leading to all the panic functions that are in the target binary (see ```xref_addresses.txt```),
 - Is able to translate the executable part of libc.so and ld-linux-x86-64.so as P-Code after its dynamic loading.
+- Supports multi-threaded binaries with automatic thread state dumping and restoration, including register states and TLS bases (FS/GS) for all OS threads (see [Multi-threading.md](doc/Multi-threading.md), work in progress),
 - Precomputes reverse panic reachability from panic callsites using a CFG reverse BFS (with interprocedural callers), then answers O(1) reachability queries during execution (see ```panic_reachable.txt```),
 - Reports tainted coverage and fixpoint completion statistics (iteration counts, elapsed time, totals) and exports machine-readable metrics (see ```panic_coverage.json```),
 - Produces an unreachable summary grouped by categories and function names to help review what remains outside the panic-reaching subgraph (see ```unreachable_summary.txt``` / ```.json```),
@@ -172,15 +173,6 @@ Outputs written to ```results/```:
 - ```panic_coverage.json```: totals, coverage percentage, iteration breakdown, cache counters
 - ```unreachable_summary.txt``` / ```unreachable_summary.json```: unreachable blocks grouped by categories, listing function names (with counts)
 
-Configuration (optional):
-```
-# Keep exploring past early fixpoint if desired
-PANIC_REACH_EXHAUSTIVE=1
-
-# Function-body xref sampling (addresses from function body examined for incoming references)
-PANIC_REACH_BODY_XREF_BUDGET=50000   # default
-PANIC_REACH_BODY_XREF_STRIDE=1       # default
-```
 Notes:
 - Coverage is reported relative to all program basic blocks. Many blocks (libc stubs, init paths, helpers) do not lie on any path-to-panic and will remain outside the reverse slice. For evaluation, prefer the provided unreachable summary grouped by function names.
 

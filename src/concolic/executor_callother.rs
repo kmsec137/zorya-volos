@@ -88,11 +88,12 @@ pub fn handle_callother(executor: &mut ConcolicExecutor, instruction: Inst) -> R
     }
 }
 
+/// Handle LOCK - Atomic memory access prefix
+///
+/// This prefix ensures atomic access to memory for the following instruction.
+/// In our single-threaded concolic execution context, this is a no-op as atomicity
+/// is implicitly guaranteed by the sequential execution model.
 pub fn handle_lock(executor: &mut ConcolicExecutor) -> Result<(), String> {
-    // the locking mechanism acts as a barrier to prevent other threads from accessing the same resource,
-    // and mainly for CPU registers. However, in this context, we can ignore it because the locking and
-    // unlocking are already handled by the CPU state lock mechanism.
-    // We considere that this operation has no impact on the symbolic execution
     log!(
         executor.state.logger.clone(),
         "This CALLOTHER operation is a LOCK operation."
@@ -100,11 +101,12 @@ pub fn handle_lock(executor: &mut ConcolicExecutor) -> Result<(), String> {
     Ok(())
 }
 
+/// Handle UNLOCK - Release atomic memory access
+///
+/// Releases the lock acquired by a preceding LOCK prefix.
+/// In our single-threaded concolic execution context, this is a no-op as atomicity
+/// is implicitly guaranteed by the sequential execution model.
 pub fn handle_unlock(executor: &mut ConcolicExecutor) -> Result<(), String> {
-    // the locking mechanism acts as a barrier to prevent other threads from accessing the same resource,
-    // and mainly for CPU registers. However, in this context, we can ignore it because the locking and
-    // unlocking are already handled by the CPU state lock mechanism.
-    // We considere that this operation has no impact on the symbolic execution
     log!(
         executor.state.logger.clone(),
         "This CALLOTHER operation is an UNLOCK operation."
@@ -112,6 +114,11 @@ pub fn handle_unlock(executor: &mut ConcolicExecutor) -> Result<(), String> {
     Ok(())
 }
 
+/// Handle CPUID - CPU identification and feature information
+///
+/// Returns processor identification and feature information based on the value in EAX.
+/// Emulates an AMD Opteron G1 processor with standard x86-64 features.
+/// Results are written to EAX, EBX, ECX, and EDX registers.
 pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
     log!(
         executor.state.logger.clone(),
@@ -356,7 +363,10 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
     Ok(())
 }
 
-// Handle the AES encryption instruction
+/// Handle AESENC - AES single round encryption
+///
+/// Performs one round of AES encryption (ShiftRows, SubBytes, MixColumns, AddRoundKey).
+/// Takes a 128-bit state and round key as inputs, outputs the encrypted state.
 pub fn handle_aesenc(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
     log!(
         executor.state.logger.clone(),
@@ -397,7 +407,9 @@ pub fn handle_aesenc(executor: &mut ConcolicExecutor, instruction: Inst) -> Resu
     Ok(())
 }
 
-// Mock function to simulate the ShiftRows step in AES
+/// ShiftRows transformation for AES
+///
+/// Simplified implementation: performs left rotation as an approximation of the ShiftRows step.
 fn shift_rows<'a>(input: ConcolicEnum<'a>, executor: &mut ConcolicExecutor<'a>) -> ConcolicVar<'a> {
     // Typically, this would permute the bytes in the state matrix
     let symbolic_bv = rotate_left(input.get_symbolic_value_bv(executor.context), 8); // Rotate left for simplicity
@@ -421,7 +433,9 @@ fn shift_rows<'a>(input: ConcolicEnum<'a>, executor: &mut ConcolicExecutor<'a>) 
     ConcolicVar::new_concrete_and_symbolic_large_int(concrete_vec, symbolic_vec, executor.context)
 }
 
-// Mock function to simulate the SubBytes step in AES
+/// SubBytes transformation for AES
+///
+/// Simplified implementation: applies bitwise NOT as an approximation of the S-box substitution.
 fn sub_bytes<'a>(input: ConcolicVar<'a>, executor: &mut ConcolicExecutor<'a>) -> ConcolicVar<'a> {
     match (&input.concrete, &input.symbolic) {
         (ConcreteVar::LargeInt(concrete_vec), SymbolicVar::LargeInt(symbolic_vec)) => {
@@ -462,7 +476,9 @@ fn sub_bytes<'a>(input: ConcolicVar<'a>, executor: &mut ConcolicExecutor<'a>) ->
     }
 }
 
-// Mock function to simulate the MixColumns step in AES
+/// MixColumns transformation for AES
+///
+/// Simplified implementation: multiplies by 2 as an approximation of the MixColumns matrix multiplication.
 fn mix_columns<'a>(input: ConcolicVar<'a>, executor: &mut ConcolicExecutor<'a>) -> ConcolicVar<'a> {
     match (&input.concrete, &input.symbolic) {
         (ConcreteVar::LargeInt(concrete_vec), SymbolicVar::LargeInt(symbolic_vec)) => {
@@ -513,7 +529,9 @@ fn mix_columns<'a>(input: ConcolicVar<'a>, executor: &mut ConcolicExecutor<'a>) 
     }
 }
 
-// Enhanced rotate_left function that works with large integers
+/// Rotate bit vector left by specified number of positions
+///
+/// Supports arbitrary bit widths by extracting and recombining upper and lower parts.
 fn rotate_left<'a>(bv: BV<'a>, positions: u32) -> BV<'a> {
     let bit_width = bv.get_size();
     let actual_positions = positions % bit_width; // Handle cases where positions > bit_width
@@ -530,135 +548,170 @@ fn rotate_left<'a>(bv: BV<'a>, positions: u32) -> BV<'a> {
     lower_part.concat(&upper_part)
 }
 
+/// Handle CPUID Basic Info (EAX=0) - Vendor ID and highest basic function
+///
+/// Returns the highest supported basic CPUID function and processor vendor string.
 pub fn handle_cpuid_basic_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Example basic information handler
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Version Info (EAX=1) - Processor family, model, and feature flags
+///
+/// Returns processor signature (family, model, stepping) and feature bits.
 pub fn handle_cpuid_version_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Example version information handler, might include specific processor version details
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Cache/TLB Info (EAX=2) - Cache and TLB descriptor information
+///
+/// Returns cache and TLB configuration descriptors.
 pub fn handle_cpuid_cache_tlb_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Cache and TLB configuration details
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Serial Number (EAX=3) - Processor serial number
+///
+/// Returns processor serial number (deprecated on most modern processors).
 pub fn handle_cpuid_serial_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Processor serial number information (if applicable)
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Deterministic Cache Parameters (EAX=4) - Detailed cache hierarchy info
+///
+/// Returns detailed information about cache levels, sizes, and associativity.
 pub fn handle_cpuid_deterministic_cache_parameters_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Detailed cache parameters
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID MONITOR/MWAIT Features (EAX=5) - Power management capabilities
+///
+/// Returns MONITOR/MWAIT instruction support and C-state information.
 pub fn handle_cpuid_monitor_mwait_features_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // MONITOR/MWAIT features
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Thermal/Power Management (EAX=6) - Thermal monitoring features
+///
+/// Returns thermal sensor and dynamic frequency scaling capabilities.
 pub fn handle_cpuid_thermal_power_management_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Thermal and power management capabilities
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Extended Features (EAX=7) - Extended feature flags
+///
+/// Returns extended processor features like AVX2, BMI, TSX, etc.
 pub fn handle_cpuid_extended_feature_enumeration_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Extended processor feature flags
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Direct Cache Access (EAX=9) - DCA capabilities
+///
+/// Returns Direct Cache Access (DCA) feature information for I/O device prefetching.
 pub fn handle_cpuid_direct_cache_access_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Direct Cache Access information
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Performance Monitoring (EAX=0xA) - PMU architecture
+///
+/// Returns architectural performance monitoring unit capabilities and counters.
 pub fn handle_cpuid_architectural_performance_monitoring_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Performance monitoring features
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Extended Topology (EAX=0xB) - Processor topology enumeration
+///
+/// Returns x2APIC ID and processor topology information (cores, threads).
 pub fn handle_cpuid_extended_topology_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Extended topology enumeration
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Extended State (EAX=0xD) - XSAVE/XRESTORE features
+///
+/// Returns processor extended state enumeration (XSAVE feature set support).
 pub fn handle_cpuid_processor_extended_states_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Extended states like XSAVE/XRESTORE capabilities
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Quality of Service (EAX=0xF/0x10) - Resource monitoring/allocation
+///
+/// Returns RDT (Resource Director Technology) QoS capabilities.
 pub fn handle_cpuid_quality_of_service_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // QoS feature information
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Brand String Part 1 (EAX=0x80000002) - Processor name string
+///
+/// Returns the first 16 characters of the processor brand string.
 pub fn handle_cpuid_brand_part1_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Brand string part 1
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Brand String Part 2 (EAX=0x80000003) - Processor name string
+///
+/// Returns characters 17-32 of the processor brand string.
 pub fn handle_cpuid_brand_part2_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Brand string part 2
     handle_cpuid(executor, instruction)
 }
 
+/// Handle CPUID Brand String Part 3 (EAX=0x80000004) - Processor name string
+///
+/// Returns characters 33-48 of the processor brand string.
 pub fn handle_cpuid_brand_part3_info(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    // Brand string part 3
     handle_cpuid(executor, instruction)
 }
 
-// Handle the Read Time-Stamp Counter and Processor ID (RDTSCP) instruction
+/// Handle RDTSCP - Read Time-Stamp Counter and Processor ID
+///
+/// Returns the current time-stamp counter in EDX:EAX and processor ID in ECX.
+/// Serializes instruction execution before reading the counter.
 pub fn handle_rdtscp(executor: &mut ConcolicExecutor) -> Result<(), String> {
     log!(
         executor.state.logger.clone(),
@@ -738,7 +791,10 @@ pub fn handle_rdtscp(executor: &mut ConcolicExecutor) -> Result<(), String> {
     Ok(())
 }
 
-// Handle the Read Time-Stamp Counter (RDTSC) instruction
+/// Handle RDTSC - Read Time-Stamp Counter
+///
+/// Returns the current time-stamp counter value in EDX:EAX.
+/// Non-serializing version (allows out-of-order execution).
 pub fn handle_rdtsc(executor: &mut ConcolicExecutor) -> Result<(), String> {
     log!(
         executor.state.logger.clone(),
@@ -801,7 +857,10 @@ pub fn handle_rdtsc(executor: &mut ConcolicExecutor) -> Result<(), String> {
     Ok(())
 }
 
-// Handle the Software Interrupt (SWI) instruction
+/// Handle SWI - Software Interrupt
+///
+/// Triggers a software interrupt with the specified interrupt number.
+/// Currently handles INT3 (debug breakpoint), others cause execution abort.
 fn handle_swi(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
     log!(
         executor.state.logger.clone(),
@@ -868,76 +927,94 @@ fn handle_swi(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), 
     }
 }
 
+/// Handle PSHUFB - Packed Shuffle Bytes (SSSE3)
+///
+/// Not implemented for AMD64 Opteron G1 (lacks SSSE3 support).
 pub fn handle_pshufb(_executor: &mut ConcolicExecutor, _instruction: Inst) -> Result<(), String> {
-    panic!("Handle_pshufb is not handled in AMD64 Opteron G1.");
+    panic!("PSHUFB is not supported on AMD64 Opteron G1.");
 }
 
+/// Handle PSHUFHW - Shuffle Packed High Words (SSE2)
+///
+/// Not implemented for AMD64 Opteron G1.
 pub fn handle_pshufhw(_executor: &mut ConcolicExecutor, _instruction: Inst) -> Result<(), String> {
-    panic!("Handle_pshufhw is not handled in AMD64 Opteron G1.");
+    panic!("PSHUFHW is not supported on AMD64 Opteron G1.");
 }
 
+/// Handle VMOVDQU - Move Unaligned Packed Integer Values (AVX)
+///
+/// Not implemented for AMD64 Opteron G1 (lacks AVX support).
 pub fn handle_vmovdqu_avx(
     _executor: &mut ConcolicExecutor,
     _instruction: Inst,
 ) -> Result<(), String> {
-    panic!("Handle_vmovdqu_avx is not handled in AMD64 Opteron G1.");
+    panic!("VMOVDQU (AVX) is not supported on AMD64 Opteron G1.");
 }
 
+/// Handle VMOVNTDQ - Store Packed Integers Using Non-Temporal Hint (AVX)
+///
+/// Not implemented for AMD64 Opteron G1 (lacks AVX support).
 pub fn handle_vmovntdq_avx(
     _executor: &mut ConcolicExecutor,
     _instruction: Inst,
 ) -> Result<(), String> {
-    panic!("Handle_vmovntdq_avx is not handled in AMD64 Opteron G1.");
+    panic!("VMOVNTDQ (AVX) is not supported on AMD64 Opteron G1.");
 }
 
+/// Handle VPTEST - Logical Compare (AVX)
+///
+/// Not implemented for AMD64 Opteron G1 (lacks AVX support).
 pub fn handle_vptest_avx(
     _executor: &mut ConcolicExecutor,
     _instruction: Inst,
 ) -> Result<(), String> {
-    panic!("handle_vptest_avx is not handled in AMD64 Opteron G1.");
+    panic!("VPTEST (AVX) is not supported on AMD64 Opteron G1.");
 }
 
+/// Handle VPXOR - Bitwise Logical XOR (AVX)
+///
+/// Not implemented for AMD64 Opteron G1 (lacks AVX support).
 pub fn handle_vpxor_avx(
     _executor: &mut ConcolicExecutor,
     _instruction: Inst,
 ) -> Result<(), String> {
-    panic!("Handle_vpxor_avx is not handled in AMD64 Opteron G1.");
+    panic!("VPXOR (AVX) is not supported on AMD64 Opteron G1.");
 }
 
+/// Handle VPAND - Bitwise Logical AND (AVX2)
+///
+/// Not implemented for AMD64 Opteron G1 (lacks AVX2 support).
 pub fn handle_vpand_avx2(
     _executor: &mut ConcolicExecutor,
     _instruction: Inst,
 ) -> Result<(), String> {
-    panic!("Handle_vpand_avx2 is not handled in AMD64 Opteron G1.");
+    panic!("VPAND (AVX2) is not supported on AMD64 Opteron G1.");
 }
 
+/// Handle VPCMPEQB - Compare Packed Bytes for Equality (AVX2)
+///
+/// Not implemented for AMD64 Opteron G1 (lacks AVX2 support).
 pub fn handle_vpcmpeqb_avx2(
     _executor: &mut ConcolicExecutor,
     _instruction: Inst,
 ) -> Result<(), String> {
-    panic!("Handle_vpcmpeqb_avx2 is not handled in AMD64 Opteron G1.");
+    panic!("VPCMPEQB (AVX2) is not supported on AMD64 Opteron G1.");
 }
 
+/// Handle VPBROADCASTB - Broadcast Byte (AVX2)
+///
+/// Not implemented for AMD64 Opteron G1 (lacks AVX2 support).
 pub fn handle_vpbroadcastb_avx2(
     _executor: &mut ConcolicExecutor,
     _instruction: Inst,
 ) -> Result<(), String> {
-    panic!("Handle_vpbroadcastb_avx2 is not handled in AMD64 Opteron G1.");
+    panic!("VPBROADCASTB (AVX2) is not supported on AMD64 Opteron G1.");
 }
 
-/// Handle VPMULLW (AVX) - Multiply Packed Signed Word Integers and Store Low Result
+/// Handle VPMULLW - Multiply Packed Signed Word Integers (AVX)
 ///
-/// This instruction performs element-wise multiplication of packed 16-bit signed integers
-/// from two source operands and stores the lower 16 bits of each 32-bit product.
-///
-/// Instruction format: VPMULLW xmm1, xmm2, xmm3/m128 or VPMULLW ymm1, ymm2, ymm3/m256
-/// - Input 0: CALLOTHER index (already processed)
-/// - Input 1: First source operand (128 or 256 bits)
-/// - Input 2: Second source operand (128 or 256 bits)
-/// - Output: Destination register with low 16 bits of each multiplication
-///
-/// For 128-bit (XMM): 8 x 16-bit words
-/// For 256-bit (YMM): 16 x 16-bit words
+/// Performs element-wise multiplication of packed 16-bit signed integers and stores
+/// the lower 16 bits of each 32-bit product. Supports 128-bit (XMM) or 256-bit (YMM) operands.
 pub fn handle_vpmullw_avx(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
@@ -1144,15 +1221,10 @@ pub fn handle_vpmullw_avx(
     Ok(())
 }
 
-/// Handle VBROADCASTSD - Broadcast double-precision (64-bit) floating-point element
+/// Handle VBROADCASTSD - Broadcast Double-Precision Float (AVX)
 ///
-/// This instruction broadcasts a 64-bit double-precision floating-point value from the source
-/// operand to all 64-bit elements in the destination YMM register (256 bits = 4x64-bit doubles).
-///
-/// Instruction format: VBROADCASTSD ymm1, xmm2/m64
-/// - Input 0: CALLOTHER index (already processed)
-/// - Input 1: Destination YMM register (256 bits)
-/// - Input 2: Source XMM register or memory (64 bits to broadcast)
+/// Broadcasts a 64-bit double-precision floating-point value to all four 64-bit lanes
+/// of a 256-bit YMM register.
 pub fn handle_vbroadcastsd_avx(
     executor: &mut ConcolicExecutor,
     instruction: Inst,

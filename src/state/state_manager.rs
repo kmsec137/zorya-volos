@@ -118,9 +118,56 @@ impl<'a> State<'a> {
         let initial_cpu_for_thread = cpu_state.lock().unwrap().clone();
         let thread_manager = Arc::new(Mutex::new(ThreadManager::new(
             1,
-            initial_cpu_for_thread,
+            initial_cpu_for_thread.clone(),
             ctx,
         )));
+
+        // Load multi-thread dumps if available
+        log!(logger.clone(), "Checking for multi-thread dumps...\n");
+        let threads_dir = {
+            let info = GLOBAL_TARGET_INFO.lock().unwrap();
+            info.zorya_path
+                .join("results")
+                .join("initialization_data")
+                .join("threads")
+        };
+
+        if threads_dir.exists() {
+            log!(
+                logger.clone(),
+                "Found threads directory, loading thread dumps...\n"
+            );
+            let mut tm = thread_manager.lock().unwrap();
+            let load_result = crate::state::thread_loader::load_threads_from_dumps(
+                &threads_dir,
+                &initial_cpu_for_thread,
+                &mut tm,
+                &mut logger.clone(),
+                ctx,
+            );
+
+            match load_result {
+                Ok(()) => {
+                    log!(logger.clone(), "Successfully loaded multi-thread state\n");
+                    println!("Successfully loaded multi-thread state\n");
+                }
+                Err(e) => {
+                    log!(
+                        logger.clone(),
+                        "Warning: Failed to load thread dumps: {}\n",
+                        e
+                    );
+                    println!("Warning: Failed to load thread dumps: {}\n", e);
+                    println!("Continuing with single-threaded execution...\n");
+                }
+            }
+            drop(tm); // Release lock
+        } else {
+            log!(
+                logger.clone(),
+                "No threads directory found, using single-threaded mode\n"
+            );
+        }
 
         let mut state = State {
             concolic_vars: BTreeMap::new(),

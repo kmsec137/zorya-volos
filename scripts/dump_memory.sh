@@ -101,7 +101,37 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "Dump commands executed successfully in GDB. Logs available in $GDB_LOG."
+echo "Dump commands executed successfully in GDB."
+
+# Dump all thread states (registers + FS/GS base)
+echo "Dumping thread states (registers + TLS bases)..."
+gdb -batch \
+    -ex "set auto-load safe-path /" \
+    -ex "set pagination off" \
+    -ex "set confirm off" \
+    -ex "file $BIN_PATH" \
+    -ex "set args ${ARGS}" \
+    -ex "break *$START_POINT" \
+    -ex "run" \
+    -ex "source $SCRIPTS_DUMP/dump_threads.py" \
+    -ex "dump-threads" \
+    -ex "quit" &>> "$GDB_LOG"
+
+# Check if thread dump was successful
+if [ $? -ne 0 ]; then
+    echo "Warning: Thread dump may have failed. Check $GDB_LOG for details."
+    echo "Continuing anyway..."
+fi
+
+THREADS_DIR="$RESULTS_DIR/initialization_data/threads"
+if [ -d "$THREADS_DIR" ] && [ "$(ls -A $THREADS_DIR 2>/dev/null)" ]; then
+    THREAD_COUNT=$(find "$THREADS_DIR" -name "thread_*.json" | wc -l)
+    echo "Successfully dumped $THREAD_COUNT thread(s) to $THREADS_DIR"
+else
+    echo "Warning: No thread dumps found. Single-threaded execution will be assumed."
+fi
+
+echo "All dumps completed. Logs available in $GDB_LOG."
 echo "Outputs available in $RESULTS_DIR/initialization_data."
 
 

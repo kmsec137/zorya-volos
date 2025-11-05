@@ -19,8 +19,11 @@ pub struct OSThread<'ctx> {
     /// Stack pointer at thread creation
     pub stack_pointer: u64,
 
-    /// Thread-local storage (FS/GS base)
-    pub tls_base: u64,
+    /// Thread-local storage FS base
+    pub fs_base: u64,
+
+    /// Thread-local storage GS base
+    pub gs_base: u64,
 
     /// Entry point (RIP) where this thread should start executing
     pub entry_point: u64,
@@ -122,7 +125,8 @@ impl<'ctx> OSThread<'ctx> {
             parent_tid,
             cpu_state,
             stack_pointer,
-            tls_base,
+            fs_base: tls_base,
+            gs_base: 0, // Not set during clone, only via arch_prctl
             entry_point,
             status: ThreadStatus::Ready,
             clone_flags,
@@ -159,7 +163,8 @@ impl<'ctx> ThreadManager<'ctx> {
             parent_tid: 0, // Main thread has no parent
             cpu_state: initial_cpu,
             stack_pointer: 0, // Will be set from RSP
-            tls_base: 0,
+            fs_base: 0,
+            gs_base: 0,
             entry_point: 0,
             status: ThreadStatus::Running,
             clone_flags: 0,
@@ -285,5 +290,62 @@ impl<'ctx> ThreadManager<'ctx> {
             .values()
             .filter(|t| !matches!(t.status, ThreadStatus::Exited(_)))
             .count()
+    }
+
+    /// Create a new thread from a dump (registers + TLS bases)
+    /// Used when loading multi-thread state from GDB dumps
+    pub fn create_thread_from_dump(
+        &mut self,
+        tid: u64,
+        cpu_state: CpuState<'ctx>,
+        fs_base: u64,
+        gs_base: u64,
+        is_current: bool,
+    ) -> Result<()> {
+        if self.threads.contains_key(&tid) {
+            return Err(anyhow!("Thread {} already exists", tid));
+        }
+
+        // Get stack pointer and entry point from CPU state
+        let stack_pointer = cpu_state
+            .get_register_by_offset(0x20, 64) // RSP
+            .map(|v| v.concrete.to_u64())
+            .unwrap_or(0);
+
+        let entry_point = cpu_state
+            .get_register_by_offset(0x288, 64) // RIP
+            .map(|v| v.concrete.to_u64())
+            .unwrap_or(0);
+
+        let thread = OSThread {
+            tid,
+            parent_tid: 0, // Unknown from dump
+            cpu_state,
+            stack_pointer,
+            fs_base,
+            gs_base,
+            entry_point,
+            status: if is_current {
+                ThreadStatus::Running
+            } else {
+                ThreadStatus::Ready
+            },
+            clone_flags: 0,
+            child_tid_ptr: None,
+            child_cleartid_ptr: None,
+        };
+
+        self.threads.insert(tid, thread);
+
+        if is_current {
+            self.current_tid = tid;
+        }
+
+        println!(
+            "[THREAD] Loaded TID={} from dump (fs_base=0x{:x}, gs_base=0x{:x})",
+            tid, fs_base, gs_base
+        );
+
+        Ok(())
     }
 }
