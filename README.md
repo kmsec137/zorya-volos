@@ -50,10 +50,11 @@ zorya <path>
 The prompt will ask you for the:
 1. Source code language: go, c, or c++
 2. Go compiler: tinygo or gc (only when go is selected)
-3. Analysis mode: start, main, function, or custom
-4. Function address: If you chose function or custom modes
-5. Binary arguments: If the binary expects arguments (optional)
-6. Negating path execution: Whether to symbolically explore alternate branches (defaults to yes)
+3. Thread scheduling strategy: all-threads or main-only (only for Go GC binaries)
+4. Analysis mode: start, main, function, or custom
+5. Function address: If you chose function or custom modes
+6. Binary arguments: If the binary expects arguments (optional)
+7. Negating path execution: Whether to symbolically explore alternate branches (defaults to yes)
 
 ### B. Basic Command-Line Usage
 To use Zorya in its basic form, you need the absolute path to the binary you wish to analyze (```<path>```) and the hexadecimal address where execution should begin (```<addr>```). You must then specify the execution mode (start, main, function, or custom) based on your chosen analysis strategy. Additionally, you can provide any necessary arguments to be passed to the binary:

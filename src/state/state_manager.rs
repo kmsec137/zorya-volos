@@ -122,6 +122,13 @@ impl<'a> State<'a> {
             ctx,
         )));
 
+        // Configure thread scheduler from environment variables
+        {
+            let mut tm = thread_manager.lock().unwrap();
+            tm.configure_from_env();
+            drop(tm);
+        }
+
         // Load multi-thread dumps if available
         log!(logger.clone(), "Checking for multi-thread dumps...\n");
         let threads_dir = {

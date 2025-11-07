@@ -28,3 +28,6 @@ results/execution_trace_runtime-mcommoninit.txt
 /results/tainted_functions.txt
 /results/unreachable_summary.txt
 /results/unreachable_summary.json
+/results/execution_log_main-main.txt
+/doc/Go-Scheduler-Concolic.md
+/doc/Thread-Scheduling.md

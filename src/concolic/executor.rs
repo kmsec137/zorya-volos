@@ -1643,6 +1643,29 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             return Err("Invalid instruction format for CALL".to_string());
         }
 
+        // Thread scheduling checkpoint: Consider switching threads at function call
+        {
+            let mut tm = self.state.thread_manager.lock().unwrap();
+            tm.tick_instruction();
+            if let Ok(Some(new_tid)) =
+                tm.maybe_switch_thread(crate::state::CheckpointType::FunctionCall)
+            {
+                // Thread switched - update CPU state from new thread
+                if let Ok(new_thread) = tm.current_thread() {
+                    let mut cpu_guard = self.state.cpu_state.lock().unwrap();
+                    *cpu_guard = new_thread.cpu_state.clone();
+                    drop(cpu_guard);
+
+                    log!(
+                        self.state.logger.clone(),
+                        "[SCHEDULER] Switched to thread {}, updated CPU state",
+                        new_tid
+                    );
+                }
+            }
+            drop(tm);
+        }
+
         // Push a new function frame onto the call stack
         self.push_function_frame();
 

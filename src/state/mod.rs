@@ -20,5 +20,5 @@ pub use memory_x86_64::MemoryX86_64;
 pub use speculative_execution::{speculative_explore_path, SpeculativeResult};
 pub use state_manager::State;
 pub use thread_loader::load_threads_from_dumps;
-pub use thread_manager::{OSThread, ThreadManager, ThreadStatus};
+pub use thread_manager::{CheckpointType, OSThread, SchedulingPolicy, ThreadManager, ThreadStatus};
 pub use virtual_file_system::VirtualFileSystem;

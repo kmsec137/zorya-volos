@@ -121,7 +121,7 @@ pub fn initialize_string_memory_contents<'a>(
         "=== INITIALIZING STRING MEMORY CONTENTS ==="
     );
 
-    for (arg_name, _reg_name, arg_type) in function_args {
+    for (arg_name, reg_name, arg_type) in function_args {
         // Only process string types
         if arg_type != "string" {
             continue;
@@ -129,9 +129,10 @@ pub fn initialize_string_memory_contents<'a>(
 
         log!(
             executor.state.logger,
-            "Processing string memory for '{}' of type '{}'",
+            "Processing string memory for '{}' of type '{}' (registers: {})",
             arg_name,
-            arg_type
+            arg_type,
+            reg_name
         );
 
         // Get the string's pointer and length from tracked symbolic variables
@@ -145,9 +146,9 @@ pub fn initialize_string_memory_contents<'a>(
             if let (SymbolicVar::Int(_ptr_bv), SymbolicVar::Int(_len_bv)) =
                 (ptr_sym_var, len_sym_var)
             {
-                // Get concrete values from the symbolic variables or fallback to registers
-                let ptr_concrete = get_concrete_string_ptr_value(executor, arg_name);
-                let len_concrete = get_concrete_string_len_value(executor, arg_name);
+                // Get concrete values from the actual registers specified in the signature
+                let ptr_concrete = get_concrete_string_ptr_value_from_regs(executor, reg_name);
+                let len_concrete = get_concrete_string_len_value_from_regs(executor, reg_name);
 
                 if let (Some(ptr_addr), Some(str_len)) = (ptr_concrete, len_concrete) {
                     log!(
@@ -207,61 +208,78 @@ pub fn initialize_string_memory_contents<'a>(
     );
 }
 
-/// Get concrete pointer value for a string argument
-fn get_concrete_string_ptr_value<'a>(
+/// Get concrete pointer value for a string argument from register specification
+fn get_concrete_string_ptr_value_from_regs<'a>(
     executor: &ConcolicExecutor<'a>,
-    arg_name: &str,
+    reg_spec: &str,
 ) -> Option<u64> {
-    // Try to get from RDI (typical for first string arg in Go ABI)
-    if let Some(val) = get_concrete_value_from_location(executor, "RDI") {
+    // Parse register specification (e.g., "RAX,RBX" or "RDI,RSI")
+    let regs: Vec<&str> = reg_spec.split(',').map(|s| s.trim()).collect();
+
+    if regs.is_empty() {
+        return None;
+    }
+
+    // For Go strings, the first register typically holds the pointer
+    let ptr_reg = regs[0];
+
+    log!(
+        executor.state.logger.clone(),
+        "DEBUG: Extracting string pointer from register '{}' (from spec '{}')",
+        ptr_reg,
+        reg_spec
+    );
+
+    if let Some(val) = get_concrete_value_from_location(executor, ptr_reg) {
+        log!(
+            executor.state.logger.clone(),
+            "String pointer from register '{}' = 0x{:x}",
+            ptr_reg,
+            val
+        );
         return Some(val);
     }
 
-    // Try other common pointer registers
-    for reg in &["RSI", "RDX", "RCX", "R8", "R9"] {
-        if let Some(val) = get_concrete_value_from_location(executor, reg) {
-            // Basic heuristic: valid pointer should be non-zero and aligned
-            if val != 0 && (val & 7) == 0 && executor.state.memory.is_valid_address(val) {
-                log!(
-                    executor.state.logger.clone(),
-                    "Detected string '{}' pointer in register {} = 0x{:x}",
-                    arg_name,
-                    reg,
-                    val
-                );
-                return Some(val);
-            }
-        }
-    }
     None
 }
 
-/// Get concrete length value for a string argument
-fn get_concrete_string_len_value<'a>(
+/// Get concrete length value for a string argument from register specification
+fn get_concrete_string_len_value_from_regs<'a>(
     executor: &ConcolicExecutor<'a>,
-    arg_name: &str,
+    reg_spec: &str,
 ) -> Option<u64> {
-    // Try to get from RSI (typical for string length in Go ABI)
-    if let Some(val) = get_concrete_value_from_location(executor, "RSI") {
+    // Parse register specification (e.g., "RAX,RBX" or "RDI,RSI")
+    let regs: Vec<&str> = reg_spec.split(',').map(|s| s.trim()).collect();
+
+    if regs.len() < 2 {
+        log!(
+            executor.state.logger.clone(),
+            "WARNING: String register specification '{}' has less than 2 registers, cannot extract length",
+            reg_spec
+        );
+        return None;
+    }
+
+    // For Go strings, the second register typically holds the length
+    let len_reg = regs[1];
+
+    log!(
+        executor.state.logger.clone(),
+        "DEBUG: Extracting string length from register '{}' (from spec '{}')",
+        len_reg,
+        reg_spec
+    );
+
+    if let Some(val) = get_concrete_value_from_location(executor, len_reg) {
+        log!(
+            executor.state.logger.clone(),
+            "String length from register '{}' = {}",
+            len_reg,
+            val
+        );
         return Some(val);
     }
 
-    // Try other common length registers
-    for reg in &["RDX", "RCX", "R8", "R9"] {
-        if let Some(val) = get_concrete_value_from_location(executor, reg) {
-            // Basic heuristic: length should be reasonable (not too large)
-            if val > 0 && val < 10000 {
-                log!(
-                    executor.state.logger.clone(),
-                    "Detected string '{}' length in register {} = {}",
-                    arg_name,
-                    reg,
-                    val
-                );
-                return Some(val);
-            }
-        }
-    }
     None
 }
 

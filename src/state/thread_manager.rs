@@ -136,6 +136,32 @@ impl<'ctx> OSThread<'ctx> {
     }
 }
 
+/// Scheduling policy for thread switching
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SchedulingPolicy {
+    /// Only run the main thread (default - no thread switching)
+    MainOnly,
+
+    /// Round-robin scheduling between all ready threads
+    RoundRobin,
+}
+
+/// Checkpoint types where thread switching can occur
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CheckpointType {
+    /// Syscall instruction
+    Syscall,
+
+    /// Function call (CALL instruction)
+    FunctionCall,
+
+    /// Memory barrier or atomic operation
+    MemoryBarrier,
+
+    /// Explicit yield point
+    Yield,
+}
+
 /// Manages all OS threads in the execution
 #[derive(Debug)]
 pub struct ThreadManager<'ctx> {
@@ -150,6 +176,21 @@ pub struct ThreadManager<'ctx> {
 
     /// Z3 context reference
     ctx: &'ctx Context,
+
+    /// Scheduling policy
+    pub scheduling_policy: SchedulingPolicy,
+
+    /// Maximum depth of thread switches to explore (to control state explosion)
+    pub max_switch_depth: usize,
+
+    /// Current switch depth
+    pub current_switch_depth: usize,
+
+    /// Instruction count for current thread (used for time-slice based scheduling)
+    pub instruction_count: usize,
+
+    /// Instructions per time slice before considering a switch
+    pub time_slice_instructions: usize,
 }
 
 impl<'ctx> ThreadManager<'ctx> {
@@ -179,6 +220,11 @@ impl<'ctx> ThreadManager<'ctx> {
             current_tid: initial_tid,
             next_tid: initial_tid + 1,
             ctx,
+            scheduling_policy: SchedulingPolicy::MainOnly,
+            max_switch_depth: 100,
+            current_switch_depth: 0,
+            instruction_count: 0,
+            time_slice_instructions: 1000, // Switch after 1000 instructions
         }
     }
 
@@ -347,5 +393,173 @@ impl<'ctx> ThreadManager<'ctx> {
         );
 
         Ok(())
+    }
+
+    /// Set the scheduling policy from environment variable
+    /// Only enables thread scheduling for Go GC binaries (not TinyGo or other languages)
+    pub fn configure_from_env(&mut self) {
+        // Check language and compiler - only enable for Go GC binaries
+        let source_lang = std::env::var("SOURCE_LANG")
+            .unwrap_or_default()
+            .to_lowercase();
+        let compiler = std::env::var("COMPILER").unwrap_or_default().to_lowercase();
+
+        let is_go_gc = source_lang == "go" && compiler == "gc";
+
+        if !is_go_gc {
+            println!(
+                "[SCHEDULER] Thread scheduling only supported for Go GC binaries (detected: lang={}, compiler={})", 
+                if source_lang.is_empty() { "none" } else { &source_lang },
+                if compiler.is_empty() { "none" } else { &compiler }
+            );
+            println!("[SCHEDULER] Using MainOnly policy");
+            self.scheduling_policy = SchedulingPolicy::MainOnly;
+            return;
+        }
+
+        println!("[SCHEDULER] Detected Go GC binary, thread scheduling available");
+
+        if let Ok(policy_str) = std::env::var("THREAD_SCHEDULING") {
+            match policy_str.to_lowercase().as_str() {
+                "round_robin" | "rr" => {
+                    self.scheduling_policy = SchedulingPolicy::RoundRobin;
+                    println!("[SCHEDULER] Enabled round-robin thread scheduling");
+                }
+                "main_only" | "none" => {
+                    self.scheduling_policy = SchedulingPolicy::MainOnly;
+                    println!("[SCHEDULER] Thread scheduling disabled (main thread only)");
+                }
+                _ => {
+                    println!(
+                        "[SCHEDULER] Unknown scheduling policy '{}', using MainOnly",
+                        policy_str
+                    );
+                }
+            }
+        }
+
+        if let Ok(depth_str) = std::env::var("THREAD_SWITCH_DEPTH") {
+            if let Ok(depth) = depth_str.parse::<usize>() {
+                self.max_switch_depth = depth;
+                println!("[SCHEDULER] Set max switch depth to {}", depth);
+            }
+        }
+
+        if let Ok(slice_str) = std::env::var("THREAD_TIME_SLICE") {
+            if let Ok(slice) = slice_str.parse::<usize>() {
+                self.time_slice_instructions = slice;
+                println!("[SCHEDULER] Set time slice to {} instructions", slice);
+            }
+        }
+    }
+
+    /// Increment instruction count and check if time slice expired
+    pub fn tick_instruction(&mut self) {
+        self.instruction_count += 1;
+    }
+
+    /// Check if we should consider switching threads at a checkpoint
+    pub fn should_consider_switch(&self, checkpoint_type: CheckpointType) -> bool {
+        // Don't switch if policy is MainOnly
+        if self.scheduling_policy == SchedulingPolicy::MainOnly {
+            return false;
+        }
+
+        // Don't switch if we've reached max depth
+        if self.current_switch_depth >= self.max_switch_depth {
+            return false;
+        }
+
+        // Don't switch if there are no other ready threads
+        let ready_count = self
+            .threads
+            .values()
+            .filter(|t| t.status == ThreadStatus::Ready)
+            .count();
+        if ready_count == 0 {
+            return false;
+        }
+
+        // Consider switching at syscalls and function calls
+        match checkpoint_type {
+            CheckpointType::Syscall => true,
+            CheckpointType::FunctionCall => {
+                // Switch at function calls only if time slice expired
+                self.instruction_count >= self.time_slice_instructions
+            }
+            CheckpointType::MemoryBarrier => true,
+            CheckpointType::Yield => true,
+        }
+    }
+
+    /// Get the next thread to run (round-robin)
+    fn get_next_thread_rr(&self) -> Option<u64> {
+        let ready_threads: Vec<u64> = self
+            .threads
+            .iter()
+            .filter(|(_, t)| t.status == ThreadStatus::Ready)
+            .map(|(tid, _)| *tid)
+            .collect();
+
+        if ready_threads.is_empty() {
+            return None;
+        }
+
+        // Find the next thread after current_tid in round-robin order
+        let mut found_current = false;
+        for tid in &ready_threads {
+            if found_current {
+                return Some(*tid);
+            }
+            if *tid == self.current_tid {
+                found_current = true;
+            }
+        }
+
+        // Wrap around to the first ready thread
+        ready_threads.first().copied()
+    }
+
+    /// Perform a thread switch at a checkpoint
+    pub fn maybe_switch_thread(&mut self, checkpoint_type: CheckpointType) -> Result<Option<u64>> {
+        if !self.should_consider_switch(checkpoint_type) {
+            return Ok(None);
+        }
+
+        // Get the next thread based on scheduling policy
+        let next_tid = match self.scheduling_policy {
+            SchedulingPolicy::MainOnly => return Ok(None),
+            SchedulingPolicy::RoundRobin => match self.get_next_thread_rr() {
+                Some(tid) => tid,
+                None => return Ok(None),
+            },
+        };
+
+        // Don't switch to the same thread
+        if next_tid == self.current_tid {
+            return Ok(None);
+        }
+
+        // Perform the switch
+        let old_tid = self.current_tid;
+        self.switch_to_thread(next_tid)?;
+        self.current_switch_depth += 1;
+        self.instruction_count = 0; // Reset instruction count for new thread
+
+        println!(
+            "[SCHEDULER] Thread switch at {:?} checkpoint: TID {} -> TID {} (depth: {}/{})",
+            checkpoint_type, old_tid, next_tid, self.current_switch_depth, self.max_switch_depth
+        );
+
+        Ok(Some(next_tid))
+    }
+
+    /// Get ready thread TIDs (for exploration)
+    pub fn get_ready_threads(&self) -> Vec<u64> {
+        self.threads
+            .iter()
+            .filter(|(_, t)| t.status == ThreadStatus::Ready)
+            .map(|(tid, _)| *tid)
+            .collect()
     }
 }

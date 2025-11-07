@@ -4,7 +4,10 @@
 use crate::{
     concolic::ConcreteVar,
     executor::ConcolicExecutor,
-    state::memory_x86_64::{MemoryValue, Sigaction},
+    state::{
+        cpu_state::CpuConcolicValue,
+        memory_x86_64::{MemoryValue, Sigaction},
+    },
 };
 use byteorder::{LittleEndian, WriteBytesExt};
 use nix::libc::gettid;
@@ -58,6 +61,27 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
         executor.state.logger.clone(),
         "This CALLOTHER operation is a SYSCALL operation."
     );
+
+    // NOTE: We do NOT switch threads at syscalls to mimic real Go scheduler behavior.
+    // Real Go scheduler:
+    // - Hands off processor P when a goroutine BLOCKS in a syscall (not when it enters)
+    // - Threads dumped by GDB are already in blocked/waiting state with invalid register values
+    // - Switching here would execute syscalls with garbage register values (e.g., RAX=-516, buf_ptr=0x0)
+    //
+    // Instead, we only switch at function calls (user code), which are safe points.
+    // This matches Go's cooperative preemption model where switches happen at:
+    // 1. Function prologues (stack growth checks)
+    // 2. Blocking operations (channels, sync primitives) - handled by gopark
+    // 3. Explicit yields (runtime.Gosched)
+    //
+    // See: https://nghiant3223.github.io/2025/04/15/go-scheduler.html
+
+    // Still count this instruction for time slicing
+    {
+        let mut tm = executor.state.thread_manager.lock().unwrap();
+        tm.tick_instruction();
+        drop(tm);
+    }
 
     // Lock the CPU state and retrieve the value in the RAX register to determine the syscall
     let mut cpu_state_guard = executor.state.cpu_state.lock().unwrap();
@@ -2071,13 +2095,22 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             );
         }
         _ => {
-            // if the syscall is not handled, stop the execution
+            // Invalid syscall (negative numbers from thread switches or unimplemented syscalls)
             log!(
                 executor.state.logger.clone(),
-                "Unhandled syscall number: {}",
-                rax
+                "Unhandled/invalid syscall number: {} - setting RAX=-1 and continuing\n",
+                rax as i64 // Show as signed to see negative values
             );
-            process::exit(1);
+            // Set RAX to -1 (error) to simulate syscall failure
+            let rax_value = CpuConcolicValue {
+                concrete: ConcreteVar::Int((-1i64) as u64),
+                symbolic: SymbolicVar::Int(BV::from_u64(executor.context, (-1i64) as u64, 64)),
+                ctx: executor.context,
+            };
+            let mut cpu_state = executor.state.cpu_state.lock().unwrap();
+            cpu_state.registers.insert(0, rax_value); // RAX = -1 (EINVAL)
+            drop(cpu_state);
+            // Note: Caller (main.rs) should handle advancing to next instruction block
         }
     }
     Ok(())

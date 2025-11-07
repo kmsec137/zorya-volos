@@ -54,6 +54,7 @@ get_main_addr() {
 # Binary must be provided as the first argument
 if [[ -z "$1" || "$1" == -* ]]; then
   echo "Usage: zorya <binary> [--lang go|c|c++] [--compiler tinygo|gc] \\"
+  echo "                [--thread-scheduling all-threads|main-only] \\"
   echo "                [--mode start|main|function|custom <addr>] [--arg …]"
   exit 1
 fi
@@ -67,6 +68,7 @@ MODE=""
 ADDR=""
 ARGS="none"
 NEGATE_PATH_FLAG=""
+THREAD_SCHEDULING=""
 
 # Argument parsing loop
 while [[ $# -gt 0 ]]; do
@@ -75,6 +77,8 @@ while [[ $# -gt 0 ]]; do
       SOURCE_LANG="$2"; shift 2 ;;
     --compiler)
       COMPILER="$2"; shift 2 ;;
+    --thread-scheduling)
+      THREAD_SCHEDULING="$2"; shift 2 ;;
     --mode)
       MODE="$2"; shift 2
       # Accept an address for *any* mode (main/function/custom)
@@ -141,6 +145,14 @@ if [[ "${SOURCE_LANG,,}" == "go" && -z "$COMPILER" ]]; then
   echo ""; echo "Which Go compiler was used? (tinygo / gc)"
   read -rp "[tinygo]: " COMPILER; COMPILER="${COMPILER:-tinygo}"
 fi; export COMPILER
+
+# 0c. Thread scheduling for Go GC binaries
+if [[ "${SOURCE_LANG,,}" == "go" && "${COMPILER,,}" == "gc" && -z "$THREAD_SCHEDULING" ]]; then
+  echo ""; echo "Thread scheduling strategy for Go GC binary:"
+  echo "  - all-threads: Explore multiple goroutines with round-robin scheduling (recommended for concurrency bugs)"
+  echo "  - main-only: Only execute the main thread (faster, but may miss concurrency issues)"
+  read -rp "[all-threads]: " THREAD_SCHEDULING; THREAD_SCHEDULING="${THREAD_SCHEDULING:-all-threads}"
+fi; export THREAD_SCHEDULING
 [[ "$INTERACTIVE_MODE" == "true" ]] && divider
 
 ENTRY_POINT=$(get_entry_point "$BIN_PATH")
@@ -205,6 +217,7 @@ CMD="$ZORYA_DIR/zorya $BIN_PATH --mode $MODE"
 [[ -n "$ADDR" ]] && CMD+=" $ADDR"
 [[ -n "$SOURCE_LANG" ]] && CMD+=" --lang $SOURCE_LANG"
 [[ -n "$COMPILER" ]] && CMD+=" --compiler $COMPILER"
+[[ -n "$THREAD_SCHEDULING" ]] && CMD+=" --thread-scheduling $THREAD_SCHEDULING"
 [[ "$ARGS" != "none" ]] && CMD+=" --arg \"$ARGS\""
 [[ "$NEGATE_PATH_FLAG" == "true" ]] && CMD+=" --negate-path-exploration" || CMD+=" --no-negate-path-exploration"
 

@@ -38,6 +38,7 @@ use zorya::state::panic_reach::{
 };
 use zorya::state::simplify_z3::extract_underlying_condition_from_flag_ast;
 use zorya::state::speculative_execution::{speculative_explore_path, SpeculativeResult};
+use zorya::state::thread_manager::{CheckpointType, ThreadStatus};
 use zorya::target_info::GLOBAL_TARGET_INFO;
 
 macro_rules! log {
@@ -120,6 +121,45 @@ fn main() -> Result<(), Box<dyn Error>> {
     let arguments = env::var("ARGS").expect("MODE environment variable is not set");
     let source_lang =
         std::env::var("SOURCE_LANG").expect("SOURCE_LANG environment variable is not set");
+
+    // Configure thread scheduling for Go GC binaries based on user choice
+    let compiler = env::var("COMPILER").unwrap_or_default();
+    let thread_scheduling_choice = env::var("THREAD_SCHEDULING").unwrap_or_default();
+
+    if source_lang.to_lowercase() == "go" && compiler.to_lowercase() == "gc" {
+        // Set thread scheduling policy based on user choice
+        match thread_scheduling_choice.to_lowercase().as_str() {
+            "all-threads" | "all_threads" | "roundrobin" | "round_robin" | "rr" => {
+                env::set_var("THREAD_SCHEDULING", "round_robin");
+                println!("[THREAD-CONFIG] Enabled round-robin thread scheduling (all goroutines)");
+
+                // Set scheduling parameters if not explicitly set
+                if env::var("THREAD_SWITCH_DEPTH").is_err() {
+                    env::set_var("THREAD_SWITCH_DEPTH", "10");
+                    println!("[THREAD-CONFIG] Set thread switch depth to 10");
+                }
+                if env::var("THREAD_TIME_SLICE").is_err() {
+                    // Use 100 instructions as time slice for symbolic execution
+                    // (Go native uses ~10ms = millions of instructions, but symbolic execution is much slower)
+                    env::set_var("THREAD_TIME_SLICE", "100");
+                    println!("[THREAD-CONFIG] Set time slice to 100 instructions (optimized for symbolic execution)");
+                }
+            }
+            "main-only" | "main_only" | "mainonly" | "none" | "" => {
+                env::set_var("THREAD_SCHEDULING", "main_only");
+                println!(
+                    "[THREAD-CONFIG] Using main-only thread policy (single goroutine execution)"
+                );
+            }
+            _ => {
+                eprintln!(
+                    "Warning: Unknown thread scheduling option '{}', defaulting to main-only",
+                    thread_scheduling_choice
+                );
+                env::set_var("THREAD_SCHEDULING", "main_only");
+            }
+        }
+    }
 
     // Populate the symbol table
     let elf_data = fs::read(binary_path.clone())?;
@@ -528,6 +568,7 @@ fn execute_instructions_from(
     }
 
     // Load the function arguments map
+    // TODO: optimize that
     log!(executor.state.logger, "Loading function arguments map...");
     let lang = env::var("SOURCE_LANG").expect("SOURCE_LANG environment variable is not set");
 
@@ -722,8 +763,12 @@ fn execute_instructions_from(
                 inst
             );
 
-            // If this is a branch-type instruction, do symbolic checks.
-            if inst.opcode == Opcode::CBranch {
+            // Check NEGATE_PATH_FLAG first - if disabled, skip all expensive CBranch preprocessing
+            let negate_path_flag =
+                std::env::var("NEGATE_PATH_FLAG").unwrap_or_else(|_| "false".to_string());
+
+            // If this is a branch-type instruction, do symbolic checks (only if negate_path_flag is enabled)
+            if inst.opcode == Opcode::CBranch && negate_path_flag == "true" {
                 // Compute branch target early
                 let branch_target_varnode_tmp = inst.inputs[0].clone();
                 let branch_target_address_tmp = executor
@@ -746,7 +791,7 @@ fn execute_instructions_from(
                             .iter()
                             .any(|&a| a == branch_target_address_tmp);
 
-                // NEW: Also check if branch condition involves symbolic variables
+                // Also check if branch condition involves symbolic variables
                 // If so, we should explore it regardless of panic reachability
                 let condition_varnode_tmp = inst.inputs[1].clone();
                 let condition_symbolic_tmp = executor
@@ -1038,7 +1083,7 @@ fn execute_instructions_from(
                                 log!(
                                     executor.state.logger,
                                     ">>> Skipping AST exploration (not applicable for this language/compiler)"
-                                );
+                            );
                                 "NO_PANIC_XREF_FOUND".to_string()
                             };
 
@@ -1134,6 +1179,58 @@ fn execute_instructions_from(
                         // Handle other errors as needed
                         log!(executor.state.logger, "Unhandled execution error: {}", e);
                         return; // Exit the function or handle the error appropriately
+                    }
+                }
+            }
+
+            // Tick instruction counter and check if we should switch threads
+            {
+                let mut thread_manager = executor.state.thread_manager.lock().unwrap();
+                thread_manager.tick_instruction();
+
+                // Debug: Log thread scheduling status every 100 instructions
+                if thread_manager.instruction_count % 100 == 0
+                    && thread_manager.instruction_count > 0
+                {
+                    let ready_threads: Vec<_> = thread_manager
+                        .threads
+                        .iter()
+                        .filter(|(_, t)| t.status == ThreadStatus::Ready)
+                        .map(|(tid, _)| tid)
+                        .collect();
+                    log!(
+                        executor.state.logger,
+                        "[SCHEDULER DEBUG] Instruction count: {}, Policy: {:?}, Ready threads: {:?}, Current TID: {}",
+                        thread_manager.instruction_count,
+                        thread_manager.scheduling_policy,
+                        ready_threads,
+                        thread_manager.current_tid
+                    );
+                }
+
+                // Check for thread switch based on time slice (FunctionCall checkpoint checks instruction count)
+                match thread_manager.maybe_switch_thread(CheckpointType::FunctionCall) {
+                    Ok(Some(new_tid)) => {
+                        let old_tid = thread_manager.current_tid;
+                        log!(
+                            executor.state.logger,
+                            "[SCHEDULER] Switching from TID {} to TID {} at RIP 0x{:x} (instruction count: {})",
+                            old_tid,
+                            new_tid,
+                            current_rip,
+                            thread_manager.instruction_count
+                        );
+                        // Thread switch happened, new_tid is now current
+                    }
+                    Ok(None) => {
+                        // No thread switch (could be: no ready threads, policy disabled, or time slice not expired)
+                    }
+                    Err(e) => {
+                        log!(
+                            executor.state.logger,
+                            "[SCHEDULER] Error during thread switch attempt: {}",
+                            e
+                        );
                     }
                 }
             }
