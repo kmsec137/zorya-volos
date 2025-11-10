@@ -6,10 +6,10 @@ Zorya automatically adapts its vulnerability detection strategy based on the bin
 
 ## Strategy Matrix
 
-| Binary Type | Command Example | Exploration Used | Rationale |
+| Binary Type | Command Example | Exploration Used | Explanation |
 |-------------|-----------------|------------------|-----------|
 | **TinyGo** | `--lang go --compiler tinygo` | **AST only** | TinyGo inserts explicit `runtime.nilpanic()` calls |
-| **Go GC** | `--lang go --compiler gc` | **AST + Speculative** | Standard Go uses CPU traps for null derefs |
+| **Go GC** | `--lang go --compiler gc` | **AST + Speculative** | Standard Go runtime uses CPU traps for implicit errors (nil derefs, bounds checks) AND has explicit panic calls, requires both detection methods |
 | **C/C++** | `--lang c` or `--lang c++` | **Speculative only** | No panic infrastructure, only segfaults |
 
 
