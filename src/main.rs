@@ -32,12 +32,14 @@ use zorya::state::gating_stats::{
     get_allowed_by_xref_fallback, get_gated_by_reach, inc_allowed_by_xref_fallback,
     inc_gated_by_reach,
 };
+use zorya::state::lightweight_path_analysis::{
+    lightweight_analyze_path, LightweightAnalysisResult,
+};
 use zorya::state::memory_x86_64::MemoryValue;
 use zorya::state::panic_reach::{
     is_panic_reachable_addr, precompute_panic_reach, PanicReachRanges, PanicReachSet,
 };
 use zorya::state::simplify_z3::extract_underlying_condition_from_flag_ast;
-use zorya::state::speculative_execution::{speculative_explore_path, SpeculativeResult};
 use zorya::state::thread_manager::{CheckpointType, ThreadStatus};
 use zorya::target_info::GLOBAL_TARGET_INFO;
 
@@ -752,7 +754,7 @@ fn execute_instructions_from(
         let mut end_of_block = false;
 
         while local_line_number < instructions.len().try_into().unwrap() && !end_of_block {
-            // Calculate the potential next address taken by RIP, for the purpose of updating the symbolic part of CBRANCH and the speculative exploration
+            // Calculate the potential next address taken by RIP, for the purpose of updating the symbolic part of CBRANCH and the lightweight path analysis
             let (next_addr_in_map, _) = instructions_map.range((current_rip + 1)..).next().unwrap();
 
             let inst = &instructions[local_line_number as usize];
@@ -860,12 +862,12 @@ fn execute_instructions_from(
 
                     let address_of_negated_path_exploration = if conditional_flag_u64 == 0 {
                         // We want to explore the branch that is not taken
-                        log!(executor.state.logger, ">>> Branch condition is false (0x{:x}), performing the speculative exploration on the other branch...", conditional_flag_u64);
+                        log!(executor.state.logger, ">>> Branch condition is false (0x{:x}), performing lightweight path analysis on the other branch...", conditional_flag_u64);
                         let addr = branch_target_address;
                         addr
                     } else {
                         // We want to explore the branch that is taken
-                        log!(executor.state.logger, ">>> Branch condition is true (0x{:x}), performing the speculative exploration on the other branch...", conditional_flag_u64);
+                        log!(executor.state.logger, ">>> Branch condition is true (0x{:x}), performing lightweight path analysis on the other branch...", conditional_flag_u64);
                         let addr = next_addr_in_map;
                         *addr
                     };
@@ -894,10 +896,10 @@ fn execute_instructions_from(
                     let compiler_check = env::var("COMPILER").unwrap_or_else(|_| String::new());
                     let source_lang_check = env::var("SOURCE_LANG").unwrap_or_default();
 
-                    // Always enable speculative execution for:
+                    // Always enable lightweight path analysis for:
                     // 1. Go GC compiler (implicit runtime panics: nil derefs, bounds checks, etc.)
                     // 2. C/C++ binaries (implicit vulnerabilities: null derefs, buffer overflows, use-after-free, etc.)
-                    let needs_speculative = compiler_check == "gc"
+                    let needs_lightweight_analysis = compiler_check == "gc"
                         || (compiler_check.is_empty() && source_lang_check == "go")
                         || source_lang_check == "c"
                         || source_lang_check == "c++"
@@ -907,17 +909,17 @@ fn execute_instructions_from(
                     // For GC compiler and C/C++, ALWAYS explore (may have implicit runtime vulnerabilities)
                     let should_explore = involves_tracked
                         || !executor.constraint_vector.is_empty()
-                        || needs_speculative;
+                        || needs_lightweight_analysis;
 
                     if is_internal_target {
                         log!(executor.state.logger, ">>> Internal p-code branch target detected; skipping AST exploration and negated-path SMT.");
                     } else if !should_explore {
                         log!(
                             executor.state.logger,
-                            "Skipping negated-path exploration: condition has no tracked symbols, constraint vector is empty, and not a language requiring speculative execution (TinyGo only)."
+                            "Skipping negated-path exploration: condition has no tracked symbols, constraint vector is empty, and not a language requiring lightweight path analysis (TinyGo only)."
                         );
                     } else {
-                        if needs_speculative
+                        if needs_lightweight_analysis
                             && !involves_tracked
                             && executor.constraint_vector.is_empty()
                         {
@@ -943,7 +945,7 @@ fn execute_instructions_from(
                                 env::var("SOURCE_LANG").unwrap_or_else(|_| "unknown".to_string());
                             let compiler_inner =
                                 env::var("COMPILER").unwrap_or_else(|_| String::new());
-                            let use_speculative_execution = match (
+                            let use_lightweight_analysis = match (
                                 source_lang_inner.as_str(),
                                 compiler_inner.as_str(),
                             ) {
@@ -955,19 +957,19 @@ fn execute_instructions_from(
                                     );
                                     false
                                 }
-                                // Go GC compiler: AST + Speculative (implicit null derefs via CPU traps)
+                                // Go GC compiler: AST + Lightweight analysis (implicit null derefs via CPU traps)
                                 ("go", "gc") | ("go", "") => {
                                     log!(
                                         executor.state.logger,
-                                        ">>> Strategy: Go GC compiler detected - AST + speculative execution for implicit vulnerabilities"
+                                        ">>> Strategy: Go GC compiler detected - AST + lightweight path analysis for implicit vulnerabilities"
                                     );
                                     true
                                 }
-                                // C/C++: Only speculative execution (no panic infrastructure)
+                                // C/C++: Only lightweight path analysis (no panic infrastructure)
                                 ("c", _) | ("c++", _) | ("cpp", _) => {
                                     log!(
                                         executor.state.logger,
-                                        ">>> Strategy: C/C++ binary detected - speculative execution for de facto vulnerabilities"
+                                        ">>> Strategy: C/C++ binary detected - lightweight path analysis for de facto vulnerabilities"
                                     );
                                     true
                                 }
@@ -975,29 +977,29 @@ fn execute_instructions_from(
                                 _ => {
                                     log!(
                                         executor.state.logger,
-                                        ">>> Strategy: Unknown compiler/language - using both AST and speculative execution"
+                                        ">>> Strategy: Unknown compiler/language - using both AST and lightweight path analysis"
                                     );
                                     true
                                 }
                             };
 
-                            // SPECULATIVE EXECUTION: For Go GC and C/C++ binaries
-                            if use_speculative_execution {
+                            // LIGHTWEIGHT PATH ANALYSIS: For Go GC and C/C++ binaries
+                            if use_lightweight_analysis {
                                 log!(
                                     executor.state.logger,
-                                    ">>> Performing speculative execution on negated path at 0x{:x}...",
+                                    ">>> Performing lightweight path analysis on negated path at 0x{:x}...",
                                     address_of_negated_path_exploration
                                 );
 
-                                let spec_result = speculative_explore_path(
+                                let analysis_result = lightweight_analyze_path(
                                     executor,
                                     address_of_negated_path_exploration,
                                     &instructions_map,
                                     50, // max depth
                                 );
 
-                                match spec_result {
-                                    SpeculativeResult::VulnerabilityFound(
+                                match analysis_result {
+                                    LightweightAnalysisResult::VulnerabilityFound(
                                         vuln_type,
                                         vuln_addr,
                                         desc,
@@ -1008,7 +1010,7 @@ fn execute_instructions_from(
                                         );
                                         log!(
                                             executor.state.logger,
-                                            "║ 🚨 VULNERABILITY DETECTED VIA SPECULATIVE EXECUTION"
+                                            "║ 🚨 VULNERABILITY DETECTED VIA LIGHTWEIGHT PATH ANALYSIS"
                                         );
                                         log!(executor.state.logger, "║ Type: {}", vuln_type);
                                         log!(
@@ -1040,22 +1042,22 @@ fn execute_instructions_from(
                                             );
                                         });
                                     }
-                                    SpeculativeResult::Safe => {
+                                    LightweightAnalysisResult::Safe => {
                                         log!(
                                             executor.state.logger,
-                                            ">>> Speculative execution found no vulnerabilities in negated path"
+                                            ">>> Lightweight path analysis found no vulnerabilities in negated path"
                                         );
                                     }
-                                    SpeculativeResult::DepthLimitReached => {
+                                    LightweightAnalysisResult::DepthLimitReached => {
                                         log!(
                                             executor.state.logger,
-                                            ">>> Speculative execution reached depth limit"
+                                            ">>> Lightweight path analysis reached depth limit"
                                         );
                                     }
-                                    SpeculativeResult::Error(e) => {
+                                    LightweightAnalysisResult::Error(e) => {
                                         log!(
                                             executor.state.logger,
-                                            ">>> Speculative execution error: {}",
+                                            ">>> Lightweight path analysis error: {}",
                                             e
                                         );
                                     }
@@ -1093,7 +1095,7 @@ fn execute_instructions_from(
                                 {
                                     if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
                                         if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
-                                            log!(executor.state.logger, ">>> The speculative AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
+                                            log!(executor.state.logger, ">>> The AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
                                         } else {
                                             log!(
                                                 executor.state.logger,
@@ -1135,7 +1137,7 @@ fn execute_instructions_from(
                                     );
                                 });
                             } else {
-                                log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
+                                log!(executor.state.logger, ">>> No panic function found in the AST exploration with the current max depth exploration");
                             }
                         } else {
                             log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");

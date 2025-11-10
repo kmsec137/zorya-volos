@@ -965,7 +965,7 @@ pub fn evaluate_args_z3<'ctx>(
 
             executor.solver.pop();
         } else {
-            log!(executor.state.logger, ">>> No panic function found in the speculative exploration with the current max depth exploration");
+            log!(executor.state.logger, ">>> No panic function found in the AST exploration with the current max depth exploration");
         }
     } else if mode == "start" || mode == "main" {
         let binary_path = {

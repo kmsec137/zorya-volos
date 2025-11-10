@@ -1,10 +1,11 @@
-/// Speculative execution module for detecting vulnerabilities in unexplored paths
+/// Lightweight path analysis module for detecting vulnerabilities in unexplored paths
+/// This performs pattern-based scanning without full state cloning
 use crate::executor::ConcolicExecutor;
 use parser::parser::{Inst, Opcode, Var};
 use std::collections::BTreeMap;
 use std::io::Write;
 
-const MAX_SPECULATIVE_DEPTH: usize = 50; // Maximum instructions to execute speculatively
+const MAX_ANALYSIS_DEPTH: usize = 50; // Maximum instructions to analyze
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
@@ -12,9 +13,9 @@ macro_rules! log {
     }};
 }
 
-/// Result of speculative execution
+/// Result of lightweight path analysis
 #[derive(Debug, Clone)]
-pub enum SpeculativeResult {
+pub enum LightweightAnalysisResult {
     /// Vulnerability found: (type, address, description)
     VulnerabilityFound(String, u64, String),
     /// No vulnerability found within depth limit
@@ -25,17 +26,17 @@ pub enum SpeculativeResult {
     DepthLimitReached,
 }
 
-/// Execute a path speculatively to detect vulnerabilities
-/// This creates a lightweight execution context without full state cloning
-pub fn speculative_explore_path<'ctx>(
+/// Analyze a path using lightweight pattern matching to detect vulnerabilities
+/// This creates a lightweight analysis context without full state cloning
+pub fn lightweight_analyze_path<'ctx>(
     executor: &mut ConcolicExecutor<'ctx>,
     start_address: u64,
     instructions_map: &BTreeMap<u64, Vec<Inst>>,
     max_depth: usize,
-) -> SpeculativeResult {
+) -> LightweightAnalysisResult {
     log!(
         executor.state.logger,
-        ">>> Starting speculative exploration at 0x{:x} (max depth: {})",
+        ">>> Starting lightweight path analysis at 0x{:x} (max depth: {})",
         start_address,
         max_depth
     );
@@ -55,7 +56,7 @@ pub fn speculative_explore_path<'ctx>(
                     zero_registers.insert(*offset);
                     log!(
                         executor.state.logger,
-                        ">>> Speculative: Register at offset 0x{:x} is zero at start",
+                        ">>> Lightweight analysis: Register at offset 0x{:x} is zero at start",
                         offset
                     );
                 }
@@ -63,17 +64,17 @@ pub fn speculative_explore_path<'ctx>(
         }
     }
 
-    // Simple execution without full state cloning
+    // Lightweight pattern scanning without full state cloning
     // We'll just check for dangerous patterns
     while instruction_count < max_depth {
         // Check for loops
         if visited.contains(&current_addr) {
             log!(
                 executor.state.logger,
-                ">>> Speculative execution detected loop at 0x{:x}, stopping",
+                ">>> Lightweight path analysis detected loop at 0x{:x}, stopping",
                 current_addr
             );
-            return SpeculativeResult::DepthLimitReached;
+            return LightweightAnalysisResult::DepthLimitReached;
         }
         visited.insert(current_addr);
 
@@ -83,10 +84,10 @@ pub fn speculative_explore_path<'ctx>(
             None => {
                 log!(
                     executor.state.logger,
-                    ">>> Speculative execution: no instructions at 0x{:x}",
+                    ">>> Lightweight path analysis: no instructions at 0x{:x}",
                     current_addr
                 );
-                return SpeculativeResult::DepthLimitReached;
+                return LightweightAnalysisResult::DepthLimitReached;
             }
         };
 
@@ -96,7 +97,7 @@ pub fn speculative_explore_path<'ctx>(
 
             log!(
                 executor.state.logger,
-                ">>> Speculative: Analyzing instruction {} at 0x{:x}: {:?}",
+                ">>> Lightweight analysis: Analyzing instruction {} at 0x{:x}: {:?}",
                 idx,
                 current_addr,
                 inst
@@ -120,7 +121,7 @@ pub fn speculative_explore_path<'ctx>(
                             ">>> VULNERABILITY DETECTED: {}",
                             vuln_desc
                         );
-                        return SpeculativeResult::VulnerabilityFound(
+                        return LightweightAnalysisResult::VulnerabilityFound(
                             "NULL_DEREF_LOAD".to_string(),
                             current_addr,
                             vuln_desc,
@@ -138,7 +139,7 @@ pub fn speculative_explore_path<'ctx>(
                             ">>> VULNERABILITY DETECTED: {}",
                             vuln_desc
                         );
-                        return SpeculativeResult::VulnerabilityFound(
+                        return LightweightAnalysisResult::VulnerabilityFound(
                             "NULL_DEREF_LOAD_SYMBOLIC".to_string(),
                             current_addr,
                             vuln_desc,
@@ -164,7 +165,7 @@ pub fn speculative_explore_path<'ctx>(
                             ">>> VULNERABILITY DETECTED: {}",
                             vuln_desc
                         );
-                        return SpeculativeResult::VulnerabilityFound(
+                        return LightweightAnalysisResult::VulnerabilityFound(
                             "NULL_DEREF_STORE".to_string(),
                             current_addr,
                             vuln_desc,
@@ -182,7 +183,7 @@ pub fn speculative_explore_path<'ctx>(
                             ">>> VULNERABILITY DETECTED: {}",
                             vuln_desc
                         );
-                        return SpeculativeResult::VulnerabilityFound(
+                        return LightweightAnalysisResult::VulnerabilityFound(
                             "NULL_DEREF_STORE_SYMBOLIC".to_string(),
                             current_addr,
                             vuln_desc,
@@ -211,7 +212,7 @@ pub fn speculative_explore_path<'ctx>(
                             ">>> VULNERABILITY DETECTED: {}",
                             vuln_desc
                         );
-                        return SpeculativeResult::VulnerabilityFound(
+                        return LightweightAnalysisResult::VulnerabilityFound(
                             "DIV_BY_ZERO".to_string(),
                             current_addr,
                             vuln_desc,
@@ -229,7 +230,7 @@ pub fn speculative_explore_path<'ctx>(
                     }
                 }
                 // Can't determine next address
-                return SpeculativeResult::DepthLimitReached;
+                return LightweightAnalysisResult::DepthLimitReached;
             }
 
             // Check for conditional branches (take both paths recursively?)
@@ -241,17 +242,17 @@ pub fn speculative_explore_path<'ctx>(
                         break;
                     }
                 }
-                return SpeculativeResult::DepthLimitReached;
+                return LightweightAnalysisResult::DepthLimitReached;
             }
 
             // Check for return (end of path)
             if inst.opcode == Opcode::Return {
                 log!(
                     executor.state.logger,
-                    ">>> Speculative execution reached return at 0x{:x}",
+                    ">>> Lightweight path analysis reached return at 0x{:x}",
                     current_addr
                 );
-                return SpeculativeResult::Safe;
+                return LightweightAnalysisResult::Safe;
             }
         }
 
@@ -261,34 +262,34 @@ pub fn speculative_explore_path<'ctx>(
             None => {
                 log!(
                     executor.state.logger,
-                    ">>> Speculative execution reached end of code at 0x{:x}",
+                    ">>> Lightweight path analysis reached end of code at 0x{:x}",
                     current_addr
                 );
-                return SpeculativeResult::Safe;
+                return LightweightAnalysisResult::Safe;
             }
         }
 
         if instruction_count >= max_depth {
             log!(
                 executor.state.logger,
-                ">>> Speculative execution reached depth limit at 0x{:x}",
+                ">>> Lightweight path analysis reached depth limit at 0x{:x}",
                 current_addr
             );
-            return SpeculativeResult::DepthLimitReached;
+            return LightweightAnalysisResult::DepthLimitReached;
         }
     }
 
-    SpeculativeResult::DepthLimitReached
+    LightweightAnalysisResult::DepthLimitReached
 }
 
-/// Track register modifications during speculative execution
+/// Track register modifications during lightweight path analysis
 /// Removes registers from zero-tracking when they're modified, and adds back if set to zero
 fn track_zero_registers(
     inst: &Inst,
     zero_registers: &mut std::collections::HashSet<u64>,
     _executor: &mut ConcolicExecutor,
 ) {
-    // Since speculative execution doesn't actually execute instructions,
+    // Since lightweight path analysis doesn't actually execute instructions,
     // we start with registers that ARE zero in the current state,
     // and remove them when they're modified (unless we can prove they stay zero)
 
@@ -352,7 +353,7 @@ fn track_zero_registers(
                 zero_registers.insert(out_offset_u64);
                 log!(
                     _executor.state.logger,
-                    ">>> Speculative: Added register offset 0x{:x} to zero_registers (now has {} zero regs)",
+                    ">>> Lightweight analysis: Added register offset 0x{:x} to zero_registers (now has {} zero regs)",
                     out_offset_u64, zero_registers.len()
                 );
             } else {
@@ -360,7 +361,7 @@ fn track_zero_registers(
                 if zero_registers.remove(&out_offset_u64) {
                     log!(
                         _executor.state.logger,
-                        ">>> Speculative: Removed register offset 0x{:x} from zero_registers (now has {} zero regs)",
+                        ">>> Lightweight analysis: Removed register offset 0x{:x} from zero_registers (now has {} zero regs)",
                         out_offset_u64, zero_registers.len()
                     );
                 }
@@ -380,7 +381,7 @@ fn is_potentially_null_pointer_with_tracking(
         let is_zero = zero_registers.contains(&(*offset as u64));
         log!(
             executor.state.logger,
-            ">>> Speculative: Checking register offset 0x{:x} for null - is_zero={}, zero_registers has {} entries",
+            ">>> Lightweight analysis: Checking register offset 0x{:x} for null - is_zero={}, zero_registers has {} entries",
             offset, is_zero, zero_registers.len()
         );
         if is_zero {
