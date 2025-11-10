@@ -53,7 +53,6 @@ Lightweight path analysis instead:
 - **No state cloning** - reads current state but doesn't modify it
 - **Pattern matching** - scans P-Code instructions for dangerous patterns
 - **Zero-register tracking** - tracks which registers are known to be zero
-- **100x-1000x faster** than full state cloning
 - **Minimal memory overhead**
 
 ## Example: Detecting Null Pointer Dereference
@@ -98,7 +97,7 @@ Branch at 0x4b712e: AL == 0x4b? (0x61 == 0x4b?)
 >>> VULNERABILITY DETECTED: Potential null pointer write at 0x4b713e
 
 ╔═══════════════════════════════════════════════════════════════════
-║ 🚨 VULNERABILITY DETECTED VIA LIGHTWEIGHT PATH ANALYSIS
+║ VULNERABILITY DETECTED VIA LIGHTWEIGHT PATH ANALYSIS
 ║ Type: NULL_DEREF_STORE
 ║ Location: 0x4b713e
 ║ Description: Potential null pointer write at 0x4b713e (instruction 3)
@@ -134,9 +133,17 @@ pub fn lightweight_analyze_path<'ctx>(
     // Scan instructions for dangerous patterns
     for inst in instructions {
         match inst.opcode {
+            // Vulnerability patterns
             Opcode::Load => check_null_pointer_read(inst),
             Opcode::Store => check_null_pointer_write(inst),
             Opcode::IntDiv | Opcode::IntRem => check_division_by_zero(inst),
+            
+            // Control flow handling
+            Opcode::Branch => follow_unconditional_jump(inst),
+            Opcode::CBranch => follow_branch_target_only(inst),  // Limitation!
+            Opcode::Call | Opcode::CallInd => follow_into_callee(inst),
+            Opcode::Return => return Safe,
+            
             _ => {}
         }
         
@@ -146,12 +153,38 @@ pub fn lightweight_analyze_path<'ctx>(
 }
 ```
 
-## Performance Comparison
+## Control Flow Handling
 
-| Approach | Memory Overhead | CPU Time | State Cloning |
-|----------|-----------------|----------|---------------|
-| **Full Concolic Execution** | ~100MB per branch | Slow (full execution) | Yes |
-| **Lightweight Path Analysis** | ~1KB per scan | Fast (pattern matching) | No |
+The lightweight path analysis handles different control flow instructions:
+
+| P-Code Instruction | Behavior | Continues Analysis? |
+|-------------------|----------|---------------------|
+| **BRANCH** | Follows the jump target | Yes - continues at target address |
+| **CBRANCH** | Follows branch target only | Partial - ignores fall-through path |
+| **CALL** | Follows into the called function | Yes - continues at callee address |
+| **CALLIND** | Follows into the called function | Yes - continues at callee address (if target is known) |
+| **RETURN** | Treats as end of path | No - returns `Safe` |
+| **Unknown target** | Cannot determine address | No - returns `DepthLimitReached` |
+
+## Analysis Boundaries and Limitations
+
+### What is Analyzed 
+- **Single path execution** - Scans up to 50 instructions on the untaken branch
+- **Null pointer dereferences** - LOAD and STORE operations with null addresses
+- **Division by zero** - Integer division/remainder operations with zero divisor
+- **Unconditional jumps** - Follows BRANCH instructions to continue scanning
+- **Function calls** - Follows CALL and CALLIND into called functions (up to depth limit)
+- **Zero register tracking** - Monitors registers known to be zero
+
+### What is NOT Analyzed 
+
+| Limitation | Reason | Impact |
+|------------|--------|--------|
+| **Conditional branches (CBranch)** | Only follows branch target, ignores fall-through | May miss vulnerabilities on the other path |
+| **Indirect jumps/calls** | Cannot determine dynamic targets | Stops analysis when target is unknown |
+| **Depth limit (50 instructions)** | Prevents infinite loops and keeps analysis fast | May not reach vulnerabilities deep in call chains |
+| **Return handling** | Returns end the analysis path | Cannot track multiple return paths |
+| **Complex data flow** | No full symbolic execution | May miss vulnerabilities requiring complex constraints |
 
 ## When to Use
 

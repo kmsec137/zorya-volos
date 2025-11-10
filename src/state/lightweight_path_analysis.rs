@@ -254,6 +254,28 @@ pub fn lightweight_analyze_path<'ctx>(
                 );
                 return LightweightAnalysisResult::Safe;
             }
+
+            // Check for function calls (follow into the callee like we do for branches)
+            if matches!(inst.opcode, Opcode::Call | Opcode::CallInd) {
+                if let Some(target_varnode) = inst.inputs.get(0) {
+                    if let Var::Memory(target_addr) = target_varnode.var {
+                        log!(
+                            executor.state.logger,
+                            ">>> Lightweight path analysis following function call to 0x{:x}",
+                            target_addr
+                        );
+                        current_addr = target_addr;
+                        break;
+                    }
+                }
+                // Can't determine call target (indirect call with unknown target)
+                log!(
+                    executor.state.logger,
+                    ">>> Lightweight path analysis: cannot determine call target at 0x{:x}, stopping",
+                    current_addr
+                );
+                return LightweightAnalysisResult::DepthLimitReached;
+            }
         }
 
         // Move to next instruction block if no control flow change
