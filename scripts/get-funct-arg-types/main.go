@@ -38,6 +38,43 @@ type Argument struct {
 	Location  string   `json:"location,omitempty"` // For debugging location info
 }
 
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func anyArgWithRegisters(args []Argument, regs []string) bool {
+	for _, a := range args {
+		if equalStringSlices(a.Registers, regs) {
+			return true
+		}
+	}
+	return false
+}
+
+// Prefer keeping a named argument; if a duplicate arrives with empty name and same regs, drop it.
+func shouldSkipDuplicateArg(args []Argument, name, typ string, regs []string) bool {
+	if len(regs) == 0 {
+		return false
+	}
+	for _, a := range args {
+		if equalStringSlices(a.Registers, regs) {
+			// If existing arg has a name or same type, treat incoming as duplicate
+			if a.Name != "" || a.Type == typ {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Standard x86-64 DWARF register mapping
 var correctDwarfRegNames = map[int]string{
 	0:  "RAX",
@@ -231,6 +268,12 @@ func main() {
 				arg.Location = locationInfo + ": no_location_attr"
 			}
 
+			// Deduplicate/merge: DWARF sometimes emits multiple formal params for slices/strings (pieces)
+			// If an unnamed parameter arrives with identical register set (or same type), skip it.
+			if shouldSkipDuplicateArg(currentFunc.Arguments, argName, argType, registers) {
+				// Skip duplicate synthetic entry
+				break
+			}
 			currentFunc.Arguments = append(currentFunc.Arguments, arg)
 		}
 	}
