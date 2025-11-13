@@ -2096,11 +2096,38 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
         }
         _ => {
             // Invalid syscall (negative numbers from thread switches or unimplemented syscalls)
+            let signed_rax = rax as i64;
+
+            // Print clear error message to stderr
+            if signed_rax < 0 {
+                eprintln!("\n{}\n", "=".repeat(80));
+                eprintln!(
+                    "WARNING: Invalid syscall number: {} (likely from corrupted register state)",
+                    signed_rax
+                );
+                eprintln!("This might indicate thread switching issues or invalid CPU state.");
+                eprintln!("Setting RAX=-1 (error) and continuing execution...");
+                eprintln!("{}\n", "=".repeat(80));
+            } else {
+                eprintln!("\n{}\n", "=".repeat(80));
+                eprintln!("FATAL ERROR: Unhandled syscall number: {}", rax);
+                eprintln!(
+                    "This means the binary is using a Linux syscall not yet implemented in Zorya."
+                );
+                eprintln!("Check https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl");
+                eprintln!(
+                    "to identify the syscall and implement it in executor_callother_syscalls.rs"
+                );
+                eprintln!("Setting RAX=-1 (error) and continuing execution...");
+                eprintln!("{}\n", "=".repeat(80));
+            }
+
             log!(
                 executor.state.logger.clone(),
                 "Unhandled/invalid syscall number: {} - setting RAX=-1 and continuing\n",
-                rax as i64 // Show as signed to see negative values
+                signed_rax
             );
+
             // Set RAX to -1 (error) to simulate syscall failure
             let rax_value = CpuConcolicValue {
                 concrete: ConcreteVar::Int((-1i64) as u64),
