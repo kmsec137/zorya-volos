@@ -1144,9 +1144,9 @@ fn execute_instructions_from(
                                     ">>> Performing AST-based panic exploration..."
                                 );
                                 explore_ast_for_panic(
-                                    executor,
-                                    address_of_negated_path_exploration,
-                                    &binary_path,
+                                executor,
+                                address_of_negated_path_exploration,
+                                &binary_path,
                                 )
                             } else {
                                 log!(

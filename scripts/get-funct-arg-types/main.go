@@ -260,21 +260,31 @@ func main() {
 				Registers: registers,
 			}
 
-			// Enhanced debug location info
-			if locationAttr != nil {
-				arg.Location = fmt.Sprintf("%s: location_attr=%v (type:%T)",
-					locationInfo, locationAttr, locationAttr)
-			} else {
-				arg.Location = locationInfo + ": no_location_attr"
-			}
+		// Enhanced debug location info
+		if locationAttr != nil {
+			arg.Location = fmt.Sprintf("%s: location_attr=%v (type:%T)",
+				locationInfo, locationAttr, locationAttr)
+		} else {
+			arg.Location = locationInfo + ": no_location_attr"
+		}
 
-			// Deduplicate/merge: DWARF sometimes emits multiple formal params for slices/strings (pieces)
-			// If an unnamed parameter arrives with identical register set (or same type), skip it.
-			if shouldSkipDuplicateArg(currentFunc.Arguments, argName, argType, registers) {
-				// Skip duplicate synthetic entry
-				break
-			}
-			currentFunc.Arguments = append(currentFunc.Arguments, arg)
+		// Filter out ALL unnamed parameters - they are compiler-generated artifacts
+		// Go's compiler emits DWARF entries for internal temporaries, ABI slots,
+		// and stack frame metadata that don't correspond to actual source parameters.
+		// Only keep parameters that have actual names in the source code.
+		if argName == "" {
+			// Skip all unnamed synthetic parameters
+			continue
+		}
+
+		// Deduplicate/merge: DWARF sometimes emits multiple formal params for slices/strings (pieces)
+		// If an unnamed parameter arrives with identical register set (or same type), skip it.
+		if shouldSkipDuplicateArg(currentFunc.Arguments, argName, argType, registers) {
+			// Skip duplicate synthetic entry
+			continue
+		}
+
+		currentFunc.Arguments = append(currentFunc.Arguments, arg)
 		}
 	}
 
