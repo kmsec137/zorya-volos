@@ -649,6 +649,151 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
 
             log!(executor.state.logger.clone(), "CPU yielded successfully");
         }
+        35 => {
+            // sys_nanosleep
+            log!(executor.state.logger.clone(), "Syscall type: sys_nanosleep");
+
+            // Retrieve 'req' pointer from RDI (offset 0x38)
+            let req_ptr_offset = 0x38; // RDI register offset
+            let req_ptr_var = cpu_state_guard
+                .get_register_by_offset(req_ptr_offset, 64)
+                .ok_or("Failed to retrieve 'req' pointer from RDI.")?;
+            let req_ptr = req_ptr_var.concrete.to_u64();
+
+            // Retrieve 'rem' pointer from RSI (offset 0x30)
+            let rem_ptr_offset = 0x30; // RSI register offset
+            let rem_ptr_var = cpu_state_guard
+                .get_register_by_offset(rem_ptr_offset, 64)
+                .ok_or("Failed to retrieve 'rem' pointer from RSI.")?;
+            let rem_ptr = rem_ptr_var.concrete.to_u64();
+
+            log!(
+                executor.state.logger.clone(),
+                "nanosleep: req=0x{:x}, rem=0x{:x}",
+                req_ptr,
+                rem_ptr
+            );
+
+            // Read the timespec structure from memory at req_ptr
+            // struct timespec { time_t tv_sec; long tv_nsec; }
+            // Both fields are 8 bytes on x86_64
+            if req_ptr != 0 && executor.state.memory.is_valid_address(req_ptr) {
+                let tv_sec = executor
+                    .state
+                    .memory
+                    .read_u64(req_ptr, &mut executor.state.logger.clone())
+                    .map_err(|e| format!("Failed to read tv_sec: {}", e))?
+                    .concrete
+                    .to_u64();
+
+                let tv_nsec = executor
+                    .state
+                    .memory
+                    .read_u64(req_ptr + 8, &mut executor.state.logger.clone())
+                    .map_err(|e| format!("Failed to read tv_nsec: {}", e))?
+                    .concrete
+                    .to_u64();
+
+                log!(
+                    executor.state.logger.clone(),
+                    "nanosleep: requested sleep time: {}s {}ns",
+                    tv_sec,
+                    tv_nsec
+                );
+
+                // Validate tv_nsec is in valid range [0, 999999999]
+                if tv_nsec > 999_999_999 {
+                    log!(
+                        executor.state.logger.clone(),
+                        "nanosleep: invalid tv_nsec value: {}",
+                        tv_nsec
+                    );
+                    // Return -EINVAL (22)
+                    cpu_state_guard.set_register_value_by_offset(
+                        rax_offset,
+                        ConcolicVar::new_concrete_and_symbolic_int(
+                            (-22i64) as u64, // -EINVAL
+                            BV::from_u64(executor.context, (-22i64) as u64, 64),
+                            executor.context,
+                        ),
+                        64,
+                    )?;
+                    drop(cpu_state_guard);
+                    return Ok(());
+                }
+
+                // For concolic execution, we don't actually sleep
+                // We simulate immediate successful completion
+                log!(
+                    executor.state.logger.clone(),
+                    "nanosleep: simulating immediate completion (no actual sleep)"
+                );
+
+                // If rem is provided and not NULL, write zeros (no remaining time)
+                if rem_ptr != 0 && executor.state.memory.is_valid_address(rem_ptr) {
+                    let zero_timespec = vec![0u8; 16]; // Two 64-bit fields
+                    executor
+                        .state
+                        .memory
+                        .write_bytes(rem_ptr, &zero_timespec)
+                        .map_err(|e| format!("Failed to write rem timespec: {}", e))?;
+
+                    log!(
+                        executor.state.logger.clone(),
+                        "nanosleep: wrote zero remaining time to rem pointer"
+                    );
+                }
+            } else {
+                log!(
+                    executor.state.logger.clone(),
+                    "nanosleep: invalid req pointer: 0x{:x}",
+                    req_ptr
+                );
+                // Return -EFAULT (14)
+                cpu_state_guard.set_register_value_by_offset(
+                    rax_offset,
+                    ConcolicVar::new_concrete_and_symbolic_int(
+                        (-14i64) as u64, // -EFAULT
+                        BV::from_u64(executor.context, (-14i64) as u64, 64),
+                        executor.context,
+                    ),
+                    64,
+                )?;
+                drop(cpu_state_guard);
+                return Ok(());
+            }
+
+            // Set return value to 0 (success)
+            let rax_value = ConcolicVar::new_concrete_and_symbolic_int(
+                0,
+                BV::from_u64(executor.context, 0, 64),
+                executor.context,
+            );
+            cpu_state_guard
+                .set_register_value_by_offset(rax_offset, rax_value, 64)
+                .map_err(|e| format!("Failed to set RAX: {}", e))?;
+
+            drop(cpu_state_guard);
+
+            // Record the operation for tracing
+            let current_addr_hex = executor
+                .current_address
+                .map_or_else(|| "unknown".to_string(), |addr| format!("{:x}", addr));
+            let result_var_name = format!(
+                "{}-{:02}-callother-sys-nanosleep",
+                current_addr_hex, executor.instruction_counter
+            );
+            executor.state.create_or_update_concolic_variable_int(
+                &result_var_name,
+                0u64,
+                SymbolicVar::Int(BV::from_u64(executor.context, 0u64, 64)),
+            );
+
+            log!(
+                executor.state.logger.clone(),
+                "sys_nanosleep executed successfully"
+            );
+        }
         28 => {
             // sys_madvise
             log!(executor.state.logger.clone(), "Syscall type: sys_madvise");
@@ -2098,7 +2243,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             // Invalid syscall (negative numbers from thread switches or unimplemented syscalls)
             let signed_rax = rax as i64;
 
-            // Print clear error message to stderr
+            // Print clear error message to stderr and exit
             if signed_rax < 0 {
                 eprintln!("\n{}\n", "=".repeat(80));
                 eprintln!(
@@ -2106,7 +2251,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     signed_rax
                 );
                 eprintln!("This might indicate thread switching issues or invalid CPU state.");
-                eprintln!("Setting RAX=-1 (error) and continuing execution...");
+                eprintln!("Execution cannot continue safely.");
                 eprintln!("{}\n", "=".repeat(80));
             } else {
                 eprintln!("\n{}\n", "=".repeat(80));
@@ -2118,26 +2263,16 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 eprintln!(
                     "to identify the syscall and implement it in executor_callother_syscalls.rs"
                 );
-                eprintln!("Setting RAX=-1 (error) and continuing execution...");
                 eprintln!("{}\n", "=".repeat(80));
             }
 
             log!(
                 executor.state.logger.clone(),
-                "Unhandled/invalid syscall number: {} - setting RAX=-1 and continuing\n",
+                "Unhandled/invalid syscall number: {} - stopping execution\n",
                 signed_rax
             );
 
-            // Set RAX to -1 (error) to simulate syscall failure
-            let rax_value = CpuConcolicValue {
-                concrete: ConcreteVar::Int((-1i64) as u64),
-                symbolic: SymbolicVar::Int(BV::from_u64(executor.context, (-1i64) as u64, 64)),
-                ctx: executor.context,
-            };
-            let mut cpu_state = executor.state.cpu_state.lock().unwrap();
-            cpu_state.registers.insert(0, rax_value); // RAX = -1 (EINVAL)
-            drop(cpu_state);
-            // Note: Caller (main.rs) should handle advancing to next instruction block
+            process::exit(1);
         }
     }
     Ok(())
