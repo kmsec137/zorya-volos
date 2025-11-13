@@ -423,8 +423,14 @@ impl<'ctx> SymbolicVar<'ctx> {
                     .clone();
                 bv_iter.fold(first_bv, |acc, bv| acc.concat(&bv.clone()))
             }
-            SymbolicVar::Float(_) => {
-                panic!("Cannot convert a floating-point symbolic variable to a bit vector")
+            SymbolicVar::Float(_f) => {
+                // NOTE: Floats should be stored as their IEEE 754 bit patterns (as integers)
+                // in registers and memory, not as Float symbolic types.
+                panic!(
+                    "Cannot convert Float symbolic variable to bitvector. \
+                    Floats should be stored as bit patterns (integers) in registers/memory. \
+                    This indicates a bug in a float operation handler."
+                )
             }
             SymbolicVar::Bool(b) => {
                 // For storage operations, preserve symbolic info using ite

@@ -64,6 +64,112 @@ fn main() -> Result<(), Box<dyn Error>> {
     init_sat_timer_start();
     // Record command line invocation for SAT result file
     init_invocation_command_line();
+    // Normalize key CLI flags into environment variables so running without the wrapper works
+    // Only set if not already present in the environment.
+    {
+        let mut args_iter = env::args().peekable();
+        while let Some(arg) = args_iter.next() {
+            match arg.as_str() {
+                "--thread-scheduling" => {
+                    if env::var("THREAD_SCHEDULING").is_err() {
+                        if let Some(val) = args_iter.peek() {
+                            // Don't consume flags as values
+                            if !val.starts_with("--") {
+                                if let Some(v) = args_iter.next() {
+                                    env::set_var("THREAD_SCHEDULING", v);
+                                }
+                            }
+                        }
+                    } else {
+                        // Skip potential value to keep parsing aligned
+                        if let Some(val) = args_iter.peek() {
+                            if !val.starts_with("--") {
+                                args_iter.next();
+                            }
+                        }
+                    }
+                }
+                "--lang" => {
+                    if env::var("SOURCE_LANG").is_err() {
+                        if let Some(val) = args_iter.peek() {
+                            if !val.starts_with("--") {
+                                if let Some(v) = args_iter.next() {
+                                    env::set_var("SOURCE_LANG", v);
+                                }
+                            }
+                        }
+                    } else {
+                        if let Some(val) = args_iter.peek() {
+                            if !val.starts_with("--") {
+                                args_iter.next();
+                            }
+                        }
+                    }
+                }
+                "--compiler" => {
+                    if env::var("COMPILER").is_err() {
+                        if let Some(val) = args_iter.peek() {
+                            if !val.starts_with("--") {
+                                if let Some(v) = args_iter.next() {
+                                    env::set_var("COMPILER", v);
+                                }
+                            }
+                        }
+                    } else {
+                        if let Some(val) = args_iter.peek() {
+                            if !val.starts_with("--") {
+                                args_iter.next();
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // Ignore other args here
+                }
+            }
+        }
+    }
+    // Normalize scheduler env and set defaults early (before thread manager config)
+    {
+        let source_lang_norm = env::var("SOURCE_LANG")
+            .unwrap_or_else(|_| String::new())
+            .to_lowercase();
+        let compiler_norm = env::var("COMPILER")
+            .unwrap_or_else(|_| String::new())
+            .to_lowercase();
+        let sched_choice = env::var("THREAD_SCHEDULING")
+            .unwrap_or_else(|_| String::new())
+            .to_lowercase();
+        if source_lang_norm == "go" && compiler_norm == "gc" {
+            match sched_choice.as_str() {
+                "all-threads" | "all_threads" | "roundrobin" | "round_robin" | "rr" => {
+                    env::set_var("THREAD_SCHEDULING", "round_robin");
+                    println!(
+                        "[THREAD-CONFIG] Enabled multi-thread scheduling (cooperative at function calls)"
+                    );
+                    if env::var("THREAD_SWITCH_DEPTH").is_err() {
+                        env::set_var("THREAD_SWITCH_DEPTH", "10");
+                        println!("[THREAD-CONFIG] Set thread switch depth to 10");
+                    }
+                    if env::var("THREAD_TIME_SLICE").is_err() {
+                        env::set_var("THREAD_TIME_SLICE", "100");
+                        println!(
+                            "[THREAD-CONFIG] Set time slice to 100 instructions (optimized for symbolic execution)"
+                        );
+                    }
+                }
+                "main-only" | "main_only" | "mainonly" | "none" => {
+                    env::set_var("THREAD_SCHEDULING", "main_only");
+                    println!(
+                        "[THREAD-CONFIG] Using main-only thread policy (single goroutine execution)"
+                    );
+                }
+                _ => {
+                    // Leave unknown values as-is; thread manager will warn and default to MainOnly
+                }
+            }
+        }
+    }
     // Clean up previous SAT state file before starting new execution
     let sat_state_file = "results/FOUND_SAT_STATE.txt";
     if Path::new(sat_state_file).exists() {
@@ -123,45 +229,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let arguments = env::var("ARGS").expect("MODE environment variable is not set");
     let source_lang =
         std::env::var("SOURCE_LANG").expect("SOURCE_LANG environment variable is not set");
-
-    // Configure thread scheduling for Go GC binaries based on user choice
-    let compiler = env::var("COMPILER").unwrap_or_default();
-    let thread_scheduling_choice = env::var("THREAD_SCHEDULING").unwrap_or_default();
-
-    if source_lang.to_lowercase() == "go" && compiler.to_lowercase() == "gc" {
-        // Set thread scheduling policy based on user choice
-        match thread_scheduling_choice.to_lowercase().as_str() {
-            "all-threads" | "all_threads" | "roundrobin" | "round_robin" | "rr" => {
-                env::set_var("THREAD_SCHEDULING", "round_robin");
-                println!("[THREAD-CONFIG] Enabled round-robin thread scheduling (all goroutines)");
-
-                // Set scheduling parameters if not explicitly set
-                if env::var("THREAD_SWITCH_DEPTH").is_err() {
-                    env::set_var("THREAD_SWITCH_DEPTH", "10");
-                    println!("[THREAD-CONFIG] Set thread switch depth to 10");
-                }
-                if env::var("THREAD_TIME_SLICE").is_err() {
-                    // Use 100 instructions as time slice for symbolic execution
-                    // (Go native uses ~10ms = millions of instructions, but symbolic execution is much slower)
-                    env::set_var("THREAD_TIME_SLICE", "100");
-                    println!("[THREAD-CONFIG] Set time slice to 100 instructions (optimized for symbolic execution)");
-                }
-            }
-            "main-only" | "main_only" | "mainonly" | "none" | "" => {
-                env::set_var("THREAD_SCHEDULING", "main_only");
-                println!(
-                    "[THREAD-CONFIG] Using main-only thread policy (single goroutine execution)"
-                );
-            }
-            _ => {
-                eprintln!(
-                    "Warning: Unknown thread scheduling option '{}', defaulting to main-only",
-                    thread_scheduling_choice
-                );
-                env::set_var("THREAD_SCHEDULING", "main_only");
-            }
-        }
-    }
 
     // Populate the symbol table
     let elf_data = fs::read(binary_path.clone())?;

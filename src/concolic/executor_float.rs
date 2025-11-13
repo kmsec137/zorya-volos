@@ -261,3 +261,112 @@ pub fn handle_float_less(executor: &mut ConcolicExecutor, instruction: Inst) -> 
 
     Ok(())
 }
+
+pub fn handle_float_mult(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
+    if instruction.opcode != Opcode::FloatMult || instruction.inputs.len() != 2 {
+        return Err("Invalid instruction format for FLOAT_MULT".to_string());
+    }
+
+    log!(
+        executor.state.logger.clone(),
+        "* Fetching floating-point inputs for FLOAT_MULT"
+    );
+    let input0_var = executor
+        .varnode_to_concolic(&instruction.inputs[0])
+        .map_err(|e| e.to_string())?;
+    let input1_var = executor
+        .varnode_to_concolic(&instruction.inputs[1])
+        .map_err(|e| e.to_string())?;
+
+    // Get the output size to determine if we're working with f32 or f64
+    let output_size_bits = instruction
+        .output
+        .as_ref()
+        .ok_or("Output varnode not specified")?
+        .size
+        .to_bitvector_size() as u32;
+
+    // Read the bit patterns and convert to floats
+    let input0_bits = input0_var.get_concrete_value();
+    let input1_bits = input1_var.get_concrete_value();
+
+    let (result_bits, result_concrete_f64) = if output_size_bits == 32 {
+        // 32-bit float (f32) multiplication
+        let input0_f32 = f32::from_bits(input0_bits as u32);
+        let input1_f32 = f32::from_bits(input1_bits as u32);
+
+        // Check for NaN inputs
+        if input0_f32.is_nan() || input1_f32.is_nan() {
+            let nan_f32 = f32::NAN;
+            (nan_f32.to_bits() as u64, nan_f32 as f64)
+        } else {
+            let result_f32 = input0_f32 * input1_f32;
+            // Check for overflow/underflow resulting in NaN or infinity
+            if !result_f32.is_finite() {
+                let nan_f32 = f32::NAN;
+                (nan_f32.to_bits() as u64, nan_f32 as f64)
+            } else {
+                (result_f32.to_bits() as u64, result_f32 as f64)
+            }
+        }
+    } else if output_size_bits == 64 {
+        // 64-bit float (f64) multiplication
+        let input0_f64 = f64::from_bits(input0_bits);
+        let input1_f64 = f64::from_bits(input1_bits);
+
+        // Check for NaN inputs
+        if input0_f64.is_nan() || input1_f64.is_nan() {
+            (f64::NAN.to_bits(), f64::NAN)
+        } else {
+            let result_f64 = input0_f64 * input1_f64;
+            // Check for overflow/underflow resulting in NaN or infinity
+            if !result_f64.is_finite() {
+                (f64::NAN.to_bits(), f64::NAN)
+            } else {
+                (result_f64.to_bits(), result_f64)
+            }
+        }
+    } else {
+        return Err(format!(
+            "Unsupported float size for FLOAT_MULT: {} bits",
+            output_size_bits
+        ));
+    };
+
+    log!(
+        executor.state.logger.clone(),
+        "*** Result of FLOAT_MULT: {} (bits: 0x{:x})",
+        result_concrete_f64,
+        result_bits
+    );
+
+    // Create symbolic bitvector from the concrete result
+    // For now, we use concrete symbolic value since float arithmetic is complex
+    let result_symbolic_bv = BV::from_u64(executor.context, result_bits, output_size_bits);
+
+    // Create an integer ConcolicVar with the bit representation
+    let result_value = ConcolicVar::new_concrete_and_symbolic_int(
+        result_bits,
+        result_symbolic_bv,
+        executor.context,
+    );
+
+    // Handle the result based on the output varnode
+    executor.handle_output(instruction.output.as_ref(), result_value.clone())?;
+
+    // Log the operation for tracking
+    let current_addr_hex = executor
+        .current_address
+        .map_or_else(|| "unknown".to_string(), |addr| format!("{:x}", addr));
+    let result_var_name = format!(
+        "{}-{:02}-floatmult",
+        current_addr_hex, executor.instruction_counter
+    );
+    executor.state.create_or_update_concolic_variable_int(
+        &result_var_name,
+        result_bits,
+        result_value.symbolic,
+    );
+
+    Ok(())
+}

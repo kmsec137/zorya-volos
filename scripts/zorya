@@ -149,7 +149,7 @@ fi; export COMPILER
 # 0c. Thread scheduling for Go GC binaries
 if [[ "${SOURCE_LANG,,}" == "go" && "${COMPILER,,}" == "gc" && -z "$THREAD_SCHEDULING" ]]; then
   echo ""; echo "Thread scheduling strategy for Go GC binary:"
-  echo "  - all-threads: Explore multiple goroutines with round-robin scheduling (recommended for concurrency bugs)"
+  echo "  - all-threads: Explore multiple goroutines with cooperative scheduling at function calls (recommended for concurrency bugs)"
   echo "  - main-only: Only execute the main thread (faster, but may miss concurrency issues)"
   read -rp "[all-threads]: " THREAD_SCHEDULING; THREAD_SCHEDULING="${THREAD_SCHEDULING:-all-threads}"
 fi; export THREAD_SCHEDULING

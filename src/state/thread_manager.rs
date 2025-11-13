@@ -421,11 +421,11 @@ impl<'ctx> ThreadManager<'ctx> {
 
         if let Ok(policy_str) = std::env::var("THREAD_SCHEDULING") {
             match policy_str.to_lowercase().as_str() {
-                "round_robin" | "rr" => {
+                "round_robin" | "rr" | "all-threads" | "all_threads" => {
                     self.scheduling_policy = SchedulingPolicy::RoundRobin;
                     println!("[SCHEDULER] Enabled round-robin thread scheduling");
                 }
-                "main_only" | "none" => {
+                "main_only" | "main-only" | "none" => {
                     self.scheduling_policy = SchedulingPolicy::MainOnly;
                     println!("[SCHEDULER] Thread scheduling disabled (main thread only)");
                 }

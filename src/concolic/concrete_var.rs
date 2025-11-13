@@ -71,11 +71,9 @@ impl ConcreteVar {
         match self {
             ConcreteVar::Int(value) => *value,
             ConcreteVar::Float(value) => {
-                if value >= &0.0 && value < &(u64::MAX as f64) {
-                    *value as u64
-                } else {
-                    0 // Default value for out-of-range or negative floats
-                }
+                // For floats, return the IEEE 754 bit representation
+                // This is essential for storing floats in registers/memory
+                value.to_bits()
             }
             ConcreteVar::Str(ref s) => {
                 s.parse::<u64>().unwrap_or(0) // Default value for unparsable strings

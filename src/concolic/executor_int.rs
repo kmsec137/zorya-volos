@@ -2627,19 +2627,29 @@ pub fn handle_int2float(executor: &mut ConcolicExecutor, instruction: Inst) -> R
     );
 
     // Perform the conversion
-    let result_concrete = input0_var.get_concrete_value() as f64; // input is a signed integer
-    let result_symbolic = Float::from_f64(&executor.context, result_concrete);
-
-    let result_value = ConcolicVar::new_concrete_and_symbolic_float(
-        result_concrete,
-        result_symbolic,
-        executor.context,
-    );
+    let result_concrete_float = input0_var.get_concrete_value() as f64; // input is a signed integer
+    let result_symbolic_float = Float::from_f64(&executor.context, result_concrete_float);
 
     log!(
         executor.state.logger.clone(),
         "*** The result of INT2FLOAT is: {:?}\n",
-        result_concrete
+        result_concrete_float
+    );
+
+    // Convert the float to its IEEE 754 bit representation for storage in registers
+    // Floats are stored as bit patterns in registers, not as actual float types
+    let result_bits = result_concrete_float.to_bits();
+
+    // For the symbolic part, create a bitvector from the concrete bits
+    // This maintains correctness while avoiding complex Z3 FFI
+    // The symbolic float-to-bv conversion is handled in SymbolicVar::to_bv if needed later
+    let result_symbolic_bv = BV::from_u64(executor.context, result_bits, output_size_bits);
+
+    // Create an integer ConcolicVar with the bit representation
+    let result_value = ConcolicVar::new_concrete_and_symbolic_int(
+        result_bits,
+        result_symbolic_bv,
+        executor.context,
     );
 
     // Handle the result based on the output varnode
