@@ -130,6 +130,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     // Normalize scheduler env and set defaults early (before thread manager config)
+    // Thread scheduling is only available for Go GC binaries (not TinyGo or C/C++)
     {
         let source_lang_norm = env::var("SOURCE_LANG")
             .unwrap_or_else(|_| String::new())
@@ -147,14 +148,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                     println!(
                         "[THREAD-CONFIG] Enabled multi-thread scheduling (cooperative at function calls)"
                     );
+
+                    // THREAD_SWITCH_DEPTH: Maximum number of thread context switches to explore
+                    // Each switch creates a new execution path to explore different thread interleavings
+                    // Default: 100 switches
                     if env::var("THREAD_SWITCH_DEPTH").is_err() {
-                        env::set_var("THREAD_SWITCH_DEPTH", "10");
-                        println!("[THREAD-CONFIG] Set thread switch depth to 10");
+                        env::set_var("THREAD_SWITCH_DEPTH", "100");
+                        println!("[THREAD-CONFIG] Set thread switch depth to 100");
                     }
+
+                    // THREAD_TIME_SLICE: Number of P-code instructions to execute before considering a thread switch
+                    // Thread switches only happen at function calls AFTER this instruction count is reached
+                    // Default: 10000 instructions
                     if env::var("THREAD_TIME_SLICE").is_err() {
-                        env::set_var("THREAD_TIME_SLICE", "100");
+                        env::set_var("THREAD_TIME_SLICE", "10000");
                         println!(
-                            "[THREAD-CONFIG] Set time slice to 100 instructions (optimized for symbolic execution)"
+                            "[THREAD-CONFIG] Set time slice to 10000 instructions (optimized for symbolic execution)"
                         );
                     }
                 }
@@ -1144,9 +1153,9 @@ fn execute_instructions_from(
                                     ">>> Performing AST-based panic exploration..."
                                 );
                                 explore_ast_for_panic(
-                                executor,
-                                address_of_negated_path_exploration,
-                                &binary_path,
+                                    executor,
+                                    address_of_negated_path_exploration,
+                                    &binary_path,
                                 )
                             } else {
                                 log!(

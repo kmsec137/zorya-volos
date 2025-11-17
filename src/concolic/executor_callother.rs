@@ -93,7 +93,7 @@ pub fn handle_callother(executor: &mut ConcolicExecutor, instruction: Inst) -> R
             eprintln!("{}\n", "=".repeat(80));
 
             log!(
-                executor.state.logger.clone(),
+                executor.trace_logger,
                 "Unhandled CALLOTHER number: {}",
                 operation_index
             );
@@ -109,7 +109,7 @@ pub fn handle_callother(executor: &mut ConcolicExecutor, instruction: Inst) -> R
 /// is implicitly guaranteed by the sequential execution model.
 pub fn handle_lock(executor: &mut ConcolicExecutor) -> Result<(), String> {
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "This CALLOTHER operation is a LOCK operation."
     );
     Ok(())
@@ -122,7 +122,7 @@ pub fn handle_lock(executor: &mut ConcolicExecutor) -> Result<(), String> {
 /// is implicitly guaranteed by the sequential execution model.
 pub fn handle_unlock(executor: &mut ConcolicExecutor) -> Result<(), String> {
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "This CALLOTHER operation is an UNLOCK operation."
     );
     Ok(())
@@ -135,7 +135,7 @@ pub fn handle_unlock(executor: &mut ConcolicExecutor) -> Result<(), String> {
 /// Results are written to EAX, EBX, ECX, and EDX registers.
 pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "This CALLOTHER operation is an CPUID operation."
     );
 
@@ -162,7 +162,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
         .get_concrete_value()?;
 
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "CPUID function requested: 0x{:x}",
         eax_input
     );
@@ -341,7 +341,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
         .write_value(base_address + 12, &edx_value)
         .map_err(|e| format!("Failed to write EDX to memory: {:?}", e))?;
 
-    log!(executor.state.logger.clone(), "Temporarily wrote into memory the values of EAX: 0x{:08x}, EBX: 0x{:08x}, ECX: 0x{:08x}, EDX: 0x{:08x}", eax, ebx, ecx, edx);
+    log!(executor.trace_logger, "Temporarily wrote into memory the values of EAX: 0x{:08x}, EBX: 0x{:08x}, ECX: 0x{:08x}, EDX: 0x{:08x}", eax, ebx, ecx, edx);
 
     drop(cpu_state_guard);
 
@@ -383,7 +383,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
 /// Takes a 128-bit state and round key as inputs, outputs the encrypted state.
 pub fn handle_aesenc(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "This CALLOTHER operation is an AESENC operation."
     );
 
@@ -429,7 +429,7 @@ pub fn handle_aesenc(executor: &mut ConcolicExecutor, instruction: Inst) -> Resu
 /// Instruction format: AESIMC xmm1, xmm2/m128
 pub fn handle_aesimc(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "This CALLOTHER operation (0xde) is AESIMC (AES Inverse Mix Columns)."
     );
 
@@ -442,7 +442,7 @@ pub fn handle_aesimc(executor: &mut ConcolicExecutor, instruction: Inst) -> Resu
     let state_symbolic = state_var.get_symbolic_value_bv(executor.context);
 
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "AESIMC: input state=0x{:032x}",
         state_concrete
     );
@@ -482,7 +482,7 @@ pub fn handle_aesimc(executor: &mut ConcolicExecutor, instruction: Inst) -> Resu
     let result_symbolic = rotate_right_7.bvxor(&rotate_left_13);
 
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "AESIMC: result=0x{:032x}",
         result_concrete
     );
@@ -806,7 +806,7 @@ pub fn handle_cpuid_brand_part3_info(
 /// Serializes instruction execution before reading the counter.
 pub fn handle_rdtscp(executor: &mut ConcolicExecutor) -> Result<(), String> {
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "This CALLOTHER operation is an RDTSCP operation."
     );
 
@@ -889,7 +889,7 @@ pub fn handle_rdtscp(executor: &mut ConcolicExecutor) -> Result<(), String> {
 /// Non-serializing version (allows out-of-order execution).
 pub fn handle_rdtsc(executor: &mut ConcolicExecutor) -> Result<(), String> {
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "This CALLOTHER operation is an RDTSC operation."
     );
 
@@ -955,7 +955,7 @@ pub fn handle_rdtsc(executor: &mut ConcolicExecutor) -> Result<(), String> {
 /// Currently handles INT3 (debug breakpoint), others cause execution abort.
 fn handle_swi(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "This CALLOTHER operation is a SWI operation."
     );
 
@@ -978,7 +978,7 @@ fn handle_swi(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), 
         // INT3 (debug breakpoint) handling
         0x3 => {
             log!(
-                executor.state.logger.clone(),
+                executor.trace_logger,
                 "INT3 (debug breakpoint) encountered. Aborting execution."
             );
             let rip_value = {
@@ -1112,7 +1112,7 @@ pub fn handle_vpmullw_avx(
     instruction: Inst,
 ) -> Result<(), String> {
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "This CALLOTHER operation is a VPMULLW (AVX) operation."
     );
 
@@ -1129,7 +1129,7 @@ pub fn handle_vpmullw_avx(
     let src2_varnode = &instruction.inputs[2];
 
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "VPMULLW src1: {:?}, src2: {:?}",
         src1_varnode,
         src2_varnode
@@ -1148,7 +1148,7 @@ pub fn handle_vpmullw_avx(
     let num_words = (size_bits / 16) as usize; // Number of 16-bit words
 
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "VPMULLW processing {} x 16-bit words (total {} bits)",
         num_words,
         size_bits
@@ -1248,7 +1248,7 @@ pub fn handle_vpmullw_avx(
     }
 
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "VPMULLW computed {} words",
         result_concrete_words.len()
     );
@@ -1305,7 +1305,7 @@ pub fn handle_vpmullw_avx(
         executor.handle_output(instruction.output.as_ref(), result)?;
     } else {
         log!(
-            executor.state.logger.clone(),
+            executor.trace_logger,
             "VPMULLW: No output varnode, result computed but not stored"
         );
     }
@@ -1322,7 +1322,7 @@ pub fn handle_vbroadcastsd_avx(
     instruction: Inst,
 ) -> Result<(), String> {
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "This CALLOTHER operation is a VBROADCASTSD (AVX) operation."
     );
 
@@ -1340,7 +1340,7 @@ pub fn handle_vbroadcastsd_avx(
     let source_varnode = &instruction.inputs[2];
 
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "VBROADCASTSD source: {:?}",
         source_varnode
     );
@@ -1355,7 +1355,7 @@ pub fn handle_vbroadcastsd_avx(
     let symbolic_64bit_bv = source_value.get_symbolic_value_bv(executor.context);
 
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "Broadcasting 64-bit value: concrete=0x{:016x}, symbolic_size={}",
         concrete_64bit,
         symbolic_64bit_bv.get_size()
@@ -1394,7 +1394,7 @@ pub fn handle_vbroadcastsd_avx(
     );
 
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "VBROADCASTSD result: 4 lanes of 0x{:016x}",
         concrete_64bit
     );
@@ -1413,7 +1413,7 @@ pub fn handle_vbroadcastsd_avx(
 /// Instruction format: PSHUFW mm, mm/m64, imm8
 pub fn handle_pshufw(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "This CALLOTHER operation (0x9a) is PSHUFW (Packed Shuffle Word)."
     );
 
@@ -1440,7 +1440,7 @@ pub fn handle_pshufw(executor: &mut ConcolicExecutor, instruction: Inst) -> Resu
     let src_symbolic = src_var.get_symbolic_value_bv(executor.context);
 
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "PSHUFW: source=0x{:016x}, shuffle_control=0x{:02x}",
         src_concrete,
         shuffle_control
@@ -1467,7 +1467,7 @@ pub fn handle_pshufw(executor: &mut ConcolicExecutor, instruction: Inst) -> Resu
     let result_concrete = dest_word0 | (dest_word1 << 16) | (dest_word2 << 32) | (dest_word3 << 48);
 
     log!(
-        executor.state.logger.clone(),
+        executor.trace_logger,
         "PSHUFW: result=0x{:016x} (words: 0x{:04x}, 0x{:04x}, 0x{:04x}, 0x{:04x})",
         result_concrete,
         dest_word0,
