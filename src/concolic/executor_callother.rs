@@ -18,6 +18,50 @@ macro_rules! log {
     }};
 }
 
+/// Returns a human-readable name for a CALLOTHER operation given its index
+fn get_callother_operation_name(operation_index: u32) -> String {
+    match operation_index {
+        0x5 => "SYSCALL".to_string(),
+        0xb => "RDTSCP".to_string(),
+        0x10 => "SWI".to_string(),
+        0x11 => "LOCK".to_string(),
+        0x12 => "UNLOCK".to_string(),
+        0x9a => "PSHUFW (Packed Shuffle Word)".to_string(),
+        0x2c => "CPUID".to_string(),
+        0x2d => "CPUID Basic Info".to_string(),
+        0x2e => "CPUID Version Info".to_string(),
+        0x2f => "CPUID Cache/TLB Info".to_string(),
+        0x30 => "CPUID Serial Info".to_string(),
+        0x31 => "CPUID Deterministic Cache Parameters Info".to_string(),
+        0x32 => "CPUID Monitor/MWAIT Features Info".to_string(),
+        0x33 => "CPUID Thermal Power Management Info".to_string(),
+        0x34 => "CPUID Extended Feature Enumeration Info".to_string(),
+        0x35 => "CPUID Direct Cache Access Info".to_string(),
+        0x36 => "CPUID Architectural Performance Monitoring Info".to_string(),
+        0x37 => "CPUID Extended Topology Info".to_string(),
+        0x38 => "CPUID Processor Extended States Info".to_string(),
+        0x39 => "CPUID Quality of Service Info".to_string(),
+        0x3a => "CPUID Brand Part1 Info".to_string(),
+        0x3b => "CPUID Brand Part2 Info".to_string(),
+        0x3c => "CPUID Brand Part3 Info".to_string(),
+        0x4a => "RDTSC".to_string(),
+        0x97 => "PSHUFB".to_string(),
+        0x98 => "PSHUFHW".to_string(),
+        0xdc => "AESENC".to_string(),
+        0xde => "AESIMC (AES Inverse Mix Columns)".to_string(),
+        0x13a => "VMOVDQU (AVX)".to_string(),
+        0x144 => "VMOVNTDQ (AVX)".to_string(),
+        0x1a1 => "VPMULLW (AVX)".to_string(),
+        0x1be => "VPTEST (AVX)".to_string(),
+        0x1c7 => "VPXOR (AVX)".to_string(),
+        0x1e2 => "VBROADCASTSD (AVX)".to_string(),
+        0x203 => "VPAND (AVX2)".to_string(),
+        0x209 => "VPCMPEQB (AVX2)".to_string(),
+        0x25d => "VPBROADCASTB (AVX2)".to_string(),
+        _ => format!("UNKNOWN (0x{:x})", operation_index),
+    }
+}
+
 pub fn handle_callother(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
     let operation_index = match instruction.inputs.get(0) {
         Some(Varnode {
@@ -33,10 +77,13 @@ pub fn handle_callother(executor: &mut ConcolicExecutor, instruction: Inst) -> R
         }
     }?;
 
+    // Get the operation name for logging
+    let operation_name = get_callother_operation_name(operation_index);
     log!(
         executor.trace_logger,
-        "----> Calling the CALLOTHER instruction with number {}",
-        operation_index
+        "----> Calling the CALLOTHER instruction with number {} being {}",
+        operation_index,
+        operation_name
     );
 
     match operation_index {
@@ -108,10 +155,6 @@ pub fn handle_callother(executor: &mut ConcolicExecutor, instruction: Inst) -> R
 /// In our single-threaded concolic execution context, this is a no-op as atomicity
 /// is implicitly guaranteed by the sequential execution model.
 pub fn handle_lock(executor: &mut ConcolicExecutor) -> Result<(), String> {
-    log!(
-        executor.trace_logger,
-        "This CALLOTHER operation is a LOCK operation."
-    );
     Ok(())
 }
 
@@ -121,10 +164,6 @@ pub fn handle_lock(executor: &mut ConcolicExecutor) -> Result<(), String> {
 /// In our single-threaded concolic execution context, this is a no-op as atomicity
 /// is implicitly guaranteed by the sequential execution model.
 pub fn handle_unlock(executor: &mut ConcolicExecutor) -> Result<(), String> {
-    log!(
-        executor.trace_logger,
-        "This CALLOTHER operation is an UNLOCK operation."
-    );
     Ok(())
 }
 
@@ -134,11 +173,6 @@ pub fn handle_unlock(executor: &mut ConcolicExecutor) -> Result<(), String> {
 /// Emulates an AMD Opteron G1 processor with standard x86-64 features.
 /// Results are written to EAX, EBX, ECX, and EDX registers.
 pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
-    log!(
-        executor.trace_logger,
-        "This CALLOTHER operation is an CPUID operation."
-    );
-
     // Get the output size of the instruction
     let output_size = instruction
         .output
@@ -382,11 +416,6 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
 /// Performs one round of AES encryption (ShiftRows, SubBytes, MixColumns, AddRoundKey).
 /// Takes a 128-bit state and round key as inputs, outputs the encrypted state.
 pub fn handle_aesenc(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
-    log!(
-        executor.trace_logger,
-        "This CALLOTHER operation is an AESENC operation."
-    );
-
     if instruction.opcode != Opcode::CallOther || instruction.inputs.len() != 2 {
         return Err("Invalid instruction format for AESENC".to_string());
     }
@@ -428,11 +457,6 @@ pub fn handle_aesenc(executor: &mut ConcolicExecutor, instruction: Inst) -> Resu
 ///
 /// Instruction format: AESIMC xmm1, xmm2/m128
 pub fn handle_aesimc(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
-    log!(
-        executor.trace_logger,
-        "This CALLOTHER operation (0xde) is AESIMC (AES Inverse Mix Columns)."
-    );
-
     // Fetch the input state (128-bit)
     let state_var = executor
         .varnode_to_concolic(&instruction.inputs[1])
@@ -805,11 +829,6 @@ pub fn handle_cpuid_brand_part3_info(
 /// Returns the current time-stamp counter in EDX:EAX and processor ID in ECX.
 /// Serializes instruction execution before reading the counter.
 pub fn handle_rdtscp(executor: &mut ConcolicExecutor) -> Result<(), String> {
-    log!(
-        executor.trace_logger,
-        "This CALLOTHER operation is an RDTSCP operation."
-    );
-
     // Simulate reading the time-stamp counter
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -888,11 +907,6 @@ pub fn handle_rdtscp(executor: &mut ConcolicExecutor) -> Result<(), String> {
 /// Returns the current time-stamp counter value in EDX:EAX.
 /// Non-serializing version (allows out-of-order execution).
 pub fn handle_rdtsc(executor: &mut ConcolicExecutor) -> Result<(), String> {
-    log!(
-        executor.trace_logger,
-        "This CALLOTHER operation is an RDTSC operation."
-    );
-
     // Simulate reading the time-stamp counter
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -954,11 +968,6 @@ pub fn handle_rdtsc(executor: &mut ConcolicExecutor) -> Result<(), String> {
 /// Triggers a software interrupt with the specified interrupt number.
 /// Currently handles INT3 (debug breakpoint), others cause execution abort.
 fn handle_swi(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
-    log!(
-        executor.trace_logger,
-        "This CALLOTHER operation is a SWI operation."
-    );
-
     // Assume that the instruction parsing guarantees an immediate constant that is the interrupt number
     let interrupt_number = if let Some(Varnode {
         var: Var::Const(interrupt_number_str),
@@ -1111,11 +1120,6 @@ pub fn handle_vpmullw_avx(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    log!(
-        executor.trace_logger,
-        "This CALLOTHER operation is a VPMULLW (AVX) operation."
-    );
-
     // Validate instruction format
     if instruction.inputs.len() < 3 {
         return Err(format!(
@@ -1321,11 +1325,6 @@ pub fn handle_vbroadcastsd_avx(
     executor: &mut ConcolicExecutor,
     instruction: Inst,
 ) -> Result<(), String> {
-    log!(
-        executor.trace_logger,
-        "This CALLOTHER operation is a VBROADCASTSD (AVX) operation."
-    );
-
     // Validate instruction format
     // Expected: CallOther with 3 inputs: [const_index, dest_ymm, src_xmm/mem]
     if instruction.inputs.len() < 3 {
@@ -1412,11 +1411,6 @@ pub fn handle_vbroadcastsd_avx(
 ///
 /// Instruction format: PSHUFW mm, mm/m64, imm8
 pub fn handle_pshufw(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
-    log!(
-        executor.trace_logger,
-        "This CALLOTHER operation (0x9a) is PSHUFW (Packed Shuffle Word)."
-    );
-
     // Get the immediate shuffle control byte (should be in inputs[1])
     let shuffle_control = match instruction.inputs.get(3) {
         Some(Varnode {
