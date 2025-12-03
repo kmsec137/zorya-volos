@@ -285,14 +285,52 @@ impl<'a> State<'a> {
         if !output.status.success() {
             log!(
                 self.logger,
-                "Python script failed: {:?}",
+                "Warning: Python script failed to generate jump tables: {:?}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            return Err("Failed to generate jump table data. Maybe Pyhidra is not installed correctly, try 'pipx uninstall pyhidra' / 'pip3 install pyhidra --break-system-packages'.".into());
+            log!(
+                self.logger,
+                "Jump table analysis will be skipped. (Pyhidra may not be installed correctly)"
+            );
+            // Create an empty jump tables file
+            std::fs::write(&json_output, "[]")?;
+            return Ok(());
         }
 
-        let json_data = std::fs::read_to_string(json_output)?;
-        let raw_tables: Vec<serde_json::Value> = serde_json::from_str(&json_data)?;
+        // Check if the JSON file was actually created
+        if !json_output.exists() {
+            log!(
+                self.logger,
+                "Warning: Jump table JSON file was not created, creating empty file"
+            );
+            // Create an empty jump tables file
+            std::fs::write(&json_output, "[]")?;
+            return Ok(());
+        }
+
+        let json_data = match std::fs::read_to_string(&json_output) {
+            Ok(data) => data,
+            Err(e) => {
+                log!(
+                    self.logger,
+                    "⚠ Warning: Failed to read jump tables JSON: {}, skipping jump table analysis",
+                    e
+                );
+                return Ok(());
+            }
+        };
+
+        let raw_tables: Vec<serde_json::Value> = match serde_json::from_str(&json_data) {
+            Ok(tables) => tables,
+            Err(e) => {
+                log!(
+                    self.logger,
+                    "⚠ Warning: Failed to parse jump tables JSON: {}, skipping jump table analysis",
+                    e
+                );
+                return Ok(());
+            }
+        };
 
         for raw_table in raw_tables {
             let table_address = u64::from_str_radix(
@@ -343,6 +381,12 @@ impl<'a> State<'a> {
                 },
             );
         }
+
+        log!(
+            self.logger,
+            "✓ Successfully loaded {} jump table(s)",
+            self.jump_tables.len()
+        );
 
         Ok(())
     }
