@@ -59,18 +59,13 @@ impl VirtualFileSystem {
 
 #[derive(Debug, Clone)]
 pub struct FileDescriptor {
-    fd: u32,
     position: u64, // Current position in the file
     size: u64,     // Size of the file
 }
 
 impl FileDescriptor {
-    fn new(fd: u32, size: u64) -> Self {
-        FileDescriptor {
-            fd,
-            position: 0,
-            size,
-        }
+    fn new(_fd: u32, size: u64) -> Self {
+        FileDescriptor { position: 0, size }
     }
 
     /// Mock read method.

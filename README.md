@@ -24,7 +24,7 @@ Zorya supports both concrete and symbolic data types, x86-64 instructions and sy
 
 > 🚧 Zorya is under active development. Expect breaking changes.
 
-## :inbox_tray: Install
+## 1. Install
 Make sure to have Rust, Golang and Python properly installed. FYI, the project is beeing developped and maintained under a Linux Ubuntu distrubution.
 
 ```
@@ -34,7 +34,7 @@ make ghidra-config    # if you don't have Ghidra nor Pyhidra
 make all
 ```
 
-## :wrench: Usage
+## 2. Usage
 
 ### A. Interactive Usage (prefered)
 Zorya provides a guided mode, so you don't need to remember the options or flags. It prompts you with questions to outline three typical scenarios:
@@ -89,7 +89,7 @@ For Go:
 - ```tinygo build -gc=conservative -opt=0 .```
 - ```go build -gcflags=all="-N -l" .```
 
-## :mag_right: Try it out with our test binaries
+## 3. Try it out with our test binaries
 You can run Zorya on precompiled binaries with TinyGo located in ```tests/programs```.
 All the execution results can be found in ```results```, except the P-Code file which is in ```external/pcode-generator/results```.
 
@@ -139,7 +139,7 @@ The user input nr.1 must be => "K", the raw value being [67] (len=1)
 ```
 This is it, you have entered the concrete value "a", and Zorya tells you that if you have entered the value "K", the program would have panicked.
 
-## :books: Deep dive inside
+## 4. Deep dive inside
 
 ### Architecture
 - Implement a concolic execution engine (concrete and symbolic) written in Rust,
@@ -185,22 +185,22 @@ Zorya uses **compiler-aware detection strategies** to find vulnerabilities in bi
 
 **Detection Methods:**
 1. **AST-based panic exploration**: Reverse BFS through the control flow graph to find paths leading to explicit panic functions (e.g., `runtime.nilPanic`, `panic()`).
-2. **Lightweight path analysis**: Pattern-based scanning of unexplored branches to detect implicit vulnerabilities like null pointer dereferences and division by zero without full state cloning.
+2. **Overlay path analysis**: Full concolic execution on unexplored branches using copy-on-write state to detect implicit vulnerabilities like null pointer dereferences and division by zero.
 
 **Automatic Strategy Selection:**
 - **TinyGo binaries**: AST-based exploration only (TinyGo inserts explicit panic calls)
-- **Go GC binaries**: AST + Lightweight path analysis (standard Go uses CPU traps for null derefs)
-- **C/C++ binaries**: Lightweight path analysis only (no panic infrastructure)
+- **Go GC binaries**: AST + Overlay path analysis (standard Go uses CPU traps for null derefs)
+- **C/C++ binaries**: Overlay path analysis only (no panic infrastructure)
 
 Zorya automatically selects the right strategy based on the `--lang` and `--compiler` flags you provide.
 
 For detailed technical information:
 - [Compiler-Aware Strategies](doc/Compiler-Aware-Strategies.md) - Strategy selection and configuration
-- [Lightweight Path Analysis](doc/Lightweight-Path-Analysis.md) - Vulnerability detection without explicit panic calls
+- [Overlay Path Analysis](doc/Overlay-Path-Analysis.md) - Vulnerability detection using overlay mechanism
 - [General Strategies Overview](doc/Strategies.md) - High-level overview
 
 
-## :movie_camera: Demo video
+## 5. Demo videos
 In this demo, we showcase how the Zorya Concolic Executor analyzes a Go binary named "broken-calculator", compiled using the TinyGo compiler. The calculator works correctly on inputs like "2 + 3", but contains an artificial vulnerability that causes a panic when both operands are "5".
 
 Zorya explores execution paths symbolically and is currently able to identify the conditions leading to the panic independently: ```operand1 == 5 and operand2 == 5```
@@ -211,13 +211,13 @@ Link to the demo : [Demo](https://youtu.be/8PeSZFvr6WA)
 
 Link to the overall presentation of Zorya at EthCC 2025 : [Presentation](https://www.youtube.com/live/QpcAtfN3B9M)
 
-## :spiral_calendar: Roadmap 
+## 6. Roadmap 
 Zorya has been developeped and tested for now on Linux Ubuntu as the execution environement with x86-64 binaries targets. The roadmap below details the features that have been added over time and those that are planned:
 <div align="left">
   <img src="doc/roadmap-zorya_october-2025.png" alt="Roadmap" width="900"/>
 </div>
 
-## :memo: Academic work
+## 7. Academic work
 You can find the preprint of our first paper on ArXiv under the title : [Exposing Go's Hidden Bugs: A Novel Concolic Framework](https://arxiv.org/abs/2505.20183v1).
 
 ```

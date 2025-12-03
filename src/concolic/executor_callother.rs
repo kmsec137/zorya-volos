@@ -154,7 +154,7 @@ pub fn handle_callother(executor: &mut ConcolicExecutor, instruction: Inst) -> R
 /// This prefix ensures atomic access to memory for the following instruction.
 /// In our single-threaded concolic execution context, this is a no-op as atomicity
 /// is implicitly guaranteed by the sequential execution model.
-pub fn handle_lock(executor: &mut ConcolicExecutor) -> Result<(), String> {
+pub fn handle_lock(_executor: &mut ConcolicExecutor) -> Result<(), String> {
     Ok(())
 }
 
@@ -163,7 +163,7 @@ pub fn handle_lock(executor: &mut ConcolicExecutor) -> Result<(), String> {
 /// Releases the lock acquired by a preceding LOCK prefix.
 /// In our single-threaded concolic execution context, this is a no-op as atomicity
 /// is implicitly guaranteed by the sequential execution model.
-pub fn handle_unlock(executor: &mut ConcolicExecutor) -> Result<(), String> {
+pub fn handle_unlock(_executor: &mut ConcolicExecutor) -> Result<(), String> {
     Ok(())
 }
 
@@ -1016,6 +1016,19 @@ fn handle_swi(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), 
         }
         // Add handling for other interrupts as needed
         _ => {
+            // In overlay mode (speculative execution), gracefully handle unimplemented interrupts
+            // These are typically unreachable code paths (e.g., BIOS interrupts like INT 0x10 in Linux binaries)
+            if executor.is_overlay_mode() {
+                log!(
+                    executor.state.logger,
+                    "[OVERLAY] Ignoring unimplemented SWI {} (speculative path - likely unreachable in practice)",
+                    interrupt_number
+                );
+                // Return success - this is a speculative path that wouldn't execute in practice
+                return Ok(());
+            }
+
+            // In normal execution, unhandled interrupts are errors
             eprintln!(
                 "Unhandled software interrupt (SWI) encountered: {}",
                 interrupt_number
@@ -1431,7 +1444,6 @@ pub fn handle_pshufw(executor: &mut ConcolicExecutor, instruction: Inst) -> Resu
         .varnode_to_concolic(&instruction.inputs[1])
         .map_err(|e| e.to_string())?;
     let src_concrete = src_var.get_concrete_value();
-    let src_symbolic = src_var.get_symbolic_value_bv(executor.context);
 
     log!(
         executor.trace_logger,

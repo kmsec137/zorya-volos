@@ -3,7 +3,7 @@
 use crate::concolic::{executor::ConcolicExecutor, SymbolicVar};
 use parser::parser::{Inst, Opcode, Var};
 use std::io::Write;
-use z3::ast::{Ast, Bool, Float, BV};
+use z3::ast::{Ast, Bool, BV};
 
 use super::ConcolicVar;
 
@@ -2628,7 +2628,6 @@ pub fn handle_int2float(executor: &mut ConcolicExecutor, instruction: Inst) -> R
 
     // Perform the conversion
     let result_concrete_float = input0_var.get_concrete_value() as f64; // input is a signed integer
-    let result_symbolic_float = Float::from_f64(&executor.context, result_concrete_float);
 
     log!(
         executor.state.logger.clone(),

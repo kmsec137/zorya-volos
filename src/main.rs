@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::error::Error;
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::io::{self, BufRead, Write};
+use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 
@@ -29,16 +29,13 @@ use zorya::state::function_signatures::{
     GoFunctionArg,
 };
 use zorya::state::gating_stats::{
-    get_allowed_by_xref_fallback, get_gated_by_reach, inc_allowed_by_xref_fallback,
-    inc_gated_by_reach,
-};
-use zorya::state::lightweight_path_analysis::{
-    lightweight_analyze_path, LightweightAnalysisResult,
+    get_allowed_by_xref_fallback, get_gated_by_reach, inc_gated_by_reach,
 };
 use zorya::state::memory_x86_64::MemoryValue;
-use zorya::state::panic_reach::{
-    is_panic_reachable_addr, precompute_panic_reach, PanicReachRanges, PanicReachSet,
+use zorya::state::overlay_path_analysis::{
+    analyze_untaken_path_with_overlay, OverlayPathAnalysisResult,
 };
+use zorya::state::panic_reach::precompute_panic_reach;
 use zorya::state::simplify_z3::extract_underlying_condition_from_flag_ast;
 use zorya::state::thread_manager::{CheckpointType, ThreadStatus};
 use zorya::target_info::GLOBAL_TARGET_INFO;
@@ -569,8 +566,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Precompute reverse panic reachability set (O(V+E)), then O(1) queries
-    let (panic_reach_set, panic_reach_ranges, _panic_reach_statss) =
-        precompute_panic_reach(&binary_path)?;
+    let _ = precompute_panic_reach(&binary_path)?;
 
     // *****************************
     // CORE COMMAND
@@ -588,8 +584,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         start_address,
         &instructions_map,
         &binary_path,
-        &panic_reach_set,
-        &panic_reach_ranges,
     );
     // *****************************
 
@@ -602,8 +596,6 @@ fn execute_instructions_from(
     start_address: u64,
     instructions_map: &BTreeMap<u64, Vec<Inst>>,
     binary_path: &str,
-    panic_reach: &PanicReachSet,
-    panic_ranges: &PanicReachRanges,
 ) {
     let mut current_rip = start_address;
     let mut local_line_number: i64 = 0; // Index of the current instruction within the block
@@ -618,9 +610,6 @@ fn execute_instructions_from(
         "Logging the addresses of the XREFs of Panic functions..."
     );
     // Read the panic addresses from the file once before the main loop
-    let panic_addresses = read_panic_addresses(executor, "xref_addresses.txt")
-        .expect("Failed to read panic addresses from results directory");
-
     log!(
         executor.state.logger,
         "Beginning execution from address: 0x{:x}",
@@ -847,37 +836,18 @@ fn execute_instructions_from(
 
             // If this is a branch-type instruction, do symbolic checks (only if negate_path_flag is enabled)
             if inst.opcode == Opcode::CBranch && negate_path_flag == "true" {
-                // Compute branch target early
-                let branch_target_varnode_tmp = inst.inputs[0].clone();
-                let branch_target_address_tmp = executor
-                    .from_varnode_var_to_branch_address(&branch_target_varnode_tmp)
-                    .map_err(|e| e.to_string())
-                    .unwrap();
                 // Treat Const targets as p-code internal (jump table/sub-instruction): skip AST/speculation later
                 let is_internal_target = matches!(&inst.inputs[0].var, Var::Const(_));
 
-                // Gate: allow if current block is reachable OR branch target is within any
-                // panic-reachable range OR target matches a known panic xref
-                let panic_reach_ok =
-                    is_panic_reachable_addr(current_rip, panic_reach, panic_ranges)
-                        || is_panic_reachable_addr(
-                            branch_target_address_tmp,
-                            panic_reach,
-                            panic_ranges,
-                        )
-                        || panic_addresses
-                            .iter()
-                            .any(|&a| a == branch_target_address_tmp);
-
-                // Also check if branch condition involves symbolic variables
-                // If so, we should explore it regardless of panic reachability
+                // Check if branch condition involves tracked symbolic variables
+                // ONLY explore if the condition contains symbolic variables we're tracking
                 let condition_varnode_tmp = inst.inputs[1].clone();
                 let condition_symbolic_tmp = executor
                     .varnode_to_concolic(&condition_varnode_tmp)
                     .map_err(|e| e.to_string())
                     .ok();
 
-                let involves_symbolic = if let Some(cond) = condition_symbolic_tmp {
+                let involves_tracked_symbolic = if let Some(cond) = condition_symbolic_tmp {
                     let cond_var = cond.to_concolic_var().unwrap();
                     let expr_string = format!("{:?}", cond_var.symbolic);
                     executor
@@ -888,36 +858,20 @@ fn execute_instructions_from(
                     false
                 };
 
-                // Get compiler type for gating decision
-                let compiler = env::var("COMPILER").unwrap_or_else(|_| String::new());
-
-                // Explore if panic-reachable OR involves symbolic variables (for vuln detection)
-                // Only skip if: not panic-reachable AND no symbolic vars AND compiler is TinyGo
-                if !panic_reach_ok && !involves_symbolic && compiler == "tinygo" {
+                // SIMPLIFIED GATING: Only explore if branch condition involves tracked symbolic variables
+                if !involves_tracked_symbolic {
                     inc_gated_by_reach();
                     log!(
                         executor.state.logger,
-                        "Skipping SMT analysis: neither block 0x{:x} nor target 0x{:x} are in panic reach or xrefs, no symbolic variables involved, and compiler is TinyGo",
-                        current_rip,
-                        branch_target_address_tmp
+                        "Skipping overlay analysis at 0x{:x}: branch condition does not involve tracked symbolic variables",
+                        current_rip
                     );
                 } else {
-                    if involves_symbolic && !panic_reach_ok {
-                        log!(
-                            executor.state.logger,
-                            "Branch at 0x{:x} involves symbolic variables; exploring for potential vulnerabilities...",
-                            current_rip
-                        );
-                    } else if !panic_reach_ok && compiler != "tinygo" {
-                        log!(
-                            executor.state.logger,
-                            "Branch at 0x{:x} not panic-reachable but exploring due to Go GC compiler (may contain implicit runtime panics)",
-                            current_rip
-                        );
-                    }
-                    if !panic_reach.contains(&current_rip) {
-                        inc_allowed_by_xref_fallback();
-                    }
+                    log!(
+                        executor.state.logger,
+                        "Branch at 0x{:x} involves tracked symbolic variables; performing overlay analysis...",
+                        current_rip
+                    );
                     log!(
                         executor.state.logger,
                         " Possible panic function reference detected: entrying symbolic checks..."
@@ -948,160 +902,71 @@ fn execute_instructions_from(
                         *addr
                     };
 
-                    // This flag indicates whether we want to explore th negated (not taken) path to explor eit symbolically
-                    let negate_path_flag = std::env::var("NEGATE_PATH_FLAG")
-                        .expect("NEGATE_PATH_FLAG environment variable is not set");
-
-                    // Derive the negated-path branch condition and decide whether to explore
-                    let cond_bv = conditional_flag.symbolic.to_bv(executor.context);
-                    let branch_taken_to_explore = conditional_flag_u64 == 0;
-                    let explored_condition = extract_underlying_condition_from_flag_ast(
-                        &cond_bv,
-                        branch_taken_to_explore,
-                        &mut executor.state.logger.clone(),
-                    );
-
-                    // Determine if the explored condition references any tracked symbolic argument
-                    let expr_string = format!("{:?}", explored_condition.simplify());
-                    let involves_tracked = executor
-                        .function_symbolic_arguments
-                        .keys()
-                        .any(|arg_name| expr_string.contains(arg_name));
-
-                    // Check compiler/language type to decide exploration strategy
-                    let compiler_check = env::var("COMPILER").unwrap_or_else(|_| String::new());
-                    let source_lang_check = env::var("SOURCE_LANG").unwrap_or_default();
-
-                    // Always enable lightweight path analysis for:
-                    // 1. Go GC compiler (implicit runtime panics: nil derefs, bounds checks, etc.)
-                    // 2. C/C++ binaries (implicit vulnerabilities: null derefs, buffer overflows, use-after-free, etc.)
-                    let needs_lightweight_analysis = compiler_check == "gc"
-                        || (compiler_check.is_empty() && source_lang_check == "go")
-                        || source_lang_check == "c"
-                        || source_lang_check == "c++"
-                        || source_lang_check == "cpp";
-
-                    // If the condition involves tracked variables or the constraint vector is not empty, we want to explore the negated path
-                    // For GC compiler and C/C++, ALWAYS explore (may have implicit runtime vulnerabilities)
-                    let should_explore = involves_tracked
-                        || !executor.constraint_vector.is_empty()
-                        || needs_lightweight_analysis;
-
+                    // Check if internal p-code target
                     if is_internal_target {
-                        log!(executor.state.logger, ">>> Internal p-code branch target detected; skipping AST exploration and negated-path SMT.");
-                    } else if !should_explore {
+                        log!(executor.state.logger, ">>> Internal p-code branch target detected; skipping overlay exploration.");
+                    } else {
+                        // Not an internal target - proceed with overlay exploration
                         log!(
                             executor.state.logger,
-                            "Skipping negated-path exploration: condition has no tracked symbols, constraint vector is empty, and not a language requiring lightweight path analysis (TinyGo only)."
+                            ">>> Real branch target (non-internal) with tracked symbolic variables - performing overlay exploration."
                         );
-                    } else {
-                        if needs_lightweight_analysis
-                            && !involves_tracked
-                            && executor.constraint_vector.is_empty()
+
+                        // Get compiler/language info for AST exploration decision later
+                        let source_lang_inner =
+                            env::var("SOURCE_LANG").unwrap_or_else(|_| "unknown".to_string());
+                        let compiler_inner = env::var("COMPILER").unwrap_or_else(|_| String::new());
+
+                        // CONCOLIC OVERLAY PATH ANALYSIS: Always perform for tracked symbolic variables
                         {
+                            // CONCOLIC OVERLAY ANALYSIS: Full concolic execution with COW state
                             log!(
-                                executor.state.logger,
-                                ">>> Enabling negated-path exploration for {} (may contain implicit runtime vulnerabilities)",
-                                if source_lang_check == "c" || source_lang_check == "c++" || source_lang_check == "cpp" {
-                                    "C/C++ binary"
-                                } else {
-                                    "Go GC compiler"
-                                }
-                            );
-                        }
-                        // This block is for finding a SAT state for the negated path exploration
-                        if negate_path_flag == "true" {
-                            log!(
-                                executor.state.logger,
-                                ">>> Evaluating arguments for the negated path exploration."
-                            );
-
-                            // Determine exploration strategy based on compiler/language
-                            let source_lang_inner =
-                                env::var("SOURCE_LANG").unwrap_or_else(|_| "unknown".to_string());
-                            let compiler_inner =
-                                env::var("COMPILER").unwrap_or_else(|_| String::new());
-                            let use_lightweight_analysis = match (
-                                source_lang_inner.as_str(),
-                                compiler_inner.as_str(),
-                            ) {
-                                // TinyGo: Only AST-based exploration (explicit panic calls)
-                                ("go", "tinygo") => {
-                                    log!(
-                                        executor.state.logger,
-                                        ">>> Strategy: TinyGo binary detected - AST-based panic exploration only"
-                                    );
-                                    false
-                                }
-                                // Go GC compiler: AST + Lightweight analysis (implicit null derefs via CPU traps)
-                                ("go", "gc") | ("go", "") => {
-                                    log!(
-                                        executor.state.logger,
-                                        ">>> Strategy: Go GC compiler detected - AST + lightweight path analysis for implicit vulnerabilities"
-                                    );
-                                    true
-                                }
-                                // C/C++: Only lightweight path analysis (no panic infrastructure)
-                                ("c", _) | ("c++", _) | ("cpp", _) => {
-                                    log!(
-                                        executor.state.logger,
-                                        ">>> Strategy: C/C++ binary detected - lightweight path analysis for de facto vulnerabilities"
-                                    );
-                                    true
-                                }
-                                // Default: use both for safety
-                                _ => {
-                                    log!(
-                                        executor.state.logger,
-                                        ">>> Strategy: Unknown compiler/language - using both AST and lightweight path analysis"
-                                    );
-                                    true
-                                }
-                            };
-
-                            // LIGHTWEIGHT PATH ANALYSIS: For Go GC and C/C++ binaries
-                            if use_lightweight_analysis {
-                                log!(
                                     executor.state.logger,
-                                    ">>> Performing lightweight path analysis on negated path at 0x{:x}...",
+                                    ">>> Performing concolic overlay path analysis on negated path at 0x{:x}...",
                                     address_of_negated_path_exploration
                                 );
 
-                                let analysis_result = lightweight_analyze_path(
-                                    executor,
-                                    address_of_negated_path_exploration,
-                                    &instructions_map,
-                                    50, // max depth
-                                );
+                            let analysis_result = analyze_untaken_path_with_overlay(
+                                executor,
+                                address_of_negated_path_exploration,
+                                &instructions_map,
+                                15, // max depth for overlay
+                            );
 
-                                match analysis_result {
-                                    LightweightAnalysisResult::VulnerabilityFound(
-                                        vuln_type,
-                                        vuln_addr,
-                                        desc,
-                                    ) => {
-                                        log!(
+                            match analysis_result {
+                                OverlayPathAnalysisResult::VulnerabilityFound(
+                                    vuln_type,
+                                    vuln_addr,
+                                    desc,
+                                ) => {
+                                    log!(
                                             executor.state.logger,
                                             "╔═══════════════════════════════════════════════════════════════════"
                                         );
-                                        log!(
-                                            executor.state.logger,
-                                            "║ 🚨 VULNERABILITY DETECTED VIA LIGHTWEIGHT PATH ANALYSIS"
-                                        );
-                                        log!(executor.state.logger, "║ Type: {}", vuln_type);
-                                        log!(
-                                            executor.state.logger,
-                                            "║ Location: 0x{:x}",
-                                            vuln_addr
-                                        );
-                                        log!(executor.state.logger, "║ Description: {}", desc);
-                                        log!(
+                                    log!(
+                                        executor.state.logger,
+                                        "║ VULNERABILITY DETECTED VIA CONCOLIC OVERLAY ANALYSIS"
+                                    );
+                                    log!(executor.state.logger, "║ Type: {}", vuln_type);
+                                    log!(executor.state.logger, "║ Location: 0x{:x}", vuln_addr);
+                                    log!(executor.state.logger, "║ Description: {}", desc);
+                                    log!(
                                             executor.state.logger,
                                             "╚═══════════════════════════════════════════════════════════════════"
                                         );
 
-                                        // Try to find a satisfying input
-                                        evaluate_args_z3(
+                                    // Derive the path condition
+                                    let cond_bv = conditional_flag.symbolic.to_bv(executor.context);
+                                    let branch_taken_to_explore = conditional_flag_u64 == 0;
+                                    let _explored_condition =
+                                        extract_underlying_condition_from_flag_ast(
+                                            &cond_bv,
+                                            branch_taken_to_explore,
+                                            &mut executor.state.logger.clone(),
+                                        );
+
+                                    // Try to find a satisfying input
+                                    evaluate_args_z3(
                                             executor,
                                             inst,
                                             Some(conditional_flag.clone()),
@@ -1117,106 +982,103 @@ fn execute_instructions_from(
                                                 e
                                             );
                                         });
-                                    }
-                                    LightweightAnalysisResult::Safe => {
-                                        log!(
-                                            executor.state.logger,
-                                            ">>> Lightweight path analysis found no vulnerabilities in negated path"
-                                        );
-                                    }
-                                    LightweightAnalysisResult::DepthLimitReached => {
-                                        log!(
-                                            executor.state.logger,
-                                            ">>> Lightweight path analysis reached depth limit"
-                                        );
-                                    }
-                                    LightweightAnalysisResult::Error(e) => {
-                                        log!(
-                                            executor.state.logger,
-                                            ">>> Lightweight path analysis error: {}",
-                                            e
-                                        );
-                                    }
                                 }
-                            }
-
-                            // AST EXPLORATION: For TinyGo and Go GC binaries (detect explicit panic calls)
-                            let use_ast_exploration =
-                                match (source_lang_inner.as_str(), compiler_inner.as_str()) {
-                                    ("go", _) => true, // All Go binaries
-                                    _ => false,        // C/C++ don't have panic infrastructure
-                                };
-
-                            let ast_panic_result = if use_ast_exploration {
-                                log!(
-                                    executor.state.logger,
-                                    ">>> Performing AST-based panic exploration..."
-                                );
-                                explore_ast_for_panic(
-                                    executor,
-                                    address_of_negated_path_exploration,
-                                    &binary_path,
-                                )
-                            } else {
-                                log!(
-                                    executor.state.logger,
-                                    ">>> Skipping AST exploration (not applicable for this language/compiler)"
-                            );
-                                "NO_PANIC_XREF_FOUND".to_string()
-                            };
-
-                            if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
-                                if let Some(panic_addr_str) =
-                                    ast_panic_result.trim().split_whitespace().last()
-                                {
-                                    if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
-                                        if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
-                                            log!(executor.state.logger, ">>> The AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
-                                        } else {
-                                            log!(
-                                                executor.state.logger,
-                                                "Could not parse panic address from AST result: '{}'",
-                                                panic_addr_str
-                                            );
-                                        }
-                                    }
+                                OverlayPathAnalysisResult::Safe => {
+                                    log!(
+                                            executor.state.logger,
+                                            ">>> Concolic overlay analysis found no vulnerabilities in negated path"
+                                        );
                                 }
-
-                                // Extract panic address from AST result
-                                let panic_addr = if let Some(panic_addr_str) =
-                                    ast_panic_result.trim().split_whitespace().last()
-                                {
-                                    if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
-                                        u64::from_str_radix(stripped, 16).ok()
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                };
-
-                                // Run only a single evaluation once panic address is known
-                                evaluate_args_z3(
-                                    executor,
-                                    inst,
-                                    Some(conditional_flag.clone()),
-                                    Some(current_rip),
-                                    Some(branch_target_address),
-                                    panic_addr,
-                                )
-                                .unwrap_or_else(|e| {
+                                OverlayPathAnalysisResult::DepthLimitReached => {
                                     log!(
                                         executor.state.logger,
-                                        "Error evaluating arguments for branch at 0x{:x}: {}",
-                                        branch_target_address,
+                                        ">>> Concolic overlay analysis reached depth limit"
+                                    );
+                                }
+                                OverlayPathAnalysisResult::Error(e) => {
+                                    log!(
+                                        executor.state.logger,
+                                        ">>> Concolic overlay analysis error: {}",
                                         e
                                     );
-                                });
-                            } else {
-                                log!(executor.state.logger, ">>> No panic function found in the AST exploration with the current max depth exploration");
+                                }
                             }
+                        }
+
+                        // AST EXPLORATION: For TinyGo and Go GC binaries (detect explicit panic calls)
+                        let use_ast_exploration =
+                            match (source_lang_inner.as_str(), compiler_inner.as_str()) {
+                                ("go", _) => true, // All Go binaries
+                                _ => false,        // C/C++ don't have panic infrastructure
+                            };
+
+                        let ast_panic_result = if use_ast_exploration {
+                            log!(
+                                executor.state.logger,
+                                ">>> Performing AST-based panic exploration..."
+                            );
+                            explore_ast_for_panic(
+                                executor,
+                                address_of_negated_path_exploration,
+                                &binary_path,
+                            )
                         } else {
-                            log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");
+                            log!(
+                                executor.state.logger,
+                                ">>> Skipping AST exploration (not applicable for this language/compiler)"
+                        );
+                            "NO_PANIC_XREF_FOUND".to_string()
+                        };
+
+                        if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
+                            if let Some(panic_addr_str) =
+                                ast_panic_result.trim().split_whitespace().last()
+                            {
+                                if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
+                                    if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
+                                        log!(executor.state.logger, ">>> The AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
+                                    } else {
+                                        log!(
+                                            executor.state.logger,
+                                            "Could not parse panic address from AST result: '{}'",
+                                            panic_addr_str
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Extract panic address from AST result
+                            let panic_addr = if let Some(panic_addr_str) =
+                                ast_panic_result.trim().split_whitespace().last()
+                            {
+                                if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
+                                    u64::from_str_radix(stripped, 16).ok()
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            // Run only a single evaluation once panic address is known
+                            evaluate_args_z3(
+                                executor,
+                                inst,
+                                Some(conditional_flag.clone()),
+                                Some(current_rip),
+                                Some(branch_target_address),
+                                panic_addr,
+                            )
+                            .unwrap_or_else(|e| {
+                                log!(
+                                    executor.state.logger,
+                                    "Error evaluating arguments for branch at 0x{:x}: {}",
+                                    branch_target_address,
+                                    e
+                                );
+                            });
+                        } else {
+                            log!(executor.state.logger, ">>> No panic function found in the AST exploration with the current max depth exploration");
                         }
                     }
                 }
@@ -2187,53 +2049,6 @@ fn merge_vdso_pcode(
 }
 
 // Function to read the panic addresses from the file
-fn read_panic_addresses(executor: &mut ConcolicExecutor, filename: &str) -> io::Result<Vec<u64>> {
-    // Get the base path from the environment variable
-    let zorya_path_buf =
-        PathBuf::from(env::var("ZORYA_DIR").expect("ZORYA_DIR environment variable is not set"));
-    let zorya_path = zorya_path_buf.to_str().unwrap();
-
-    // Construct the full path to the results directory
-    let results_dir = Path::new(zorya_path).join("results");
-    let full_path = results_dir.join(filename);
-
-    // Ensure the file exists before trying to read it
-    if !full_path.exists() {
-        log!(
-            executor.state.logger,
-            "Error: File {:?} does not exist.",
-            full_path
-        );
-        return Err(io::Error::new(io::ErrorKind::NotFound, "File not found"));
-    }
-
-    let file = File::open(&full_path)?;
-    let reader = BufReader::new(file);
-    let mut addresses = Vec::new();
-
-    for line in reader.lines() {
-        let line = line?;
-        let line = line.trim();
-        if line.starts_with("0x") {
-            match u64::from_str_radix(&line[2..], 16) {
-                Ok(addr) => {
-                    // log!(executor.state.logger, "Read panic address: 0x{:x}", addr);
-                    addresses.push(addr);
-                }
-                Err(e) => {
-                    log!(
-                        executor.state.logger,
-                        "Failed to parse address {}: {}",
-                        line,
-                        e
-                    );
-                }
-            }
-        }
-    }
-    Ok(addresses)
-}
-
 // Function to add the arguments of the target binary from the user's command
 fn update_argc_argv(
     executor: &mut ConcolicExecutor,

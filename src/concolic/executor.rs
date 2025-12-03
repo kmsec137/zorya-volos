@@ -17,7 +17,7 @@ pub use super::SymbolicVar;
 use crate::concolic::ConcolicVar;
 use crate::state::cpu_state::CpuConcolicValue;
 use crate::state::evaluate_args_z3;
-use crate::state::memory_x86_64::MemoryValue;
+use crate::state::memory_x86_64::{MemoryError, MemoryValue};
 use crate::state::simplify_z3::extract_underlying_condition_from_flag_ast;
 use crate::state::state_manager::FunctionFrame;
 use crate::state::state_manager::Logger;
@@ -51,6 +51,7 @@ pub struct ConcolicExecutor<'ctx> {
     pub trace_logger: Logger,
     pub function_symbolic_arguments: BTreeMap<String, SymbolicVar<'ctx>>, // this is used to store the symbolic arguments of the binary (os.args) or the function (RSI, RDX, RCX, R8, R9 etc.)
     pub constraint_vector: Vec<Bool<'ctx>>, // Vector to collect constraints on tracked symbolic variables
+    pub overlay_state: Option<crate::state::OverlayState<'ctx>>, // Overlay state for exploring untaken paths without modifying base state
 }
 
 impl<'ctx> ConcolicExecutor<'ctx> {
@@ -75,7 +76,236 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             trace_logger,
             function_symbolic_arguments: BTreeMap::new(),
             constraint_vector: Vec::new(),
+            overlay_state: None, // No overlay by default
         })
+    }
+
+    /// Check if overlay mode is active
+    pub fn is_overlay_mode(&self) -> bool {
+        self.overlay_state.is_some()
+    }
+
+    /// Get register value with overlay support
+    /// If overlay mode is active, reads from overlay first, then falls back to base
+    pub fn get_register_overlay_aware(
+        &self,
+        offset: u64,
+        access_size: u32,
+    ) -> Option<crate::state::cpu_state::CpuConcolicValue<'ctx>> {
+        if let Some(ref overlay) = self.overlay_state {
+            // Try overlay first
+            if let Some(val) = overlay
+                .cpu_overlay
+                .get_register_by_offset(offset, access_size)
+            {
+                return Some(val);
+            }
+        }
+
+        // Fall back to base state
+        self.state
+            .cpu_state
+            .lock()
+            .ok()
+            .and_then(|cpu| cpu.get_register_by_offset(offset, access_size))
+    }
+
+    /// Set register value with overlay support
+    /// If overlay mode is active, writes to overlay only
+    /// Otherwise writes to base state
+    pub fn set_register_overlay_aware(
+        &mut self,
+        offset: u64,
+        value: ConcolicVar<'ctx>,
+        size: u32,
+    ) -> Result<(), String> {
+        if let Some(ref mut overlay) = self.overlay_state {
+            // Write to overlay
+            overlay
+                .cpu_overlay
+                .set_register_value_by_offset(offset, value, size)
+        } else {
+            // Write to base state
+            self.state
+                .cpu_state
+                .lock()
+                .map_err(|e| format!("Failed to lock CPU state: {}", e))?
+                .set_register_value_by_offset(offset, value, size)
+        }
+    }
+
+    /// Read memory with overlay support
+    /// If overlay mode is active, reads from overlay first, then falls back to base
+    pub fn read_memory_overlay_aware(
+        &mut self,
+        address: u64,
+        size: usize,
+    ) -> Result<
+        (Vec<u8>, Vec<Option<std::sync::Arc<BV<'ctx>>>>),
+        crate::state::memory_x86_64::MemoryError,
+    > {
+        if let Some(ref mut overlay) = self.overlay_state {
+            // Find the region containing this address
+            if let Some((region_start, _)) = self.state.memory.find_region_bounds(address, size) {
+                if let Some(region_ptr) = self.state.memory.get_region_ptr(region_start) {
+                    // SAFETY: Region exists and won't be modified during overlay operation
+                    let region = unsafe { &*region_ptr };
+
+                    if let Some((concrete, symbolic_opt)) =
+                        overlay.read_memory(address, size, region)
+                    {
+                        // Convert Option<Arc<BV>> to Vec<Option<Arc<BV>>>
+                        let symbolic_vec = if let Some(sym) = symbolic_opt {
+                            vec![Some(sym); size]
+                        } else {
+                            vec![None; size]
+                        };
+                        return Ok((concrete, symbolic_vec));
+                    }
+                }
+            }
+        }
+
+        // Fall back to base state
+        self.state.memory.read_memory(address, size)
+    }
+
+    /// Write memory with overlay support
+    /// If overlay mode is active, writes to overlay only
+    /// Otherwise writes to base state
+    pub fn write_memory_overlay_aware(
+        &mut self,
+        address: u64,
+        concrete_data: &[u8],
+        symbolic_data: Option<std::sync::Arc<BV<'ctx>>>,
+    ) -> Result<(), String> {
+        if let Some(ref mut overlay) = self.overlay_state {
+            // Find the region containing this address
+            let (region_start, _) = self
+                .state
+                .memory
+                .find_region_bounds(address, concrete_data.len())
+                .ok_or(format!(
+                    "No memory region found for address 0x{:x}",
+                    address
+                ))?;
+
+            let region_ptr = self
+                .state
+                .memory
+                .get_region_ptr(region_start)
+                .ok_or(format!(
+                    "Failed to get region pointer for address 0x{:x}",
+                    region_start
+                ))?;
+
+            // SAFETY: Region exists and won't be modified during overlay operation
+            let region = unsafe { &*region_ptr };
+
+            // Write to overlay
+            overlay.write_memory(address, concrete_data, symbolic_data, region)
+        } else {
+            // Write to base state
+            // Convert single Option<Arc<BV>> to Vec<Option<Arc<BV>>>
+            let symbolic_vec: Vec<Option<std::sync::Arc<BV<'ctx>>>> =
+                if let Some(sym) = symbolic_data {
+                    vec![Some(sym); concrete_data.len()]
+                } else {
+                    vec![None; concrete_data.len()]
+                };
+            self.state
+                .memory
+                .write_memory(address, concrete_data, &symbolic_vec)
+                .map_err(|e| format!("Failed to write memory: {:?}", e))
+        }
+    }
+
+    /// Read a value from memory in overlay mode
+    /// This is a helper that mimics the behavior of MemoryX86_64::read_value but uses overlay
+    fn read_value_overlay_mode(
+        &mut self,
+        address: u64,
+        size_bits: u32,
+    ) -> Result<ConcolicVar<'ctx>, String> {
+        let byte_size = ((size_bits + 7) / 8) as usize;
+
+        // Use overlay-aware memory reading
+        let (concrete_bytes, symbolic_vec) = self
+            .read_memory_overlay_aware(address, byte_size)
+            .map_err(|e| format!("Failed to read from overlay at 0x{:x}: {:?}", address, e))?;
+
+        // Convert bytes to u64
+        let mut padded = vec![0u8; 8.max(byte_size)];
+        padded[..concrete_bytes.len()].copy_from_slice(&concrete_bytes);
+        let value = u64::from_le_bytes(padded[..8].try_into().unwrap());
+
+        // Apply mask for the requested size
+        let mask = if size_bits < 64 {
+            (1u64 << size_bits) - 1
+        } else {
+            u64::MAX
+        };
+        let masked = value & mask;
+
+        // Build symbolic value - check if any bytes have symbolic data
+        let has_symbolic = symbolic_vec.iter().any(|opt| opt.is_some());
+
+        let symbolic_bv = if has_symbolic {
+            // Concatenate symbolic bytes (similar to MemoryX86_64::concatenate_symbolic_bytes)
+            let mut result: Option<BV<'ctx>> = None;
+            for (sym_opt, &concrete_byte) in symbolic_vec.iter().zip(concrete_bytes.iter()).rev() {
+                let byte_bv = if let Some(sym_ref) = sym_opt {
+                    sym_ref.as_ref().clone()
+                } else {
+                    BV::from_u64(self.context, concrete_byte as u64, 8)
+                };
+
+                result = Some(if let Some(acc) = result {
+                    byte_bv.concat(&acc)
+                } else {
+                    byte_bv
+                });
+            }
+            result.unwrap_or_else(|| BV::from_u64(self.context, masked, size_bits))
+        } else {
+            BV::from_u64(self.context, masked, size_bits)
+        };
+
+        // Resize if needed
+        let resized_sym = if symbolic_bv.get_size() < size_bits {
+            symbolic_bv.zero_ext(size_bits - symbolic_bv.get_size())
+        } else if symbolic_bv.get_size() > size_bits {
+            symbolic_bv.extract(size_bits - 1, 0)
+        } else {
+            symbolic_bv
+        };
+
+        Ok(ConcolicVar {
+            concrete: ConcreteVar::Int(masked),
+            symbolic: SymbolicVar::Int(resized_sym),
+            ctx: self.context,
+        })
+    }
+
+    /// Write a value to memory in overlay mode
+    /// This is a helper that mimics the behavior of MemoryX86_64::write_value but uses overlay
+    fn write_value_overlay_mode(
+        &mut self,
+        address: u64,
+        mem_value: &MemoryValue<'ctx>,
+    ) -> Result<(), crate::state::memory_x86_64::MemoryError> {
+        let size_bits = mem_value.size;
+        let byte_size = ((size_bits + 7) / 8) as usize;
+
+        // Convert concrete value to bytes
+        let concrete_bytes = mem_value.concrete.to_le_bytes()[..byte_size].to_vec();
+
+        // Convert symbolic BV to Arc<BV> for overlay
+        let symbolic_arc = Some(std::sync::Arc::new(mem_value.symbolic.clone()));
+
+        // Use overlay-aware memory writing
+        self.write_memory_overlay_aware(address, &concrete_bytes, symbolic_arc)
+            .map_err(|_| crate::state::memory_x86_64::MemoryError::WriteOutOfBounds)
     }
 
     pub fn populate_symbol_table(&mut self, elf_data: &[u8]) -> Result<(), goblin::error::Error> {
@@ -492,8 +722,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
 
     // Transform the varnode.var into a concolic object in zorya
     pub fn varnode_to_concolic(&mut self, varnode: &Varnode) -> Result<ConcolicEnum<'ctx>, String> {
-        let cpu_state_guard = self.state.cpu_state.lock().unwrap();
-
         log!(
             self.state.logger.clone(),
             "Converting Varnode to concolic type: {:?}",
@@ -510,18 +738,42 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     bit_size
                 );
 
-                if let Some(&(ref _name, reg_size)) = cpu_state_guard.register_map.get(offset) {
+                // Check register map to see if it exists and get its size
+                let (reg_exists, reg_size) = {
+                    let cpu_state_guard = self.state.cpu_state.lock().unwrap();
+                    if let Some(&(ref _name, reg_size)) = cpu_state_guard.register_map.get(offset) {
+                        (true, reg_size)
+                    } else {
+                        (false, 0)
+                    }
+                };
+
+                if reg_exists {
                     if reg_size == bit_size {
                         log!(self.state.logger.clone(), "Directly processing register found in register_map with matching size at offset 0x{:x}", offset);
-                        let cpu_concolic_value = cpu_state_guard
-                            .get_register_by_offset(*offset, reg_size)
+
+                        // Use overlay-aware register read (reads from overlay if active, otherwise base)
+                        let cpu_concolic_value = self
+                            .get_register_overlay_aware(*offset, reg_size)
                             .ok_or_else(|| {
                                 format!("Failed to retrieve register by offset 0x{:x}", offset)
                             })?;
                         Ok(ConcolicEnum::CpuConcolicValue(cpu_concolic_value))
                     } else {
                         log!(self.state.logger.clone(), "Register at offset 0x{:x} exists but with size {} bits, needs {} bits, extraction needed", offset, reg_size, bit_size);
-                        self.extract_and_create_concolic_value(&cpu_state_guard, *offset, bit_size)
+
+                        // Read the full register (overlay-aware), then extract the needed portion
+                        let full_register = self
+                            .get_register_overlay_aware(*offset, reg_size)
+                            .ok_or_else(|| {
+                                format!(
+                                    "Failed to retrieve register for extraction at offset 0x{:x}",
+                                    offset
+                                )
+                            })?;
+
+                        // Extract the requested bit range from the full register
+                        self.extract_from_cpu_value(&full_register, *offset, bit_size)
                     }
                 } else {
                     log!(
@@ -529,6 +781,19 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         "No direct register match found at offset 0x{:x}, extraction required",
                         offset
                     );
+
+                    // Find containing register (overlay-aware)
+                    let containing_offset = self.find_containing_register_offset(*offset);
+                    if let Some(container_offset) = containing_offset {
+                        if let Some(full_register) =
+                            self.get_register_overlay_aware(container_offset.0, container_offset.1)
+                        {
+                            return self.extract_from_cpu_value(&full_register, *offset, bit_size);
+                        }
+                    }
+
+                    // Fallback to base state extraction
+                    let cpu_state_guard = self.state.cpu_state.lock().unwrap();
                     self.extract_and_create_concolic_value(&cpu_state_guard, *offset, bit_size)
                 }
             }
@@ -726,6 +991,102 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     }
 
     // Extracts a value from a register and creates a new concolic value
+    /// Find the containing register for a given offset
+    /// Returns (base_offset, size_bits) if found
+    fn find_containing_register_offset(&self, offset: u64) -> Option<(u64, u32)> {
+        let cpu_state_guard = match self.state.cpu_state.lock() {
+            Ok(guard) => guard,
+            Err(_) => return None,
+        };
+
+        let mut containing: Option<(u64, u32)> = None;
+        for (base, &(_, size_bits)) in cpu_state_guard.register_map.iter() {
+            let size_bytes = (size_bits as u64) / 8;
+            if offset >= *base && offset < (*base + size_bytes) {
+                if let Some((best_base, _)) = containing {
+                    if *base > best_base {
+                        containing = Some((*base, size_bits));
+                    }
+                } else {
+                    containing = Some((*base, size_bits));
+                }
+            }
+        }
+        containing
+    }
+
+    /// Extract a portion from a CpuConcolicValue (overlay-aware extraction)
+    fn extract_from_cpu_value(
+        &self,
+        original_register: &CpuConcolicValue<'ctx>,
+        offset: u64,
+        bit_size: u32,
+    ) -> Result<ConcolicEnum<'ctx>, String> {
+        // Find the base register offset to calculate bit_offset
+        let containing_offset = self
+            .find_containing_register_offset(offset)
+            .ok_or_else(|| format!("No containing register found for offset 0x{:x}", offset))?;
+
+        let base_register_offset = containing_offset.0;
+        let bit_offset = (offset - base_register_offset) * 8; // Calculate the bit offset within the register
+
+        match &original_register.concrete {
+            ConcreteVar::Int(value) => {
+                // Handle the concrete extraction
+                let mask: u64 = if bit_size < 64 {
+                    (1u64 << bit_size) - 1
+                } else {
+                    u64::MAX
+                };
+                let extracted_value = (*value >> bit_offset) & mask;
+
+                // Symbolic extraction
+                let symbolic_bv = original_register.symbolic.to_bv(self.context);
+                let high_bit = (bit_offset + u64::from(bit_size) - 1) as u32;
+                let low_bit = bit_offset as u32;
+
+                let extracted_symbolic = symbolic_bv.extract(high_bit, low_bit).simplify();
+
+                if extracted_symbolic.get_z3_ast().is_null() {
+                    return Err("Symbolic extraction resulted in an invalid state".to_string());
+                }
+
+                Ok(ConcolicEnum::CpuConcolicValue(CpuConcolicValue {
+                    concrete: ConcreteVar::Int(extracted_value),
+                    symbolic: SymbolicVar::Int(extracted_symbolic),
+                    ctx: self.context,
+                }))
+            }
+            ConcreteVar::LargeInt(values) => {
+                // Handle the concrete extraction from LargeInt
+                let start_bit = bit_offset;
+                let end_bit = start_bit + u64::from(bit_size) - 1;
+                let extracted_concrete =
+                    CpuState::extract_bits_from_large_int(values, start_bit, end_bit);
+
+                // Extract the symbolic value
+                if let SymbolicVar::LargeInt(ref bvs) = original_register.symbolic {
+                    let extracted_symbolic = CpuState::extract_symbolic_bits_from_large_int(
+                        self.context,
+                        bvs,
+                        start_bit,
+                        end_bit,
+                    )
+                    .simplify();
+
+                    Ok(ConcolicEnum::CpuConcolicValue(CpuConcolicValue {
+                        concrete: extracted_concrete,
+                        symbolic: extracted_symbolic,
+                        ctx: self.context,
+                    }))
+                } else {
+                    return Err("Expected LargeInt symbolic variable".to_string());
+                }
+            }
+            _ => Err("Unsupported concrete variable type for extraction".to_string()),
+        }
+    }
+
     fn extract_and_create_concolic_value(
         &self,
         cpu_state_guard: &MutexGuard<'_, CpuState<'ctx>>,
@@ -891,22 +1252,26 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
                 Var::Register(offset, _) => {
                     log!(self.state.logger.clone(), "Output is a Register type");
-                    let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
 
                     // Normalize SIMD register offsets (XMM/YMM/ZMM) using the CPU state helper
-                    let write_offset = cpu_state_guard.map_simd_virtual_offset(*offset);
+                    let write_offset = {
+                        let cpu_state_guard = self.state.cpu_state.lock().unwrap();
+                        cpu_state_guard.map_simd_virtual_offset(*offset)
+                    };
 
-                    match cpu_state_guard.set_register_value_by_offset(
+                    // Use overlay-aware register write (writes to overlay if active, otherwise base)
+                    match self.set_register_overlay_aware(
                         write_offset,
                         result_value.clone(),
                         bit_size,
                     ) {
                         Ok(_) => {
-                            // check
-                            let register = cpu_state_guard
-                                .get_register_by_offset(write_offset, bit_size)
-                                .unwrap();
-                            log!(self.state.logger.clone(), "Updated register at offset 0x{:x} with concrete value 0x{:x}, concrete size {} bits and symbolic size {:?} bits", write_offset, register.concrete.to_u64(), bit_size, register.symbolic.get_size());
+                            // Verify using overlay-aware read
+                            if let Some(register) =
+                                self.get_register_overlay_aware(write_offset, bit_size)
+                            {
+                                log!(self.state.logger.clone(), "Updated register at offset 0x{:x} with concrete value 0x{:x}, concrete size {} bits and symbolic size {:?} bits", write_offset, register.concrete.to_u64(), bit_size, register.symbolic.get_size());
+                            }
                             Ok(())
                         }
                         Err(e) => {
@@ -1004,6 +1369,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             &self.context,
         );
 
+        // Update RIP to branch target (overlay-aware)
+        self.set_register_overlay_aware(0x288, branch_target_concolic.clone(), 64)?;
+
         // Update the instruction counter
         self.instruction_counter += 1;
 
@@ -1019,6 +1387,12 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             &result_var_name,
             branch_target_address,
             branch_target_concolic.symbolic,
+        );
+
+        log!(
+            self.state.logger.clone(),
+            "Updated RIP register with branch target: 0x{:x}",
+            branch_target_address
         );
 
         Ok(())
@@ -1112,6 +1486,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     }
 
     // For BRANCHIND, CALLIND, BRANCH and CBRANCH instruction
+    //
+    // IMPORTANT: This helper is **pure** w.r.t. CPU state – it must NOT modify RIP.
+    // All control‑flow updates (including in overlay mode) are done by the
+    // callers (e.g. `handle_branch`, `handle_callind`) via
+    // `set_register_overlay_aware`. Previously this function was also writing
+    // to RIP directly, which broke overlay isolation by leaking speculative
+    // RIP values into the base state.
     pub fn extract_branch_target_address(
         &mut self,
         varnode: &Varnode,
@@ -1125,12 +1506,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     addr
                 );
 
-                // Case when CALLIND * [ram]addr or BRANCHIND * [ram]addr (this is not documented in the doc...)
-                let dereferenced_value = if instruction.opcode == Opcode::BranchInd
-                    || instruction.opcode == Opcode::CallInd
+                // - BRANCHIND / CALLIND *[ram]addr  => dereference pointer and use
+                //   the *value* as the branch target address.
+                // - BRANCH / CBRANCH *[ram]addr    => treat the memory address
+                //   itself as the branch target (no dereference).
+                if instruction.opcode == Opcode::BranchInd || instruction.opcode == Opcode::CallInd
                 {
-                    // Dereference the memory address
-                    // Read the value from memory
+                    // Dereference the memory address to obtain the indirect target.
                     let mem_value = self
                         .state
                         .memory
@@ -1142,41 +1524,14 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         .map_err(|e| {
                             format!("Failed to read memory at address 0x{:x}: {:?}", addr, e)
                         })?;
-                    let dereferenced_value =
+                    let deref_concolic =
                         ConcolicVar::new_from_memory_value(&mem_value.to_memory_value_u64());
-                    dereferenced_value
+                    let concrete_target = deref_concolic.concrete.to_u64();
+                    Ok(concrete_target)
                 } else {
-                    // Case when BRANCH * [ram]addr (no need for a dereference) or CBRANCH * [ram]addr
-                    // Return the memory address as is
-                    let dereferenced_value = ConcolicVar::new_concrete_and_symbolic_int(
-                        *addr,
-                        SymbolicVar::from_u64(&self.context, *addr, 64).to_bv(&self.context),
-                        &self.context,
-                    );
-                    dereferenced_value
-                };
-
-                // Update the RIP register to the new branch target address, except for Cbranch, where a check has to be done
-                if instruction.opcode == Opcode::BranchInd
-                    || instruction.opcode == Opcode::CallInd
-                    || instruction.opcode == Opcode::Branch
-                {
-                    {
-                        let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
-                        cpu_state_guard.set_register_value_by_offset(
-                            0x288,
-                            dereferenced_value,
-                            64,
-                        )?;
-                    }
-                    log!(
-                        self.state.logger.clone(),
-                        "Branching to address 0x{:x}",
-                        addr
-                    );
+                    // Direct branch / CBRANCH to the memory address itself.
+                    Ok(*addr)
                 }
-
-                Ok(*addr)
             }
             Var::Const(value) => {
                 log!(self.state.logger.clone(), "Branch target is a constant value indicating the number of lines to jump: {:?}", value);
@@ -1229,7 +1584,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
 
                 // Retrieve the register's concrete and symbolic values
-                let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
+                let cpu_state_guard = self.state.cpu_state.lock().unwrap();
                 let register_value = cpu_state_guard
                     .get_register_by_offset(*offset, expected_bit_size)
                     .ok_or_else(|| {
@@ -1246,32 +1601,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     }
                 };
 
-                let symbolic_value = match &register_value.symbolic {
-                    SymbolicVar::Int(bv) => bv.clone(),
-                    _ => {
-                        return Err(format!(
-                            "Unsupported symbolic type for register at offset 0x{:x}",
-                            offset
-                        ))
-                    }
-                };
-
-                // Update the RIP register with the branch target address
-                {
-                    cpu_state_guard.set_register_value_by_offset(
-                        0x288, // Assuming RIP is at offset 0x288; adjust as per your architecture
-                        ConcolicVar::new_concrete_and_symbolic_int(
-                            concrete_value,
-                            symbolic_value.clone(),
-                            &self.context,
-                        ),
-                        expected_bit_size,
-                    )?;
-                }
+                // Note: We do NOT update RIP here. This function is pure w.r.t. CPU state.
+                // The caller (e.g., handle_branch, handle_callind) will update RIP via
+                // set_register_overlay_aware to ensure proper overlay isolation.
 
                 log!(
                     self.state.logger.clone(),
-                    "Branching to address 0x{:x} from register at offset 0x{:x}",
+                    "Extracted branch target address 0x{:x} from register at offset 0x{:x}",
                     concrete_value,
                     offset
                 );
@@ -1279,11 +1615,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 Ok(concrete_value)
             }
             Var::Unique(id) => {
-                log!(
-                    self.state.logger.clone(),
-                    "Branch target is a unique variable with id: 0x{:x}",
-                    id
-                );
                 let unique_name = format!("Unique(0x{:x})", id);
                 let unique_var = self.unique_variables.get(&unique_name).ok_or_else(|| {
                     format!("Failed to retrieve unique variable with id 0x{:x}", id)
@@ -1298,37 +1629,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         ))
                     }
                 };
-
-                let symbolic_value = match &unique_var.symbolic {
-                    SymbolicVar::Int(bv) => bv.clone(),
-                    _ => {
-                        return Err(format!(
-                            "Unsupported symbolic type for unique variable with id 0x{:x}",
-                            id
-                        ))
-                    }
-                };
-
-                // Update the RIP register with the branch target address
-                {
-                    let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
-                    cpu_state_guard.set_register_value_by_offset(
-                        0x288,
-                        ConcolicVar::new_concrete_and_symbolic_int(
-                            concrete_value,
-                            symbolic_value.clone(),
-                            &self.context,
-                        ),
-                        64,
-                    )?;
-                }
-
-                log!(
-                    self.state.logger.clone(),
-                    "Branching to address 0x{:x} from unique variable with id 0x{:x}",
-                    concrete_value,
-                    id
-                );
 
                 Ok(concrete_value)
             }
@@ -1368,6 +1668,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             &self.context,
         );
 
+        // Update RIP to branch target (overlay-aware)
+        self.set_register_overlay_aware(0x288, branch_target_concolic.clone(), 64)?;
+
         // Update the instruction counter
         self.instruction_counter += 1;
 
@@ -1383,6 +1686,12 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             &result_var_name,
             branch_target_address,
             branch_target_concolic.symbolic,
+        );
+
+        log!(
+            self.state.logger.clone(),
+            "Updated RIP register with indirect branch target: 0x{:x}",
+            branch_target_address
         );
 
         Ok(())
@@ -1525,14 +1834,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         "Branch condition is true, branching to address 0x{:x}",
                         addr
                     );
-                    let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
                     let target = ConcolicVar::new_concrete_and_symbolic_int(
                         *addr,
                         BV::from_u64(self.context, *addr, 64),
                         self.context,
                     );
-                    cpu_state_guard
-                        .set_register_value_by_offset(0x288, target.clone(), 64)
+                    // Update RIP register with branch target (overlay-aware)
+                    self.set_register_overlay_aware(0x288, target.clone(), 64)
                         .map_err(|e| e.to_string())?;
                     log!(
                         self.state.logger.clone(),
@@ -1546,6 +1854,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         "Branch condition is false, continuing to next instruction (0x{:x})",
                         next_inst_in_map
                     );
+                    // Don't update RIP - let the main loop advance to next instruction naturally
                     ConcolicVar::new_concrete_and_symbolic_int(
                         next_inst_in_map,
                         BV::from_u64(self.context, next_inst_in_map, 64),
@@ -1706,13 +2015,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             data_to_call_concrete
         );
 
-        // Update the RIP register to the branch target address
-        {
-            let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
-            cpu_state_guard
-                .set_register_value_by_offset(0x288, data_to_call_concolic, 64)
-                .map_err(|e| e.to_string())?;
-        }
+        // Update the RIP register to the branch target address (overlay-aware)
+        self.set_register_overlay_aware(0x288, data_to_call_concolic, 64)?;
         // Update the instruction counter
         self.instruction_counter += 1;
 
@@ -1752,18 +2056,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             target_address_concrete
         );
 
-        // Update RIP to the target address
-        {
-            let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
-            let target_address_concolic = ConcolicVar::new_concrete_and_symbolic_int(
-                target_address_concrete,
-                target_address_symbolic,
-                self.context,
-            );
-            cpu_state_guard
-                .set_register_value_by_offset(0x288, target_address_concolic.clone(), 64)
-                .map_err(|e| e.to_string())?;
-        }
+        // Update RIP to the target address (overlay-aware)
+        let target_address_concolic = ConcolicVar::new_concrete_and_symbolic_int(
+            target_address_concrete,
+            target_address_symbolic,
+            self.context,
+        );
+        self.set_register_overlay_aware(0x288, target_address_concolic.clone(), 64)?;
 
         // Update the instruction counter
         self.instruction_counter += 1;
@@ -1777,7 +2076,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         self.state.create_or_update_concolic_variable_int(
             &result_var_name,
             target_address_concrete,
-            target_address_concolic.to_concolic_var().unwrap().symbolic,
+            target_address_concolic.symbolic,
         );
 
         // Update current_address to the new RIP
@@ -1821,13 +2120,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             self.context,
         );
 
-        // Update the RIP register to the branch target address
-        {
-            let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
-            cpu_state_guard
-                .set_register_value_by_offset(0x288, branch_target_concolic, 64)
-                .map_err(|e| e.to_string())?;
-        }
+        // Update the RIP register to the branch target address (overlay-aware)
+        self.set_register_overlay_aware(0x288, branch_target_concolic, 64)?;
         // Update the instruction counter
         self.instruction_counter += 1;
 
@@ -1937,21 +2231,31 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             mem_size
         );
 
-        // Read memory value at the pointer offset.
-        let mut mem_value = self
-            .state
-            .memory
-            .read_value(
-                pointer_offset_concrete,
-                load_size_bits,
-                &mut self.state.logger.clone(),
-            )
-            .map_err(|e| {
-                format!(
-                    "Failed to read memory at address 0x{:x}: {:?}",
-                    pointer_offset_concrete, e
+        // Read memory value at the pointer offset (with overlay support)
+        let mut mem_value = if self.is_overlay_mode() {
+            // Overlay mode: use overlay-aware reading
+            log!(
+                self.state.logger.clone(),
+                "Reading from overlay at address 0x{:x}",
+                pointer_offset_concrete
+            );
+            self.read_value_overlay_mode(pointer_offset_concrete, load_size_bits)?
+        } else {
+            // Normal mode: use standard reading
+            self.state
+                .memory
+                .read_value(
+                    pointer_offset_concrete,
+                    load_size_bits,
+                    &mut self.state.logger.clone(),
                 )
-            })?;
+                .map_err(|e| {
+                    format!(
+                        "Failed to read memory at address 0x{:x}: {:?}",
+                        pointer_offset_concrete, e
+                    )
+                })?
+        };
         let mem_value_size = mem_value.concrete.get_size();
 
         // For narrow memory values (<=64 bits)
@@ -2129,9 +2433,16 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
                 Var::Register(offset, _) => {
                     log!(self.state.logger.clone(), "Output is a Register type");
-                    let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
-                    match cpu_state_guard.set_register_value_by_offset(
-                        *offset,
+
+                    // Normalize SIMD register offsets (XMM/YMM/ZMM) using the CPU state helper
+                    let write_offset = {
+                        let cpu_state_guard = self.state.cpu_state.lock().unwrap();
+                        cpu_state_guard.map_simd_virtual_offset(*offset)
+                    };
+
+                    // Use overlay-aware register write (writes to overlay if active, otherwise base)
+                    match self.set_register_overlay_aware(
+                        write_offset,
                         dereferenced_concolic.clone(),
                         load_size_bits,
                     ) {
@@ -2139,14 +2450,14 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                             log!(
                                 self.state.logger.clone(),
                                 "Updated register at offset 0x{:x} with value 0x{:x}",
-                                offset,
+                                write_offset,
                                 dereferenced_concolic.concrete.to_u64()
                             );
                         }
                         Err(e) => {
                             let error_msg = format!(
                                 "Failed to update register at offset 0x{:x}: {:?}",
-                                offset, e
+                                write_offset, e
                             );
                             log!(self.state.logger.clone(), "{}", error_msg);
                             return Err(error_msg);
@@ -2388,8 +2699,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         chunk_symbolic.simplify()
                     );
 
-                    // Write the chunk to memory
-                    match self.state.memory.write_value(chunk_addr, &chunk_mem_value) {
+                    // Write the chunk to memory (with overlay support)
+                    let write_result = if self.is_overlay_mode() {
+                        self.write_value_overlay_mode(chunk_addr, &chunk_mem_value)
+                    } else {
+                        self.state.memory.write_value(chunk_addr, &chunk_mem_value)
+                    };
+                    match write_result {
                         Ok(_) => {
                             log!(
                                 self.state.logger.clone(),
@@ -2448,12 +2764,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     mem_value.size
                 );
 
-                // Write the single value to memory
-                match self
-                    .state
-                    .memory
-                    .write_value(pointer_offset_concrete, &mem_value)
-                {
+                // Write the single value to memory (with overlay support)
+                let write_result = if self.is_overlay_mode() {
+                    self.write_value_overlay_mode(pointer_offset_concrete, &mem_value)
+                } else {
+                    self.state
+                        .memory
+                        .write_value(pointer_offset_concrete, &mem_value)
+                };
+                match write_result {
                     Ok(_) => {
                         log!(
                             self.state.logger.clone(),
@@ -2484,11 +2803,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 // Verify each chunk was stored correctly
                 for (i, &expected_chunk) in chunks.iter().enumerate() {
                     let chunk_addr = pointer_offset_concrete + (i as u64 * 8);
-                    match self.state.memory.read_value(
-                        chunk_addr,
-                        64,
-                        &mut self.state.logger.clone(),
-                    ) {
+                    let read_result = if self.is_overlay_mode() {
+                        self.read_value_overlay_mode(chunk_addr, 64)
+                            .map_err(|e| MemoryError::Other(e))
+                    } else {
+                        self.state
+                            .memory
+                            .read_value(chunk_addr, 64, &mut self.state.logger.clone())
+                    };
+                    match read_result {
                         Ok(stored_value) => {
                             // Convert ConcreteVar to u64 for comparison
                             let stored_concrete_value = match stored_value.concrete {
@@ -2538,11 +2861,17 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 };
 
                 // Verify single value was stored correctly
-                match self.state.memory.read_value(
-                    pointer_offset_concrete,
-                    data_size_bits,
-                    &mut self.state.logger.clone(),
-                ) {
+                let read_result = if self.is_overlay_mode() {
+                    self.read_value_overlay_mode(pointer_offset_concrete, data_size_bits)
+                        .map_err(|e| MemoryError::Other(e))
+                } else {
+                    self.state.memory.read_value(
+                        pointer_offset_concrete,
+                        data_size_bits,
+                        &mut self.state.logger.clone(),
+                    )
+                };
+                match read_result {
                     Ok(stored_value) => {
                         // Convert ConcreteVar to u64 for comparison
                         let stored_concrete_value = match stored_value.concrete {
@@ -2604,11 +2933,17 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         // }
 
         // Update CPU register if the address maps to one
-        let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
-        if let Some(_register_value) =
-            cpu_state_guard.get_register_by_offset(pointer_offset_concrete, data_size_bits)
-        {
-            match cpu_state_guard.set_register_value_by_offset(
+        // Check if the address corresponds to a register
+        let is_register = {
+            let cpu_state_guard = self.state.cpu_state.lock().unwrap();
+            cpu_state_guard
+                .get_register_by_offset(pointer_offset_concrete, data_size_bits)
+                .is_some()
+        };
+
+        if is_register {
+            // Use overlay-aware register write (writes to overlay if active, otherwise base)
+            match self.set_register_overlay_aware(
                 pointer_offset_concrete,
                 data_to_store_concolic.to_concolic_var().unwrap(),
                 data_size_bits,
@@ -2631,7 +2966,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
             }
         }
-        drop(cpu_state_guard);
 
         // Record the operation for traceability
         let current_addr_hex = self
@@ -2835,12 +3169,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     .insert(format!("Unique(0x{:x})", id), new_concolic_var);
             }
             Var::Register(offset, _) => {
-                let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
-                cpu_state_guard.set_register_value_by_offset(
-                    *offset,
-                    new_concolic_var,
-                    output_size_bits,
-                )?;
+                // Use overlay-aware register write (writes to overlay if active, otherwise base)
+                self.set_register_overlay_aware(*offset, new_concolic_var, output_size_bits)?;
             }
             Var::Memory(addr) => {
                 let mem_value = MemoryValue {
