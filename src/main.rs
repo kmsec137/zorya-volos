@@ -253,10 +253,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut instructions_map = preprocess_pcode_file(pcode_file_path_str, &mut executor)
         .expect("Failed to preprocess the p-code file.");
 
+    println!("Building the P-Code for the VDSO section (this may take a moment)...");
     // Merge VDSO p-code if available
     merge_vdso_pcode(&mut instructions_map, &mut executor);
 
-    // Get the tables of cross references of potential panics in the programs (for bug detetcion)
+    println!("Precomputing the tables of cross references of potential panics in the programs (for bug detection)...");
+    // Get the tables of cross references of potential panics in the programs (for bug detection)
     get_cross_references(&binary_path)?;
 
     let start_address = u64::from_str_radix(&main_program_addr.trim_start_matches("0x"), 16)
@@ -419,11 +421,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
 
         // In function mode: initialize symbolic arguments
-        if let Some((_, args)) = function_args_map.get(&start_address) {
+        if let Some((func_name, args)) = function_args_map.get(&start_address) {
+            println!(
+                "Function mode: initializing {} symbolic argument(s) for function '{}' at 0x{:x}...",
+                args.len(),
+                func_name,
+                start_address
+            );
             log!(
                 executor.state.logger,
-                "Found {} arguments for function at 0x{:x}",
+                "Found {} arguments for function '{}' at 0x{:x}",
                 args.len(),
+                func_name,
                 start_address
             );
 
@@ -558,6 +567,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             "os.Args slice address: 0x{:x}",
             os_args_addr
         );
+        println!("**************************************************************************");
+        println!("Initializing symbolic variables for the program arguments (os.Args)...");
         initialize_symbolic_part_args(&mut executor, os_args_addr)?;
         log!(executor.state.logger, "Updating argc and argv on the stack");
         update_argc_argv(&mut executor, &arguments)?;
@@ -1908,6 +1919,8 @@ fn get_cross_references(binary_path: &str) -> Result<(), Box<dyn Error>> {
         panic!("Python script not found at {:?}", python_script_path);
     }
 
+    println!("[GHIDRA] Launching Ghidra + Pyhidra to collect panic cross-references (this may take a bit)...");
+
     let output = Command::new("python3")
         .arg(python_script_path)
         .arg(binary_path)
@@ -1917,18 +1930,17 @@ fn get_cross_references(binary_path: &str) -> Result<(), Box<dyn Error>> {
     // Check if the script ran successfully
     if !output.status.success() {
         eprintln!(
-            "Python script error: {}",
+            "[WARNING]: Python script error: {}\n",
             String::from_utf8_lossy(&output.stderr)
         );
         return Err(Box::from("Python script failed"));
     } else {
-        println!("The cross references of panic functions have been executed collected!");
-        println!("{}", String::from_utf8_lossy(&output.stdout));
+        println!("[GHIDRA] Panic cross-reference analysis completed. Results written to results/xref_addresses.txt.\n");
     }
 
     // Ensure the file was created
     if !Path::new("results/xref_addresses.txt").exists() {
-        panic!("xref_addresses.txt not found after running the Python script");
+        panic!("[ERROR]: xref_addresses.txt not found after running the Python script\n");
     }
 
     Ok(())
@@ -2008,7 +2020,7 @@ fn merge_vdso_pcode(
     if !vdso_pcode_path.exists() {
         log!(
             executor.state.logger,
-            "VDSO p-code file not found, skipping VDSO merge: {:?}",
+            "[WARNING]: VDSO p-code file not found, skipping VDSO merge: {:?}\n",
             vdso_pcode_path
         );
         return;
@@ -2016,7 +2028,7 @@ fn merge_vdso_pcode(
 
     log!(
         executor.state.logger,
-        "Merging VDSO p-code from: {:?}",
+        "Merging VDSO p-code from: {:?}\n",
         vdso_pcode_path
     );
 
@@ -2033,17 +2045,21 @@ fn merge_vdso_pcode(
             }
             log!(
                 executor.state.logger,
-                "Successfully merged {} VDSO instruction blocks",
+                "Successfully merged {} VDSO instruction blocks\n",
                 vdso_instr_count
             );
             println!(
-                "✓ Merged {} VDSO instruction blocks into execution map",
+                "Merged {} VDSO instruction blocks into execution map\n",
                 vdso_instr_count
             );
         }
         Err(e) => {
-            log!(executor.state.logger, "Failed to parse VDSO p-code: {}", e);
-            eprintln!("⚠ Warning: Failed to merge VDSO p-code: {}", e);
+            log!(
+                executor.state.logger,
+                "Failed to parse VDSO p-code: {}\n",
+                e
+            );
+            eprintln!("[WARNING]: Failed to merge VDSO p-code: {}\n", e);
         }
     }
 }

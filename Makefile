@@ -58,9 +58,9 @@ setup:
 	RUSTFLAGS="--cap-lints=allow" cargo build --release -j$$(nproc)
 
 ghidra-config:
-	@echo ">>> Ensuring OpenJDK 21, snapd, and pipx..."
+	@echo ">>> Ensuring OpenJDK 21, snapd, and pip..."
 	sudo apt-get -qq update
-	sudo apt-get -y install openjdk-21-jdk snapd pipx
+	sudo apt-get -y install openjdk-21-jdk snapd python3-pip
 
 	@echo ">>> Checking for an existing Ghidra..."
 	@if [ -n "$$GHIDRA_INSTALL_DIR" ] && [ -d "$$GHIDRA_INSTALL_DIR" ]; then \
@@ -68,22 +68,53 @@ ghidra-config:
 	elif snap list ghidra >/dev/null 2>&1; then \
 		echo "Ghidra snap already present – refreshing to latest…"; \
 		sudo snap refresh ghidra --classic || true; \
-		export GHIDRA_INSTALL_DIR="$(GHIDRA_SNAP_PATH)"; \
 	else \
 		echo "No Ghidra found – installing snap package…"; \
 		sudo snap install ghidra --classic; \
-		export GHIDRA_INSTALL_DIR="$(GHIDRA_SNAP_PATH)"; \
 	fi
 
-	@echo ">>> Installing/Updating Pyhidra…"
-	pipx install pyhidra 2>/dev/null || pipx upgrade pyhidra
-
 	@echo ">>> Exporting GHIDRA_INSTALL_DIR for future shells…"
-	@if ! grep -q "GHIDRA_INSTALL_DIR" $$HOME/.bashrc; then \
-		echo 'export GHIDRA_INSTALL_DIR="$(GHIDRA_SNAP_PATH)"' >> $$HOME/.bashrc; \
+	@GHIDRA_DIR="$$GHIDRA_INSTALL_DIR"; \
+	if [ -z "$$GHIDRA_DIR" ]; then \
+		GHIDRA_DIR="$(GHIDRA_SNAP_PATH)"; \
+	fi; \
+	if ! grep -q "GHIDRA_INSTALL_DIR" $$HOME/.bashrc; then \
+		echo "export GHIDRA_INSTALL_DIR=\"$$GHIDRA_DIR\"" >> $$HOME/.bashrc; \
 		echo "   (added to ~/.bashrc)"; \
 	else \
 		echo "   ~/.bashrc already contains GHIDRA_INSTALL_DIR"; \
+	fi
+
+	@echo ">>> Installing/Updating Pyhidra…"
+	@if ! command -v python3 >/dev/null 2>&1; then \
+		echo "ERROR: 'python3' not found. Please install Python 3 and rerun 'make ghidra-config'."; \
+		exit 1; \
+	fi
+	@TMP_ERR=$$(mktemp); \
+	if python3 -m pip install --user --upgrade pyhidra > /dev/null 2>$$TMP_ERR; then \
+		echo "Pyhidra installed/updated successfully with standard pip."; \
+		rm -f $$TMP_ERR; \
+	else \
+		if grep -q 'externally-managed-environment' $$TMP_ERR; then \
+			# PEP 668 case: retry with override, still keeping pip noise hidden unless it truly fails \
+			echo "Detected PEP 668 managed environment – retrying with --break-system-packages..."; \
+			if python3 -m pip install --user --upgrade pyhidra --break-system-packages > /dev/null 2>>$$TMP_ERR; then \
+				echo "Pyhidra installed/updated successfully with PEP 668 override."; \
+				rm -f $$TMP_ERR; \
+			else \
+				echo "ERROR: Failed to install/upgrade Pyhidra even with --break-system-packages."; \
+				echo "Details from pip:"; \
+				cat $$TMP_ERR; \
+				rm -f $$TMP_ERR; \
+				exit 1; \
+			fi; \
+		else \
+			echo "ERROR: Failed to install/upgrade Pyhidra with 'python3 -m pip'."; \
+			echo "Details from pip:"; \
+			cat $$TMP_ERR; \
+			rm -f $$TMP_ERR; \
+			exit 1; \
+		fi; \
 	fi
 
 	@echo ">>> Done – open a new shell or 'source ~/.bashrc' before continuing."

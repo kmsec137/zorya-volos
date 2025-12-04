@@ -196,7 +196,8 @@ impl<'a> State<'a> {
             thread_manager,
         };
 
-        log!(state.logger.clone(), "Creating the P-Code for the executable sections of libc.so and ld-linux-x86-64.so...\n");
+        log!(state.logger.clone(), "Creating the P-Code for the executable sections of libc.so and ld-linux-x86-64.so if they exist...\n");
+        println!("Creating the P-Code for the executable sections of libc.so and ld-linux-x86-64.so if they exist...");
         state.initialize_libc_and_ld_linux().map_err(|e| {
             format!(
                 "Failed to initialize libc and ld-linux-x86-64 P-Code: {}",
@@ -205,6 +206,7 @@ impl<'a> State<'a> {
         })?;
 
         log!(state.logger.clone(), "Initializing jump tables...\n");
+        println!("Initializing jump tables...\n");
         state
             .initialize_jump_tables()
             .map_err(|e| format!("Failed to initialize jump tables: {}", e))?;
@@ -448,7 +450,7 @@ impl<'a> State<'a> {
                 self.logger.clone(),
             )?;
         } else {
-            println!("ld-linux ELF or its base address not found, skipping...");
+            println!("ld-linux ELF or its base address not found, skipping...\n");
         }
 
         Ok(())

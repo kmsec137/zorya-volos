@@ -31,9 +31,9 @@ if [ ! -f "$VDSO_PATH" ]; then
     exit 1
 fi
 
-echo "Generating p-code for VDSO..."
-echo "  VDSO file: $VDSO_PATH"
-echo "  Base address: $VDSO_BASE_ADDR"
+echo "Generating P-Code for VDSO..."
+echo "VDSO file: $VDSO_PATH"
+echo "Base address: $VDSO_BASE_ADDR"
 
 # Generate p-code for VDSO using the pcode-generator
 cd "$PCODE_GENERATOR_DIR" || exit 1
@@ -52,6 +52,5 @@ fi
 # Move VDSO p-code to the vdso directory
 mv "$VDSO_PCODE" "$VDSO_DIR/vdso_low_pcode.txt"
 
-echo "✓ VDSO p-code generated: $VDSO_DIR/vdso_low_pcode.txt"
-echo "VDSO p-code generation complete!"
+echo "VDSO P-Code generated: $VDSO_DIR/vdso_low_pcode.txt"
 

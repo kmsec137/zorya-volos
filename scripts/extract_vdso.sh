@@ -101,16 +101,16 @@ gdb -batch \
 
 # Check if extraction was successful
 if [ -f "$VDSO_OUTPUT" ] && [ -s "$VDSO_OUTPUT" ]; then
-    echo "✓ VDSO extracted successfully: $VDSO_OUTPUT"
+    echo "VDSO extracted successfully: $VDSO_OUTPUT"
     
     # Get VDSO base address for later use
     VDSO_BASE=$(grep "Found VDSO:" "$GDB_LOG" | awk '{print $3}')
     echo "$VDSO_BASE" > "$VDSO_DIR/vdso_base_addr.txt"
-    echo "✓ VDSO base address: $VDSO_BASE"
+    echo "VDSO base address: $VDSO_BASE"
 else
-    echo "✗ Failed to extract VDSO. Check $GDB_LOG for details."
+    echo "[ERROR] Failed to extract VDSO. Check $GDB_LOG for details."
     exit 1
 fi
 
-echo "VDSO extraction complete!"
+echo "VDSO extraction completed!"
 
