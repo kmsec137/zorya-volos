@@ -660,7 +660,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             Opcode::SegmentOp => panic!("Opcode SegmentOp is not implemented yet"),
             Opcode::Store => self.handle_store(instruction),
             Opcode::SubPiece => self.handle_subpiece(instruction),
-            Opcode::Trunc => panic!("Opcode Trunc is not implemented yet"),
+            Opcode::Trunc => executor_float::handle_trunc(self, instruction),
             Opcode::Unused1 => panic!("Opcode Unused1 is not implemented yet"),
 
             // Check executor_bool.rs for functions' implementations
