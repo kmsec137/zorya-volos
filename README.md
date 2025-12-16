@@ -26,7 +26,7 @@ Zorya supports both concrete and symbolic data types, x86-64 instructions and sy
 
 ## 1. Install
 
-### Option A: Docker Installation (Recommended)
+### Option A: Docker Installation
 
 ```bash
 git clone --recursive https://github.com/Ledger-Donjon/zorya
@@ -34,13 +34,21 @@ cd zorya
 docker build -t zorya:latest .
 
 # Run Zorya interactively
-docker run -it --rm -v $(pwd)/results:/opt/zorya/results zorya:latest
+# Note: --security-opt and --cap-add are required for GDB and ASLR control
+docker run -it --rm \
+  --security-opt seccomp=unconfined \
+  --cap-add=SYS_PTRACE \
+  -v $(pwd)/results:/opt/zorya/results \
+  zorya:latest
 
 # Test with included crashme binary
-docker run -it --rm \
-  -v $(pwd)/results:/opt/zorya/results \
-  zorya:latest zorya /opt/zorya/tests/programs/crashme-tinygo/crashme
+zorya /opt/zorya/tests/programs/crashme-tinygo/crashme
 ```
+
+**Docker Security Options Explained:**
+- `--security-opt seccomp=unconfined`: Allows GDB to function properly inside the container
+- `--cap-add=SYS_PTRACE`: Required for GDB to attach to processes and generate memory dumps
+- The Docker entrypoint automatically disables ASLR using `setarch` for consistent memory layouts
 
 ### Option B: Native Installation
 

@@ -123,4 +123,3 @@ WORKDIR /opt/zorya
 
 # Default command
 CMD ["/bin/bash"]
-
