@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  zorya:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zorya:latest
+    container_name: zorya
+    volumes:
+      # Mount results directory to persist output
+      - ./results:/workspace/results
+      # Mount the binary to be analyzed
+      # - /path/to/your/binaries:/binaries:ro
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    environment:
+      - GHIDRA_INSTALL_DIR=/opt/ghidra
+      - ZORYA_DIR=/opt/zorya
+

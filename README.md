@@ -25,9 +25,28 @@ Zorya supports both concrete and symbolic data types, x86-64 instructions and sy
 > 🚧 Zorya is under active development. Expect breaking changes.
 
 ## 1. Install
-Make sure to have Rust, Golang and Python properly installed. FYI, the project is beeing developped and maintained under a Linux Ubuntu distrubution.
 
+### Option A: Docker Installation (Recommended)
+
+```bash
+git clone --recursive https://github.com/Ledger-Donjon/zorya
+cd zorya
+docker build -t zorya:latest .
+
+# Run Zorya interactively
+docker run -it --rm -v $(pwd)/results:/opt/zorya/results zorya:latest
+
+# Test with included crashme binary
+docker run -it --rm \
+  -v $(pwd)/results:/opt/zorya/results \
+  zorya:latest zorya /opt/zorya/tests/programs/crashme-tinygo/crashme
 ```
+
+### Option B: Native Installation
+
+Make sure to have Rust, Golang and Python properly installed. FYI, the project is being developed and maintained under a Linux Ubuntu distribution.
+
+```bash
 git clone --recursive https://github.com/Ledger-Donjon/zorya
 cd zorya
 make ghidra-config    # if you don't have Ghidra nor Pyhidra
@@ -197,7 +216,7 @@ Zorya automatically selects the right strategy based on the `--lang` and `--comp
 For detailed technical information:
 - [Compiler-Aware Strategies](doc/Compiler-Aware-Strategies.md) - Strategy selection and configuration
 - [Overlay Path Analysis](doc/Overlay-Path-Analysis.md) - Vulnerability detection using overlay mechanism
-- [General Strategies Overview](doc/Strategies.md) - High-level overview
+  - [General Strategies Overview](doc/Strategies.md) - High-level overview
 
 
 ## 5. Demo videos
@@ -218,8 +237,17 @@ Zorya has been developeped and tested for now on Linux Ubuntu as the execution e
 </div>
 
 ## 7. Academic work
-You can find the preprint of our first paper on ArXiv under the title : [Exposing Go's Hidden Bugs: A Novel Concolic Framework](https://arxiv.org/abs/2505.20183v1).
-
+You can find the preprint of our second paper on ArXiv under the title : [Zorya: Automated Concolic Execution of Single-Threaded Go Binaries](https://arxiv.org/abs/2512.10799).
+```
+@article{gorna2025zorya,
+  title={Zorya: Automated Concolic Execution of Single-Threaded Go Binaries},
+  author={Gorna, Karolina and Iooss, Nicolas and Seurin, Yannick and Khatoun, Rida},
+  journal={arXiv preprint arXiv:2512.10799},
+  year={2025}
+  note={Accepted at the 41st ACM/SIGAPP Symposium On Applied Computing (SAC 2026)}
+}
+```
+Our first paper is also on ArXiv under the title : [Exposing Go's Hidden Bugs: A Novel Concolic Framework](https://arxiv.org/abs/2505.20183v1).
 ```
 @article{gorna2025exposing,
   title={Exposing Go's Hidden Bugs: A Novel Concolic Framework},
@@ -229,3 +257,4 @@ You can find the preprint of our first paper on ArXiv under the title : [Exposin
   note={Accepted at the 23rd IEEE/ACIS International Conference on Software Engineering, Management and Applications (SERA 2025)}
 }
 ```
+All the evaluation of Zorya can be found in the [Zorya Evaluation](https://github.com/Ledger-Donjon/zorya-evaluation).

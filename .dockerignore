@@ -1,0 +1,44 @@
+# Git
+.git
+.gitignore
+.gitmodules
+
+# Build artifacts
+target/
+external/pcode-generator/target/
+
+# Results and temporary files
+results/
+*.log
+*.txt
+
+# Documentation images (not needed in runtime)
+doc/*.png
+
+# QEMU related (not needed for basic functionality)
+external/qemu-cloudimg/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Temporary files
+*.bak
+*.tmp
+
+
+
+
+
