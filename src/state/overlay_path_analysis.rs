@@ -78,6 +78,21 @@ pub fn analyze_untaken_path_with_overlay<'ctx>(
         }
     };
 
+    // Save unique variables and current address before entering overlay mode
+    // These are temporary computation results that must be preserved across overlay exploration
+    let saved_unique_variables = executor.unique_variables.clone();
+    let saved_current_address = executor.current_address;
+    log!(
+        executor.state.logger,
+        "[OVERLAY] Saved {} unique variables before overlay exploration",
+        saved_unique_variables.len()
+    );
+    log!(
+        executor.state.logger,
+        "[OVERLAY] Saved current_address before overlay: {:?}",
+        saved_current_address
+    );
+
     // Create overlay state
     let overlay_state = match executor.state.cpu_state.lock() {
         Ok(cpu) => match OverlayState::new(&*cpu, rip_offset, untaken_address, executor.context) {
@@ -122,6 +137,21 @@ pub fn analyze_untaken_path_with_overlay<'ctx>(
 
     // Clear overlay state
     executor.overlay_state = None;
+
+    // Restore unique variables and current address after overlay exploration
+    // This prevents overlay execution from polluting the real execution state
+    executor.unique_variables = saved_unique_variables;
+    executor.current_address = saved_current_address;
+    log!(
+        executor.state.logger,
+        "[OVERLAY] Restored {} unique variables after overlay exploration",
+        executor.unique_variables.len()
+    );
+    log!(
+        executor.state.logger,
+        "[OVERLAY] Restored current_address after overlay: {:?}",
+        executor.current_address
+    );
 
     // Verify RIP was not corrupted after clearing overlay
     let rip_after_overlay = match executor.state.cpu_state.lock() {

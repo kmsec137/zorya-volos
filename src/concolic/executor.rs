@@ -1357,43 +1357,104 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             self.state.logger.clone(),
             "* Fetching branch target from instruction.input[0]"
         );
-        let branch_target_address =
-            self.extract_branch_target_address(branch_target_varnode, instruction.clone())?;
 
-        // Create concolic variable for branch target and update RIP register
-        let symbolic_var =
-            SymbolicVar::from_u64(&self.context, branch_target_address, 64).to_bv(&self.context);
-        let branch_target_concolic = ConcolicVar::new_concrete_and_symbolic_int(
-            branch_target_address,
-            symbolic_var,
-            &self.context,
-        );
+        // Check if this is an internal P-code jump (Const varnode) or an absolute address jump
+        match &branch_target_varnode.var {
+            Var::Const(value) => {
+                // This is an internal P-code jump offset (can be negative)
+                log!(
+                    self.state.logger.clone(),
+                    "Branch target is a constant: {:?}, treating as internal P-code line offset",
+                    value
+                );
+                let value_string = value.to_string();
+                let value_str = value_string.trim_start_matches("0x");
 
-        // Update RIP to branch target (overlay-aware)
-        self.set_register_overlay_aware(0x288, branch_target_concolic.clone(), 64)?;
+                let value_u64 = match u64::from_str_radix(value_str, 16) {
+                    Ok(parsed) => {
+                        log!(
+                            self.state.logger.clone(),
+                            "Parsed branch offset: 0x{:x} (signed: {})",
+                            parsed,
+                            parsed as i64
+                        );
+                        parsed
+                    }
+                    Err(e) => {
+                        return Err(format!("Failed to parse constant as u64: {:?}", e));
+                    }
+                };
+
+                // Set the internal jump offset (can be negative for backward jumps)
+                self.pcode_internal_lines_to_be_jumped = value_u64 as i64;
+                log!(
+                    self.state.logger.clone(),
+                    "BRANCH: Setting internal P-code jump offset to {} lines",
+                    self.pcode_internal_lines_to_be_jumped
+                );
+
+                // Create concolic variable for logging
+                let current_addr_hex = self
+                    .current_address
+                    .map_or_else(|| "unknown".to_string(), |addr| format!("{:x}", addr));
+                let result_var_name = format!(
+                    "{}-{:02}-branch",
+                    current_addr_hex, self.instruction_counter
+                );
+                let symbolic_var = SymbolicVar::from_u64(&self.context, value_u64, 64);
+                self.state.create_or_update_concolic_variable_int(
+                    &result_var_name,
+                    value_u64,
+                    symbolic_var,
+                );
+            }
+            _ => {
+                // This is an absolute address jump (Memory, Register, or Unique)
+                let branch_target_address =
+                    self.extract_branch_target_address(branch_target_varnode, instruction.clone())?;
+
+                log!(
+                    self.state.logger.clone(),
+                    "Branch target is an absolute address: 0x{:x}",
+                    branch_target_address
+                );
+
+                // Create concolic variable for branch target and update RIP register
+                let symbolic_var =
+                    SymbolicVar::from_u64(&self.context, branch_target_address, 64).to_bv(&self.context);
+                let branch_target_concolic = ConcolicVar::new_concrete_and_symbolic_int(
+                    branch_target_address,
+                    symbolic_var,
+                    &self.context,
+                );
+
+                // Update RIP to branch target (overlay-aware)
+                self.set_register_overlay_aware(0x288, branch_target_concolic.clone(), 64)?;
+
+                // Log the branch decision as a concolic variable for tracking
+                let current_addr_hex = self
+                    .current_address
+                    .map_or_else(|| "unknown".to_string(), |addr| format!("{:x}", addr));
+                let result_var_name = format!(
+                    "{}-{:02}-branch",
+                    current_addr_hex, self.instruction_counter
+                );
+                self.state.create_or_update_concolic_variable_int(
+                    &result_var_name,
+                    branch_target_address,
+                    branch_target_concolic.symbolic,
+                );
+
+                log!(
+                    self.state.logger.clone(),
+                    "Updated RIP register with branch target: 0x{:x}",
+                    branch_target_address
+                );
+            }
+        }
 
         // Update the instruction counter
         self.instruction_counter += 1;
-
-        // Log the branch decision as a concolic variable for tracking
-        let current_addr_hex = self
-            .current_address
-            .map_or_else(|| "unknown".to_string(), |addr| format!("{:x}", addr));
-        let result_var_name = format!(
-            "{}-{:02}-branch",
-            current_addr_hex, self.instruction_counter
-        );
-        self.state.create_or_update_concolic_variable_int(
-            &result_var_name,
-            branch_target_address,
-            branch_target_concolic.symbolic,
-        );
-
-        log!(
-            self.state.logger.clone(),
-            "Updated RIP register with branch target: 0x{:x}",
-            branch_target_address
-        );
 
         Ok(())
     }
