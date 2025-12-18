@@ -1,0 +1,45 @@
+{
+  "global": {
+    "language": "go",
+    "compiler": "gc",
+    "binary_path": "/home/karolina-gorna/Documents/logic_bombs_go/go-compiler/theoretical/broken-calculator/broken-calculator",
+    "thread_scheduling": "main-only",
+    "log_mode": "verbose",
+    "negate_path_flag": true
+  },
+  "tests": [
+    {
+      "id": "main.main-1",
+      "mode": "main",
+      "start_address": "0x4bef60",
+      "args": "2 + 3",
+      "timeout_seconds": 300,
+      "env_vars": {}
+    },
+    {
+      "id": "main.main-2",
+      "mode": "main",
+      "start_address": "0x4bef60",
+      "args": "5 + 1",
+      "timeout_seconds": 300,
+      "env_vars": {}
+    },
+    {
+      "id": "main.coreEngine",
+      "mode": "function",
+      "start_address": "0x4bec40",
+      "args": "2 + 3",
+      "timeout_seconds": 300,
+      "env_vars": {}
+    },
+    {
+      "id": "runtime.decoderune",
+      "mode": "function",
+      "start_address": "0x4724c0",
+      "args": "2 + 3",
+      "timeout_seconds": 300,
+      "env_vars": {}
+    }
+  ]
+}
+

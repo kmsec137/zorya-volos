@@ -63,7 +63,7 @@ make all
 
 ## 2. Usage
 
-### A. Interactive Usage (prefered)
+### A. Interactive Usage
 Zorya provides a guided mode, so you don't need to remember the options or flags. It prompts you with questions to outline three typical scenarios:
 
 - Standard Execution - Automatically detects the main function or entry point.
@@ -108,6 +108,23 @@ Notes:
 - The address ()```<addr>```) is mandatory when using function or custom modes.
 - Arguments (--arg) are optional.
 - The ```--negate-path-exploration``` flag enables alternate path exploration (symbolic branch negation) to increase code coverage. It is enabled by default unless explicitly disabled using ```--no-negate-path-exploration```, if the execution takes too much time for instance.
+
+### C. Fuzzer Mode (Automated Test Campaigns)
+For automated testing of multiple starting addresses and configurations, use the **Zorya Fuzzer** module. The fuzzer allows you to define test campaigns in a JSON configuration file and execute them systematically with timeout management and organized result storage.
+
+See the complete fuzzer documentation: [Fuzzer.md](doc/Fuzzer.md)
+
+Quick start:
+```bash
+# Build the fuzzer
+cargo build --release --bin zorya-fuzzer
+
+# Create a configuration template
+./target/release/zorya-fuzzer --create-example fuzzer_config.json
+
+# Edit fuzzer_config.json with your test configurations, then run:
+./target/release/zorya-fuzzer fuzzer_config.json
+```
 
 ## How to build your binary?
 Zorya needs the binary to have the debug symbols to perform the complete analysis. Striped binaries could be also analyzed, but it required to disable many functionnalities of the tool.
