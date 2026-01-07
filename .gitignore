@@ -34,3 +34,4 @@ results/execution_trace_runtime-mcommoninit.txt
 /results/execution_trace_geth.txt
 /results/execution_trace_rlpdump_main.txt
 /fuzzer_results
+/results/runtime_g_offsets.json

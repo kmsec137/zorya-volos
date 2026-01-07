@@ -107,12 +107,22 @@ type LocationInfo struct {
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <binary_path> <output_path>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s <binary_path> <output_path> [--extract-runtime-g]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nOptions:\n")
+		fmt.Fprintf(os.Stderr, "  --extract-runtime-g    Extract runtime.g struct offsets (saves to results/runtime_g_offsets.json)\n")
 		os.Exit(1)
 	}
 
 	binaryPath := os.Args[1]
 	outputPath := os.Args[2]
+	
+	// Check for --extract-runtime-g flag
+	extractRuntimeG := false
+	for _, arg := range os.Args[3:] {
+		if arg == "--extract-runtime-g" {
+			extractRuntimeG = true
+		}
+	}
 
 	outputDir := filepath.Dir(outputPath)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -128,6 +138,27 @@ func main() {
 	dwarfData, err := f.DWARF()
 	if err != nil {
 		log.Fatal(err)
+	}
+	
+	// Extract runtime.g offsets if requested (for Go binaries)
+	if extractRuntimeG {
+		runtimeInfo, err := ExtractRuntimeGOffsets(dwarfData, binaryPath)
+		if err != nil {
+			// Silent - only show errors if debugging
+			if os.Getenv("GET_FUNCT_ARG_TYPES_DEBUG") == "1" {
+				fmt.Fprintf(os.Stderr, "[!] Could not extract runtime.g offsets: %v\n", err)
+			}
+		} else {
+			runtimeOutputPath := filepath.Join(outputDir, "runtime_g_offsets.json")
+			if err := SaveRuntimeGOffsets(runtimeInfo, runtimeOutputPath); err != nil {
+				if os.Getenv("GET_FUNCT_ARG_TYPES_DEBUG") == "1" {
+					fmt.Fprintf(os.Stderr, "[!] Could not save runtime.g offsets: %v\n", err)
+				}
+			}
+		}
+		
+		// Reset DWARF reader for function signature extraction
+		dwarfData, _ = f.DWARF()
 	}
 
 	functions := []Function{}
@@ -344,8 +375,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to write output file: %v", err)
 	}
-
-	fmt.Fprintf(os.Stderr, "Successfully wrote JSON data to %s (%d bytes)\n", outputPath, len(jsonData))
 }
 
 // Improved location parsing with better error handling

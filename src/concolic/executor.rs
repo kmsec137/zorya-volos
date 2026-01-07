@@ -136,24 +136,16 @@ impl<'ctx> ConcolicExecutor<'ctx> {
 
     /// Extract current goroutine ID from TLS (Thread Local Storage)
     ///
-    /// For Go binaries (both GC and TinyGo), the goroutine ID is stored in the
-    /// runtime.g structure. The current g pointer is accessible via TLS:
-    /// - FS register points to TLS base
+    /// For Go binaries, the goroutine ID is stored in the runtime.g structure.
+    /// The current g pointer is accessible via TLS:
+    /// - FS register (0x110) points to TLS base
     /// - g pointer is at FS:[-8] (fs_base - 8)
-    /// - goid field is at offset 152 within the g struct
+    /// - goid field offset is dynamically loaded from DWARF (152 for Go 1.25.1)
     ///
-    /// This works for both single-threaded and multi-threaded scenarios.
+    /// This works for both Go GC and TinyGo binaries.
     pub fn get_current_goroutine_id(&self) -> Result<u64, String> {
-        // Check if UB detection is enabled
-        if std::env::var("ENABLE_UB_DETECTION").unwrap_or_default() != "1" {
-            // Return 0 (main goroutine) if UB detection is disabled
-            return Ok(0);
-        }
-
-
-        let compiler = std::env::var("COMPILER").unwrap_or_default();
         let source_lang = std::env::var("SOURCE_LANG").unwrap_or_default();
-    
+        
         // Only extract for Go binaries
         if source_lang.to_lowercase() != "go" {
             return Ok(0);
@@ -163,24 +155,29 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         self.extract_gid_from_tls()
     }
 
-
     /// Extract goroutine ID from TLS by reading the runtime.g structure
+    ///
+    /// Based on: "How to Get the Goroutine ID?" article
+    /// TLS access pattern:
+    ///   1. Read FS register (0x110) → TLS base
+    ///   2. Read g pointer at TLS base - 8
+    ///   3. Read goid at g + offset (from DWARF)
     fn extract_gid_from_tls(&self) -> Result<u64, String> {
         // Read FS base register (TLS base)
         let cpu_state = self.state.cpu_state.lock()
             .map_err(|e| format!("Failed to lock CPU state: {}", e))?;
-    
+        
         let fs_base = cpu_state.get_register_by_offset(0x110, 64) // FS_OFFSET
             .map(|v| v.concrete.to_u64())
             .unwrap_or(0);
-    
+        
         drop(cpu_state); // Release lock
-    
+        
         if fs_base == 0 {
             // TLS not set up yet, return 0 (main goroutine)
             return Ok(0);
         }
-    
+        
         // Read g pointer at fs_base - 8
         // In Go runtime, the current goroutine pointer is stored at FS:[-8]
         let g_ptr_addr = fs_base.wrapping_sub(8);
@@ -189,22 +186,21 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             64,
             &mut self.state.logger.clone()
         ).map(|v| v.concrete.to_u64()).unwrap_or(0);
-    
+        
         if g_ptr == 0 {
             // No goroutine context, return 0
             return Ok(0);
         }
-    
-        // Read goid field from g struct
-        // In runtime.g, goid is at offset 152 (0x98)
-        // This offset is stable across Go versions (1.16-1.22+)
-        let goid_offset = 152;
+        
+        // Read goid field from g struct using dynamically loaded offset
+        // The offset is extracted from DWARF at initialization time
+        let goid_offset = crate::state::RuntimeGOffsets::get_goid_offset();
         let goid = self.state.memory.read_value(
             g_ptr + goid_offset,
             64,
             &mut self.state.logger.clone()
         ).map(|v| v.concrete.to_u64()).unwrap_or(0);
-    
+        
         Ok(goid)
     }
 
