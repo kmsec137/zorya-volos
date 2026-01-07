@@ -134,6 +134,80 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         }
     }
 
+    /// Extract current goroutine ID from TLS (Thread Local Storage)
+    ///
+    /// For Go binaries (both GC and TinyGo), the goroutine ID is stored in the
+    /// runtime.g structure. The current g pointer is accessible via TLS:
+    /// - FS register points to TLS base
+    /// - g pointer is at FS:[-8] (fs_base - 8)
+    /// - goid field is at offset 152 within the g struct
+    ///
+    /// This works for both single-threaded and multi-threaded scenarios.
+    pub fn get_current_goroutine_id(&self) -> Result<u64, String> {
+        // Check if UB detection is enabled
+        if std::env::var("ENABLE_UB_DETECTION").unwrap_or_default() != "1" {
+            // Return 0 (main goroutine) if UB detection is disabled
+            return Ok(0);
+        }
+
+
+        let compiler = std::env::var("COMPILER").unwrap_or_default();
+        let source_lang = std::env::var("SOURCE_LANG").unwrap_or_default();
+    
+        // Only extract for Go binaries
+        if source_lang.to_lowercase() != "go" {
+            return Ok(0);
+        }
+
+        // Try to extract from TLS (works for both gc and tinygo)
+        self.extract_gid_from_tls()
+    }
+
+
+    /// Extract goroutine ID from TLS by reading the runtime.g structure
+    fn extract_gid_from_tls(&self) -> Result<u64, String> {
+        // Read FS base register (TLS base)
+        let cpu_state = self.state.cpu_state.lock()
+            .map_err(|e| format!("Failed to lock CPU state: {}", e))?;
+    
+        let fs_base = cpu_state.get_register_by_offset(0x110, 64) // FS_OFFSET
+            .map(|v| v.concrete.to_u64())
+            .unwrap_or(0);
+    
+        drop(cpu_state); // Release lock
+    
+        if fs_base == 0 {
+            // TLS not set up yet, return 0 (main goroutine)
+            return Ok(0);
+        }
+    
+        // Read g pointer at fs_base - 8
+        // In Go runtime, the current goroutine pointer is stored at FS:[-8]
+        let g_ptr_addr = fs_base.wrapping_sub(8);
+        let g_ptr = self.state.memory.read_value(
+            g_ptr_addr,
+            64,
+            &mut self.state.logger.clone()
+        ).map(|v| v.concrete.to_u64()).unwrap_or(0);
+    
+        if g_ptr == 0 {
+            // No goroutine context, return 0
+            return Ok(0);
+        }
+    
+        // Read goid field from g struct
+        // In runtime.g, goid is at offset 152 (0x98)
+        // This offset is stable across Go versions (1.16-1.22+)
+        let goid_offset = 152;
+        let goid = self.state.memory.read_value(
+            g_ptr + goid_offset,
+            64,
+            &mut self.state.logger.clone()
+        ).map(|v| v.concrete.to_u64()).unwrap_or(0);
+    
+        Ok(goid)
+    }
+
     /// Read memory with overlay support
     /// If overlay mode is active, reads from overlay first, then falls back to base
     pub fn read_memory_overlay_aware(
