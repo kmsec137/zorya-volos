@@ -140,7 +140,10 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     /// The current g pointer is accessible via TLS:
     /// - FS register (0x110) points to TLS base
     /// - g pointer is at FS:[-8] (fs_base - 8)
-    /// - goid field offset is dynamically loaded from DWARF (152 for Go 1.25.1)
+    /// - goid field offset is dynamically loaded from DWARF debug info
+    ///
+    /// The offset varies by Go version (e.g., 152 for Go 1.25.1, 192 for Go 1.21+)
+    /// and is automatically extracted during function signature analysis.
     ///
     /// This works for both Go GC and TinyGo binaries.
     pub fn get_current_goroutine_id(&self) -> Result<u64, String> {
@@ -156,12 +159,14 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     }
 
     /// Extract goroutine ID from TLS by reading the runtime.g structure
-    ///
-    /// Based on: "How to Get the Goroutine ID?" article
+    /// 
     /// TLS access pattern:
     ///   1. Read FS register (0x110) → TLS base
     ///   2. Read g pointer at TLS base - 8
-    ///   3. Read goid at g + offset (from DWARF)
+    ///   3. Read goid field at g + offset
+    ///
+    /// The goid offset is loaded from results/runtime_g_offsets.json,
+    /// which is generated during DWARF analysis.
     fn extract_gid_from_tls(&self) -> Result<u64, String> {
         // Read FS base register (TLS base)
         let cpu_state = self.state.cpu_state.lock()
