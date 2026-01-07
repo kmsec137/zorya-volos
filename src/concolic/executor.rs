@@ -2245,6 +2245,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 self.state.logger.clone(),
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
             );
+            println!("/!\\ Dereferencing NULL pointer detected, execution halted!\n");
             process::exit(1);
         }
 
@@ -2673,7 +2674,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 self.state.logger.clone(),
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
             );
-            return Err("Attempted null pointer dereference".to_string());
+            println!("/!\\ Dereferencing NULL pointer detected, execution halted!\n");
+            process::exit(1);
         }
 
         // Fetch the data to be stored
