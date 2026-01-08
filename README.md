@@ -241,7 +241,10 @@ Zorya automatically selects the right strategy based on the `--lang` and `--comp
 For detailed technical information:
 - [Compiler-Aware Strategies](doc/Compiler-Aware-Strategies.md) - Strategy selection and configuration
 - [Overlay Path Analysis](doc/Overlay-Path-Analysis.md) - Vulnerability detection using overlay mechanism
-  - [General Strategies Overview](doc/Strategies.md) - High-level overview
+- [General Strategies Overview](doc/Strategies.md) - High-level overview
+- [Multi-threading Support](doc/Multi-threading.md) - Thread state management and restoration
+- [Fuzzer Documentation](doc/Fuzzer.md) - Automated test campaigns and configuration
+- [Go Binary Analysis](doc/Go-Binary-Analysis.md) - Runtime offsets and function signature extraction
 
 
 ## 5. Demo videos
@@ -256,10 +259,7 @@ Link to the demo : [Demo](https://youtu.be/8PeSZFvr6WA)
 Link to the overall presentation of Zorya at EthCC 2025 : [Presentation](https://www.youtube.com/live/QpcAtfN3B9M)
 
 ## 6. Roadmap 
-Zorya has been developeped and tested for now on Linux Ubuntu as the execution environement with x86-64 binaries targets. The roadmap below details the features that have been added over time and those that are planned:
-<div align="left">
-  <img src="doc/roadmap-zorya_october-2025.png" alt="Roadmap" width="900"/>
-</div>
+Zorya has been developed and tested on Linux Ubuntu as the execution environment with x86-64 binary targets. See the [roadmap](doc/roadmap-zorya_october-2025.png) for details on features that have been added over time and those that are planned.
 
 ## 7. Academic work
 You can find the preprint of our second paper on ArXiv under the title : [Zorya: Automated Concolic Execution of Single-Threaded Go Binaries](https://arxiv.org/abs/2512.10799).
