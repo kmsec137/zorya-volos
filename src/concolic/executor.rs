@@ -185,6 +185,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         
         // Read g pointer at fs_base - 8
         // In Go runtime, the current goroutine pointer is stored at FS:[-8]
+        // See https://github.com/golang/go/commit/658a338f78ef5dce4c81527c34fb52be95357ef7
         let g_ptr_addr = fs_base.wrapping_sub(8);
         let g_ptr = self.state.memory.read_value(
             g_ptr_addr,
