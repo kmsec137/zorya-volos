@@ -772,6 +772,7 @@ fn execute_instructions_from(
                         let cpu = executor.state.cpu_state.lock().unwrap();
                         for (idx, s) in reg_names.iter().enumerate() {
                             let s = s.as_str();
+									 let new_volos = executor.new_volos();
                             let val = if is_stack_location(s) {
                                 parse_stack_offset(s)
                                     .and_then(|off| {
@@ -781,7 +782,7 @@ fn execute_instructions_from(
                                             executor
                                                 .state
                                                 .memory
-                                                .read_u64(addr, &mut executor.state.logger.clone())
+                                                .read_u64(addr, &mut executor.state.logger.clone(), new_volos)
                                                 .ok()
                                                 .map(|cv| cv.concrete.to_u64())
                                         })
@@ -802,7 +803,9 @@ fn execute_instructions_from(
                             let max_len = std::cmp::min(len, 256);
                             let mut first_byte_bv: Option<z3::ast::BV> = None;
                             for j in 0..max_len {
-                                if let Ok(byte_read) = executor.state.memory.read_byte(ptr + j) {
+
+								    	  let new_volos = executor.new_volos();
+                                if let Ok(byte_read) = executor.state.memory.read_byte(ptr + j, new_volos) {
                                     let byte_bv = byte_read.symbolic.to_bv(executor.context);
                                     if j == 0 {
                                         first_byte_bv = Some(byte_bv.clone());
@@ -2015,19 +2018,19 @@ pub fn initialize_symbolic_part_args(
 ) -> Result<(), Box<dyn Error>> {
     // Read os.Args slice header (Pointer, Len, Cap)
     let mem = &executor.state.memory;
+	 let volos = &executor.new_volos();
     let slice_ptr = mem
-        .read_u64(args_addr, &mut executor.state.logger.clone())?
+        .read_u64(args_addr, &mut executor.state.logger.clone(), volos.clone())?
         .concrete
         .to_u64(); // Pointer to backing array
     let slice_len = mem
-        .read_u64(args_addr + 8, &mut executor.state.logger.clone())?
+        .read_u64(args_addr + 8, &mut executor.state.logger.clone(), volos.clone())?
         .concrete
         .to_u64(); // Length (number of arguments)
     let _slice_cap = mem
-        .read_u64(args_addr + 16, &mut executor.state.logger.clone())?
+        .read_u64(args_addr + 16, &mut executor.state.logger.clone(), volos.clone())?
         .concrete
         .to_u64(); // Capacity (not used)
-	 let new_volos = executor.new_volos();
     log!(
         executor.state.logger,
         "os.Args -> ptr=0x{:?}, len={}, cap={}",
@@ -2038,13 +2041,14 @@ pub fn initialize_symbolic_part_args(
 
     // Iterate through each argument
     for i in 0..slice_len {
+	 	  let new_volos = executor.new_volos();
         let string_struct_addr = slice_ptr + i * 16; // Each Go string struct is 16 bytes
         let str_data_ptr = mem
-            .read_u64(string_struct_addr, &mut executor.state.logger.clone())?
+            .read_u64(string_struct_addr, &mut executor.state.logger.clone(), new_volos.clone())?
             .concrete
             .to_u64(); // Pointer to actual string data
         let str_data_len = mem
-            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone())?
+            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone(), new_volos.clone())?
             .concrete
             .to_u64(); // Length of the string
 
@@ -2062,7 +2066,7 @@ pub fn initialize_symbolic_part_args(
         }
 
         // Read the actual string bytes
-        let concrete_str_bytes = mem.read_bytes(str_data_ptr, str_data_len as usize)?;
+        let concrete_str_bytes = mem.read_bytes(str_data_ptr, str_data_len as usize, new_volos.clone())?;
 
         // Create fresh symbolic variables for each byte of this argument
         let mut fresh_symbolic = Vec::with_capacity(str_data_len as usize);
