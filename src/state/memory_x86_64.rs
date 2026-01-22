@@ -14,6 +14,7 @@ use z3::{ast::BV, Context};
 use super::VirtualFileSystem;
 use crate::concolic::{ConcolicVar, ConcreteVar, Logger, SymbolicVar};
 use crate::target_info::GLOBAL_TARGET_INFO;
+use std::cell::RefCell;
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
@@ -212,7 +213,7 @@ pub struct MemoryRegion<'ctx> {
     pub concrete_data: Vec<u8>, // Holds only the concrete data (compact, 1 byte per memory cell)
     pub symbolic_data: BTreeMap<usize, Arc<BV<'ctx>>>, // Holds symbolic data for only some addresses, sorted by offset
     pub prot: i32, // Protection flags (e.g., PROT_READ, PROT_WRITE)
-    pub volos_region: VolosRegion
+    pub volos_region: RefCell<VolosRegion>
 }
 
 impl<'ctx> MemoryRegion<'ctx> {
@@ -234,7 +235,7 @@ impl<'ctx> MemoryRegion<'ctx> {
     /// Initialize a new `MemoryRegion` with the given size and protection flags.
     pub fn new(start_address: u64, size: usize, prot: i32) -> Self {
 	let mut volos = Volos::new(0, AccessType::New, Vec::<u64>::new());
-	let mut volos_region = VolosRegion::new(start_address,size.try_into().unwrap(),volos);
+	let mut volos_region = RefCell::new(VolosRegion::new(start_address,size.try_into().unwrap(),volos));
         Self {
             start_address,
             end_address: start_address + size as u64,
@@ -414,7 +415,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 }
 
                 let concrete = region.concrete_data[offset..offset + size].to_vec();
-					 let mut v_region = &region.volos_region;
+					 let v_region = &mut region.volos_region.borrow_mut();
 
 					 v_region.add_volos((offset).try_into().unwrap(), size.try_into().unwrap(), volos.clone());
 
@@ -736,7 +737,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 // Write concrete data
                 for (i, &byte) in concrete.iter().enumerate() {
                     region.concrete_data[offset + i] = byte;
-						  region.volos_region.add_volos((offset+i).try_into().unwrap(),concrete.len().try_into().unwrap(),volos.clone())
+						  region.volos_region.borrow_mut().add_volos((offset+i).try_into().unwrap(),concrete.len().try_into().unwrap(),volos.clone())
                 }
 
                 // Write or remove symbolic data
@@ -1025,7 +1026,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
             concrete_data,
             symbolic_data,
             prot,
-            volos_region
+            volos_region: volos_region.into()
         };
 
         regions.push(memory_region);
