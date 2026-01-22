@@ -12,10 +12,6 @@ import (
 	"strings"
 )
 
-// Controlled debug logging for DWARF/loclist parsing; enabled when
-// GET_FUNCT_ARG_TYPES_DEBUG=1 in the environment.
-var dwarfDebugEnabled = os.Getenv("GET_FUNCT_ARG_TYPES_DEBUG") == "1"
-
 // Manual overrides for functions whose register usage is known to differ
 // from ABI/DWARF-exposed locations (e.g., due to compiler/runtime conventions
 // or p-code lowering differences).
@@ -107,22 +103,12 @@ type LocationInfo struct {
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <binary_path> <output_path> [--extract-runtime-g]\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "\nOptions:\n")
-		fmt.Fprintf(os.Stderr, "  --extract-runtime-g    Extract runtime.g struct offsets (saves to results/runtime_g_offsets.json)\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s <binary_path> <output_path>\n", os.Args[0])
 		os.Exit(1)
 	}
 
 	binaryPath := os.Args[1]
 	outputPath := os.Args[2]
-	
-	// Check for --extract-runtime-g flag
-	extractRuntimeG := false
-	for _, arg := range os.Args[3:] {
-		if arg == "--extract-runtime-g" {
-			extractRuntimeG = true
-		}
-	}
 
 	outputDir := filepath.Dir(outputPath)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -138,27 +124,6 @@ func main() {
 	dwarfData, err := f.DWARF()
 	if err != nil {
 		log.Fatal(err)
-	}
-	
-	// Extract runtime.g offsets if requested (for Go binaries)
-	if extractRuntimeG {
-		runtimeInfo, err := ExtractRuntimeGOffsets(dwarfData, binaryPath)
-		if err != nil {
-			// Silent - only show errors if debugging
-			if os.Getenv("GET_FUNCT_ARG_TYPES_DEBUG") == "1" {
-				fmt.Fprintf(os.Stderr, "[!] Could not extract runtime.g offsets: %v\n", err)
-			}
-		} else {
-			runtimeOutputPath := filepath.Join(outputDir, "runtime_g_offsets.json")
-			if err := SaveRuntimeGOffsets(runtimeInfo, runtimeOutputPath); err != nil {
-				if os.Getenv("GET_FUNCT_ARG_TYPES_DEBUG") == "1" {
-					fmt.Fprintf(os.Stderr, "[!] Could not save runtime.g offsets: %v\n", err)
-				}
-			}
-		}
-		
-		// Reset DWARF reader for function signature extraction
-		dwarfData, _ = f.DWARF()
 	}
 
 	functions := []Function{}
@@ -237,7 +202,6 @@ func main() {
 			var argName string
 			var argType string
 			var locationAttr interface{}
-			var isOutputParam bool // DW_AT_variable_parameter == 1 for Go result parameters (~r0, ~r1, ...)
 
 			for _, field := range entry.Field {
 				switch field.Attr {
@@ -260,33 +224,7 @@ func main() {
 					}()
 				case dwarf.AttrLocation:
 					locationAttr = field.Val
-				case dwarf.AttrVarParam:
-					// Go uses DW_AT_variable_parameter to mark *result* parameters (~r0, ~r1, ...)
-					switch v := field.Val.(type) {
-					case bool:
-						isOutputParam = v
-					case int64:
-						isOutputParam = v != 0
-					case uint64:
-						isOutputParam = v != 0
-					}
 				}
-			}
-
-			// Skip Go result parameters: they are outputs (~r0, ~r1, offset, rest, ok, ...)
-			// and should not be treated as *input* arguments in the JSON map that Zorya
-			// uses for symbolic initialization.
-			// We also defensively skip any synthetic "~r*" even if DW_AT_variable_parameter is missing.
-			// see: https://github.com/golang/go/issues/21100 and https://github.com/golang/go/issues/59977
-			if isOutputParam || strings.HasPrefix(argName, "~r") {
-				continue
-			}
-
-			// Filter out ALL unnamed parameters early (before DWARF/ABI fallback warnings).
-			// Go's compiler emits DWARF entries for internal temporaries, ABI slots, and
-			// frame metadata that don't correspond to actual source parameters.
-			if argName == "" {
-				continue
 			}
 
 			// DWARF-first approach: Trust DWARF over ABI guessing
@@ -297,15 +235,15 @@ func main() {
 			locInfo := parseLocationInfo(f, locationAttr, currentFuncLowPC)
 
 			if len(locInfo.Registers) > 0 {
-				// DWARF has explicit register information - use it.
+				// DWARF has explicit register information - use it!
 				registers = locInfo.Registers
 				locationInfo = "from_dwarf_location"
 			} else {
-				// DWARF does not describe an entry-location for this parameter; assign
-				// registers/stack slots according to the Go ABI. This is a normal case
-				// for many stdlib helpers and is not treated as a user-visible warning.
+				// Only fall back to ABI guessing if DWARF provides no location info
 				registers = getRegistersByGoABI(argType, currentFunc)
-				locationInfo = "abi_inferred"
+				locationInfo = "from_abi_fallback"
+				fmt.Fprintf(os.Stderr, "Warning: No DWARF location for %s.%s, using ABI fallback\n",
+					currentFunc.Name, argName)
 			}
 
 			// Apply manual overrides when present
@@ -322,22 +260,31 @@ func main() {
 				Registers: registers,
 			}
 
-			// Enhanced debug location info
-			if locationAttr != nil {
-				arg.Location = fmt.Sprintf("%s: location_attr=%v (type:%T)",
-					locationInfo, locationAttr, locationAttr)
-			} else {
-				arg.Location = locationInfo + ": no_location_attr"
-			}
+		// Enhanced debug location info
+		if locationAttr != nil {
+			arg.Location = fmt.Sprintf("%s: location_attr=%v (type:%T)",
+				locationInfo, locationAttr, locationAttr)
+		} else {
+			arg.Location = locationInfo + ": no_location_attr"
+		}
 
-			// Deduplicate/merge: DWARF sometimes emits multiple formal params for slices/strings (pieces)
-			// If an unnamed parameter arrives with identical register set (or same type), skip it.
-			if shouldSkipDuplicateArg(currentFunc.Arguments, argName, argType, registers) {
-				// Skip duplicate synthetic entry
-				continue
-			}
+		// Filter out ALL unnamed parameters - they are compiler-generated artifacts
+		// Go's compiler emits DWARF entries for internal temporaries, ABI slots,
+		// and stack frame metadata that don't correspond to actual source parameters.
+		// Only keep parameters that have actual names in the source code.
+		if argName == "" {
+			// Skip all unnamed synthetic parameters
+			continue
+		}
 
-			currentFunc.Arguments = append(currentFunc.Arguments, arg)
+		// Deduplicate/merge: DWARF sometimes emits multiple formal params for slices/strings (pieces)
+		// If an unnamed parameter arrives with identical register set (or same type), skip it.
+		if shouldSkipDuplicateArg(currentFunc.Arguments, argName, argType, registers) {
+			// Skip duplicate synthetic entry
+			continue
+		}
+
+		currentFunc.Arguments = append(currentFunc.Arguments, arg)
 		}
 	}
 
@@ -375,6 +322,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to write output file: %v", err)
 	}
+
+	fmt.Fprintf(os.Stderr, "Successfully wrote JSON data to %s (%d bytes)\n", outputPath, len(jsonData))
 }
 
 // Improved location parsing with better error handling
@@ -392,9 +341,7 @@ func parseLocationInfo(ef *elf.File, locationAttr interface{}, lowPC uint64) Loc
 	switch loc := locationAttr.(type) {
 	case int64:
 		// Location list offset - this is the most common case for function parameters
-		if dwarfDebugEnabled {
-			fmt.Fprintf(os.Stderr, "Debug: Parsing location list at offset %d (0x%x)\n", loc, loc)
-		}
+		fmt.Fprintf(os.Stderr, "Debug: Parsing location list at offset %d (0x%x)\n", loc, loc)
 		// Try DWARF v5 .debug_loclists first, then legacy .debug_loc
 		if ef.Section(".debug_loclists") != nil && ef.Section(".debug_loclists").Size > 0 {
 			parsed := parseLocationListOffsetV5(ef, uint64(loc), lowPC)
@@ -406,18 +353,12 @@ func parseLocationInfo(ef *elf.File, locationAttr interface{}, lowPC uint64) Loc
 			parsed := parseLocationListOffsetLegacy(ef, uint64(loc), lowPC)
 			return normalizeStackRegisters(parsed)
 		}
-		// Many binaries (or specific compilers) legitimately omit loclists sections;
-		// this is not an error for our use-case, so only surface it in debug mode.
-		if dwarfDebugEnabled {
-			fmt.Fprintf(os.Stderr, "Warning: No loclists sections present in ELF\n")
-		}
+		fmt.Fprintf(os.Stderr, "Warning: No loclists sections present in ELF\n")
 		return info
 
 	case []byte:
 		// Direct location expression ([]byte and []uint8 are the same type)
-		if dwarfDebugEnabled {
-			fmt.Fprintf(os.Stderr, "Debug: Parsing direct location expression (%d bytes)\n", len(loc))
-		}
+		fmt.Fprintf(os.Stderr, "Debug: Parsing direct location expression (%d bytes)\n", len(loc))
 		return normalizeStackRegisters(parseLocationExpression(loc))
 
 	default:
@@ -593,9 +534,7 @@ func parseLocationListOffsetV5(ef *elf.File, offset uint64, lowPC uint64) Locati
 			i += n
 			// We don't have access to .debug_addr here, so we can't resolve the actual address
 			// Just use the index as a placeholder - the important part is the offset pairs that follow
-			if dwarfDebugEnabled {
-				fmt.Fprintf(os.Stderr, "Debug: DW_LLE_base_addressx with index %d (address lookup not implemented)\n", idx)
-			}
+			fmt.Fprintf(os.Stderr, "Debug: DW_LLE_base_addressx with index %d (address lookup not implemented)\n", idx)
 			// Continue parsing - the offset pairs will be relative to this base
 			
 		case 0x02: // DW_LLE_startx_endx - start and end from .debug_addr via indices
@@ -616,9 +555,7 @@ func parseLocationListOffsetV5(ef *elf.File, offset uint64, lowPC uint64) Locati
 			}
 			expr := data[i : i+int(exprLen)]
 			i += int(exprLen)
-			if dwarfDebugEnabled {
-				fmt.Fprintf(os.Stderr, "Debug: DW_LLE_startx_endx with indices %d-%d (parsing expression anyway)\n", startIdx, endIdx)
-			}
+			fmt.Fprintf(os.Stderr, "Debug: DW_LLE_startx_endx with indices %d-%d (parsing expression anyway)\n", startIdx, endIdx)
 			// Can't check address range without .debug_addr, but return the expression anyway
 			// as it's likely the first entry for the function
 			return parseLocationExpression(expr)
@@ -641,9 +578,7 @@ func parseLocationListOffsetV5(ef *elf.File, offset uint64, lowPC uint64) Locati
 			}
 			expr := data[i : i+int(exprLen)]
 			i += int(exprLen)
-			if dwarfDebugEnabled {
-				fmt.Fprintf(os.Stderr, "Debug: DW_LLE_startx_length with index %d, length %d (parsing expression anyway)\n", startIdx, length)
-			}
+			fmt.Fprintf(os.Stderr, "Debug: DW_LLE_startx_length with index %d, length %d (parsing expression anyway)\n", startIdx, length)
 			return parseLocationExpression(expr)
 			
 		case 0x04: // DW_LLE_offset_pair - offsets from base address
@@ -661,9 +596,7 @@ func parseLocationListOffsetV5(ef *elf.File, offset uint64, lowPC uint64) Locati
 			// For offset pairs, we need a base address
 			// If we parsed a base_addressx before, we can't resolve it without .debug_addr
 			// But we can still return the expression as it's the register location
-			if dwarfDebugEnabled {
-				fmt.Fprintf(os.Stderr, "Debug: DW_LLE_offset_pair with offsets 0x%x-0x%x (base=0x%x)\n", startOff, endOff, base)
-			}
+			fmt.Fprintf(os.Stderr, "Debug: DW_LLE_offset_pair with offsets 0x%x-0x%x (base=0x%x)\n", startOff, endOff, base)
 			// Return the expression anyway - it contains the register information
 			return parseLocationExpression(expr)
 			
@@ -718,9 +651,7 @@ func parseLocationListOffsetV5(ef *elf.File, offset uint64, lowPC uint64) Locati
 			
 		default:
 			// Unknown kind
-			if dwarfDebugEnabled {
-				fmt.Fprintf(os.Stderr, "Debug: Unknown DW_LLE kind 0x%02x at offset 0x%x\n", kind, i-1)
-			}
+			fmt.Fprintf(os.Stderr, "Debug: Unknown DW_LLE kind 0x%02x at offset 0x%x\n", kind, i-1)
 			return info
 		}
 	}
@@ -774,9 +705,7 @@ func parseLocationExpression(expr []byte) LocationInfo {
 			if i < len(expr) {
 				pieceSize, bytesRead := readULEB128(expr[i:])
 				i += bytesRead
-				if dwarfDebugEnabled {
-					fmt.Fprintf(os.Stderr, "Debug: Found DW_OP_piece with size %d\n", pieceSize)
-				}
+				fmt.Fprintf(os.Stderr, "Debug: Found DW_OP_piece with size %d\n", pieceSize)
 			}
 
 		// DW_OP_regx - register with ULEB128 number
@@ -821,10 +750,8 @@ func parseLocationExpression(expr []byte) LocationInfo {
 
 		default:
 			// Skip unknown operations - but don't crash
-			if dwarfDebugEnabled {
-				fmt.Fprintf(os.Stderr, "Debug: Unknown DWARF op: 0x%02x at position %d (remaining bytes: %d)\n",
-					op, i-1, len(expr)-i+1)
-			}
+			fmt.Fprintf(os.Stderr, "Debug: Unknown DWARF op: 0x%02x at position %d (remaining bytes: %d)\n",
+				op, i-1, len(expr)-i+1)
 		}
 
 		// Safety check to prevent infinite loops

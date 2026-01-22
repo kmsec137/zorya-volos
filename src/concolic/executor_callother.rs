@@ -154,8 +154,29 @@ pub fn handle_callother(executor: &mut ConcolicExecutor, instruction: Inst) -> R
 /// This prefix ensures atomic access to memory for the following instruction.
 /// In our single-threaded concolic execution context, this is a no-op as atomicity
 /// is implicitly guaranteed by the sequential execution model.
-pub fn handle_lock(_executor: &mut ConcolicExecutor) -> Result<(), String> {
-    Ok(())
+pub fn handle_lock(executor: &mut ConcolicExecutor) -> Result<(),String> {
+	 //1. we need to grab the memory address that the lock variable stores, it should be rdi (the first arg to the lock call), rdi contains the new lock value (1 - taken, 0 - not taken)?
+    //2. we need to record this lock in the volos for the associated thread, tip: grab the thread_manager from the executor
+	 /*
+    let cpu_state_guard = executor.state.cpu_state.lock().unwrap();
+	 let tm = executor.state.thread_manager.lock().unwrap();
+    //1. grabbing rsi
+    let rsi = cpu_state_guard 
+					.get_register_by_offset(0x30,64) //from cpu_state.rs 
+				   .ok_or("Failed ot retrieve RAX value")?.get_concrete_value()?; //check this against go calling convention
+
+    println!("[EXECUTOR::handle_lock] handling lock operation for thread#{} @[{}]",tm.current_tid,rsi);
+    let rdi = cpu_state_guard
+					.get_register_by_offset(0x38,64)
+				   .ok_or("Failed ot retrieve RAX value")?.get_concrete_value()?;
+	 if rsi == 0 {
+			//successfully taken lock
+			let tm = executor.state.thread_manager.lock().unwrap();
+		  	tm.current_thread_takelock(rdi); 		
+    }
+	 //panic here?
+	 Ok();*/
+	 Ok(())
 }
 
 /// Handle UNLOCK - Release atomic memory access
@@ -163,7 +184,7 @@ pub fn handle_lock(_executor: &mut ConcolicExecutor) -> Result<(), String> {
 /// Releases the lock acquired by a preceding LOCK prefix.
 /// In our single-threaded concolic execution context, this is a no-op as atomicity
 /// is implicitly guaranteed by the sequential execution model.
-pub fn handle_unlock(_executor: &mut ConcolicExecutor) -> Result<(), String> {
+pub fn handle_unlock(executor: &mut ConcolicExecutor) -> Result<(), String> {
     Ok(())
 }
 
@@ -180,7 +201,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
         .unwrap()
         .size
         .to_bitvector_size() as u32;
-
+	 let mut new_volos = executor.new_volos();
     // Memory address to temporarly store EAX, EBX, ECX, EDX
     let base_address = 0x300000;
 
@@ -332,6 +353,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
         concrete: eax as u64,
         symbolic: BV::from_u64(ctx, eax as u64, 32),
         size: 32,
+		  volos: new_volos.clone()
     };
     executor
         .state
@@ -344,6 +366,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
         concrete: ebx as u64,
         symbolic: BV::from_u64(ctx, ebx as u64, 32),
         size: 32,
+		  volos: new_volos.clone()
     };
     executor
         .state
@@ -356,6 +379,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
         concrete: ecx as u64,
         symbolic: BV::from_u64(ctx, ecx as u64, 32),
         size: 32,
+		  volos: new_volos.clone()
     };
     executor
         .state
@@ -368,6 +392,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
         concrete: edx as u64,
         symbolic: BV::from_u64(ctx, edx as u64, 32),
         size: 32,
+		  volos: new_volos.clone()
     };
     executor
         .state
@@ -393,7 +418,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
             executor.context,
         ),
     )?;
-
+ 
     // Create the concolic variables for the results
     let current_addr_hex = executor
         .current_address
@@ -1016,19 +1041,6 @@ fn handle_swi(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), 
         }
         // Add handling for other interrupts as needed
         _ => {
-            // In overlay mode (speculative execution), gracefully handle unimplemented interrupts
-            // These are typically unreachable code paths (e.g., BIOS interrupts like INT 0x10 in Linux binaries)
-            if executor.is_overlay_mode() {
-                log!(
-                    executor.state.logger,
-                    "[OVERLAY] Ignoring unimplemented SWI {} (speculative path - likely unreachable in practice)",
-                    interrupt_number
-                );
-                // Return success - this is a speculative path that wouldn't execute in practice
-                return Ok(());
-            }
-
-            // In normal execution, unhandled interrupts are errors
             eprintln!(
                 "Unhandled software interrupt (SWI) encountered: {}",
                 interrupt_number
@@ -1444,6 +1456,7 @@ pub fn handle_pshufw(executor: &mut ConcolicExecutor, instruction: Inst) -> Resu
         .varnode_to_concolic(&instruction.inputs[1])
         .map_err(|e| e.to_string())?;
     let src_concrete = src_var.get_concrete_value();
+    let src_symbolic = src_var.get_symbolic_value_bv(executor.context);
 
     log!(
         executor.trace_logger,

@@ -33,38 +33,38 @@ VDSO_SO="$ZORYA_DIR/results/initialization_data/vdso/vdso.so"
 VDSO_BASE_FILE="$ZORYA_DIR/results/initialization_data/vdso/vdso_base_addr.txt"
 
 if [ ! -f "$VDSO_SO" ] || [ ! -f "$VDSO_BASE_FILE" ]; then
-    echo "[ERROR] VDSO extraction failed"
+    echo "✗ VDSO extraction failed"
     exit 1
 fi
 
-echo "VDSO extracted: $VDSO_SO"
+echo "✓ VDSO extracted: $VDSO_SO"
 
 # Get VDSO base address
 VDSO_BASE=$(cat "$VDSO_BASE_FILE")
-echo "VDSO base address: $VDSO_BASE"
+echo "✓ VDSO base address: $VDSO_BASE"
 
 # Check VDSO file size
 VDSO_SIZE=$(stat -c%s "$VDSO_SO")
-echo "VDSO size: $VDSO_SIZE bytes"
+echo "✓ VDSO size: $VDSO_SIZE bytes"
 
 # Step 2: Generate p-code for VDSO
 echo ""
-echo "[2/3] Generating P-Code for VDSO..."
+echo "[2/3] Generating p-code for VDSO..."
 "$ZORYA_DIR/scripts/generate_vdso_pcode.sh" "$VDSO_SO" "$VDSO_BASE"
 
 # Check if p-code generation succeeded
 VDSO_PCODE="$ZORYA_DIR/results/initialization_data/vdso/vdso_low_pcode.txt"
 
 if [ ! -f "$VDSO_PCODE" ]; then
-    echo "[ERROR] VDSO P-Code generation failed"
+    echo "✗ VDSO p-code generation failed"
     exit 1
 fi
 
-echo "VDSO P-Code generated: $VDSO_PCODE"
+echo "✓ VDSO p-code generated: $VDSO_PCODE"
 
 # Count instructions
 INSTR_COUNT=$(grep -c "^0x" "$VDSO_PCODE" || true)
-echo "Number of instruction blocks: $INSTR_COUNT"
+echo "✓ Number of instruction blocks: $INSTR_COUNT"
 
 # Step 3: Analyze VDSO p-code content
 echo ""

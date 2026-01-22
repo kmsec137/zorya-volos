@@ -4,7 +4,10 @@
 use crate::{
     concolic::ConcreteVar,
     executor::ConcolicExecutor,
-    state::memory_x86_64::{MemoryValue, Sigaction},
+    state::{
+        cpu_state::CpuConcolicValue,
+        memory_x86_64::{MemoryValue, Sigaction, Volos},
+    },
 };
 use byteorder::{LittleEndian, WriteBytesExt};
 use nix::libc::gettid;
@@ -83,6 +86,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
     // Lock the CPU state and retrieve the value in the RAX register to determine the syscall
     let mut cpu_state_guard = executor.state.cpu_state.lock().unwrap();
     let rax_offset = 0x0; // RAX register offset
+	 let new_volos: Volos = executor.new_volos();
     let rax = cpu_state_guard
         .get_register_by_offset(rax_offset, 64)
         .unwrap()
@@ -136,12 +140,11 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let vfs = executor.state.vfs.read().unwrap();
                 vfs.read(fd, &mut buffer)
             };
-
             // Write the buffer to memory using the new method
             executor
                 .state
                 .memory
-                .write_bytes(buf_ptr, &buffer[..bytes_read])
+                .write_bytes(buf_ptr, &buffer[..bytes_read], new_volos.clone())
                 .map_err(|e| format!("Failed to write bytes to memory: {}", e))?;
 
             // Update RAX with the number of bytes read
@@ -207,7 +210,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             let data = executor
                 .state
                 .memory
-                .read_bytes(buf_ptr, count)
+                .read_bytes(buf_ptr, count,  executor.new_volos())
                 .map_err(|e| format!("Failed to read bytes from memory: {}", e))?;
 
             // Write data to the virtual file system
@@ -263,7 +266,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             let filename = executor
                 .state
                 .memory
-                .read_string(filename_ptr)
+                .read_string(filename_ptr, executor.new_volos())
                 .map_err(|e| format!("Failed to read filename from memory: {}", e))?;
 
             log!(executor.state.logger.clone(), "Filename: {}", filename);
@@ -384,16 +387,13 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             let result_addr = executor
                 .state
                 .memory
-                .mmap(addr, length, prot, flags, fd, offset)
+                .mmap(addr, length, prot, flags, fd, offset, new_volos)
                 .map_err(|e| e.to_string())?;
 
             log!(executor.state.logger.clone(), "Mapped memory at addr: 0x{:x}, length: {}, prot: {}, flags: {}, fd: {}, offset: {}", result_addr, length, prot, flags, fd, offset);
 
-            drop(cpu_state_guard);
-
             // Set return value (the address to which the file has been mapped)
-            // Use overlay-aware register write
-            executor.set_register_overlay_aware(
+            cpu_state_guard.set_register_value_by_offset(
                 rax_offset,
                 ConcolicVar::new_concrete_and_symbolic_int(
                     result_addr,
@@ -403,6 +403,8 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 ),
                 64,
             )?;
+
+            drop(cpu_state_guard);
 
             // Create the concolic variables for the results
             let current_addr_hex = executor
@@ -458,13 +460,13 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                             "Using default signal action for signum: {}",
                             signum
                         );
-                        Sigaction::new_default(executor.context)
+                        Sigaction::new_default(executor.context, new_volos.clone())
                     });
 
                 match executor
                     .state
                     .memory
-                    .write_sigaction(oldact_ptr, &current_action)
+                    .write_sigaction(oldact_ptr, &current_action, new_volos.clone())
                 {
                     Ok(_) => log!(
                         executor.state.logger.clone(),
@@ -486,7 +488,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 match executor
                     .state
                     .memory
-                    .read_sigaction(act_ptr, &mut executor.state.logger.clone())
+                    .read_sigaction(act_ptr, &mut executor.state.logger.clone(), new_volos)
                 {
                     Ok(new_action) => {
                         if new_action.handler.concrete == 0 {
@@ -521,7 +523,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         0,
                         BV::from_u64(executor.context, 0, 64),
                         executor.context,
-                    ),
+                    ),   
                     64,
                 )
                 .map_err(|e| format!("Failed to set RAX: {}", e))?;
@@ -562,10 +564,12 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             // Handle oldset_ptr: Save current signal mask if requested
             if oldset_ptr != 0 && executor.state.memory.is_valid_address(oldset_ptr) {
                 let current_mask = executor.state.signal_mask;
+					 let new_volos = executor.new_volos();
                 let mem_value = MemoryValue {
                     concrete: current_mask,
                     symbolic: BV::from_u64(executor.context, current_mask, 64),
                     size: 64,
+		    			  volos: new_volos.clone()
                 };
 
                 match executor.state.memory.write_value(oldset_ptr, &mem_value) {
@@ -583,7 +587,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let new_mask = executor
                     .state
                     .memory
-                    .read_u64(set_ptr, &mut executor.state.logger.clone())
+                    .read_u64(set_ptr, &mut executor.state.logger.clone(), executor.new_volos())
                     .map_err(|e| format!("Failed to read new signal mask from memory: {}", e))?
                     .concrete
                     .to_u64();
@@ -679,7 +683,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let tv_sec = executor
                     .state
                     .memory
-                    .read_u64(req_ptr, &mut executor.state.logger.clone())
+                    .read_u64(req_ptr, &mut executor.state.logger.clone(), executor.new_volos())
                     .map_err(|e| format!("Failed to read tv_sec: {}", e))?
                     .concrete
                     .to_u64();
@@ -687,7 +691,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let tv_nsec = executor
                     .state
                     .memory
-                    .read_u64(req_ptr + 8, &mut executor.state.logger.clone())
+                    .read_u64(req_ptr + 8, &mut executor.state.logger.clone(), executor.new_volos())
                     .map_err(|e| format!("Failed to read tv_nsec: {}", e))?
                     .concrete
                     .to_u64();
@@ -706,10 +710,8 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         "nanosleep: invalid tv_nsec value: {}",
                         tv_nsec
                     );
-                    drop(cpu_state_guard);
                     // Return -EINVAL (22)
-                    // Use overlay-aware register write
-                    executor.set_register_overlay_aware(
+                    cpu_state_guard.set_register_value_by_offset(
                         rax_offset,
                         ConcolicVar::new_concrete_and_symbolic_int(
                             (-22i64) as u64, // -EINVAL
@@ -718,6 +720,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         ),
                         64,
                     )?;
+                    drop(cpu_state_guard);
                     return Ok(());
                 }
 
@@ -734,7 +737,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     executor
                         .state
                         .memory
-                        .write_bytes(rem_ptr, &zero_timespec)
+                        .write_bytes(rem_ptr, &zero_timespec, new_volos.clone())
                         .map_err(|e| format!("Failed to write rem timespec: {}", e))?;
 
                     log!(
@@ -748,10 +751,8 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     "nanosleep: invalid req pointer: 0x{:x}",
                     req_ptr
                 );
-                drop(cpu_state_guard);
                 // Return -EFAULT (14)
-                // Use overlay-aware register write
-                executor.set_register_overlay_aware(
+                cpu_state_guard.set_register_value_by_offset(
                     rax_offset,
                     ConcolicVar::new_concrete_and_symbolic_int(
                         (-14i64) as u64, // -EFAULT
@@ -760,6 +761,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     ),
                     64,
                 )?;
+                drop(cpu_state_guard);
                 return Ok(());
             }
 
@@ -893,10 +895,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 }
             }
 
-            drop(cpu_state_guard);
-
-            // Use overlay-aware register write
-            executor.set_register_overlay_aware(
+            cpu_state_guard.set_register_value_by_offset(
                 rax_offset,
                 ConcolicVar::new_concrete_and_symbolic_int(
                     0,
@@ -905,6 +904,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 ),
                 64,
             )?;
+            drop(cpu_state_guard);
 
             // Create the concolic variables for the results
             let current_addr_hex = executor
@@ -986,7 +986,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             let path = executor
                 .state
                 .memory
-                .read_string(path_ptr)
+                .read_string(path_ptr, executor.new_volos())
                 .map_err(|e| format!("Failed to read execve path: {}", e))?;
             log!(
                 executor.state.logger.clone(),
@@ -1001,7 +1001,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let arg_ptr = executor
                     .state
                     .memory
-                    .read_u64(argv_ptr + (i * 8), &mut executor.state.logger.clone())
+                    .read_u64(argv_ptr + (i * 8), &mut executor.state.logger.clone(), executor.new_volos())
                     .map_err(|e| format!("Failed to read argv_ptr at index {}: {}", i, e))?
                     .concrete;
                 if arg_ptr == ConcreteVar::Int(0) {
@@ -1010,7 +1010,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let arg = executor
                     .state
                     .memory
-                    .read_string(arg_ptr.to_u64())
+                    .read_string(arg_ptr.to_u64(), executor.new_volos())
                     .map_err(|e| format!("Failed to read argv[{}]: {}", i, e))?;
                 argv.push(arg);
                 i += 1;
@@ -1024,7 +1024,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let env_ptr = executor
                     .state
                     .memory
-                    .read_u64(envp_ptr + (j * 8), &mut executor.state.logger.clone())
+                    .read_u64(envp_ptr + (j * 8), &mut executor.state.logger.clone(), executor.new_volos())
                     .map_err(|e| format!("Failed to read envp_ptr at index {}: {}", j, e))?
                     .concrete;
                 if env_ptr == ConcreteVar::Int(0) {
@@ -1033,7 +1033,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let env = executor
                     .state
                     .memory
-                    .read_string(env_ptr.to_u64())
+                    .read_string(env_ptr.to_u64(), executor.new_volos())
                     .map_err(|e| format!("Failed to read envp[{}]: {}", j, e))?;
                 envp.push(env);
                 j += 1;
@@ -1047,10 +1047,12 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             );
 
             // 8. Set RAX to 0 to indicate success
+	    let mut new_volos = executor.new_volos();
             let rax_value = MemoryValue {
                 concrete: 0,
                 symbolic: BV::from_u64(executor.context, 0, 64),
                 size: 64,
+ 		volos: new_volos
             };
             let rax_concolic_var = ConcolicVar::new_from_memory_value(&rax_value);
             cpu_state_guard
@@ -1194,6 +1196,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             }
 
             // For the parent thread: return the new child TID in RAX
+            let mut cpu_state_guard = executor.state.cpu_state.lock().unwrap();
             let rax_offset = 0x0; // RAX offset
             let rax_size = 64;
             let value_symbolic = BV::from_u64(executor.context, new_tid, rax_size);
@@ -1202,9 +1205,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 value_symbolic,
                 executor.context,
             );
-
-            // Use overlay-aware register write
-            executor.set_register_overlay_aware(rax_offset, value_concolic, rax_size)?;
+            cpu_state_guard.set_register_value_by_offset(rax_offset, value_concolic, rax_size)?;
 
             log!(
                 executor.state.logger.clone(),
@@ -1287,7 +1288,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             executor
                 .state
                 .memory
-                .write_bytes(rlim_ptr, &rlimit_bytes)
+                .write_bytes(rlim_ptr, &rlimit_bytes, new_volos.clone())
                 .map_err(|e| format!("Failed to write rlimit to memory: {}", e))?;
 
             // Set return value to 0 (success)
@@ -1387,7 +1388,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let ss_sp = match executor
                     .state
                     .memory
-                    .read_u64(ss_ptr, &mut executor.state.logger.clone())
+                    .read_u64(ss_ptr, &mut executor.state.logger.clone(), executor.new_volos())
                 {
                     Ok(value) => value.concrete,
                     Err(e) => {
@@ -1404,7 +1405,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let ss_flags = match executor
                     .state
                     .memory
-                    .read_u32(ss_ptr + 8, &mut executor.state.logger.clone())
+                    .read_u32(ss_ptr + 8, &mut executor.state.logger.clone(), executor.new_volos())
                 {
                     Ok(value) => value.concrete.to_i32(),
                     Err(e) => {
@@ -1421,11 +1422,11 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     "Read ss_flags: 0x{:?}",
                     ss_flags
                 );
-
+					 let mut init_volos = executor.new_volos();
                 let ss_size = match executor
                     .state
                     .memory
-                    .read_u64(ss_ptr + 16, &mut executor.state.logger.clone())
+                    .read_u64(ss_ptr + 16, &mut executor.state.logger.clone(), init_volos)
                 {
                     Ok(value) => value.concrete,
                     Err(e) => {
@@ -1534,11 +1535,8 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 }
             }
 
-            drop(cpu_state_guard);
-
             // Set the result of the syscall (0 for success) in the RAX register
-            // Use overlay-aware register write
-            executor.set_register_overlay_aware(
+            cpu_state_guard.set_register_value_by_offset(
                 rax_offset,
                 ConcolicVar::new_concrete_and_symbolic_int(
                     0,
@@ -1547,6 +1545,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 ),
                 64,
             )?;
+            drop(cpu_state_guard);
 
             // Create the concolic variables for the results
             let current_addr_hex = executor
@@ -1606,11 +1605,10 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 // Constants per Linux arch_prctl for x86_64
                 arch::ARCH_SET_FS => {
                     log!(executor.state.logger, "Setting FS base to {:#x}", addr);
-                    drop(cpu_state_guard);
-                    // Set FS base from RSI - use overlay-aware register write
-                    executor.set_register_overlay_aware(0x110, addr_concolic, 64)?;
-                    // Return 0 in RAX for success - use overlay-aware register write
-                    executor.set_register_overlay_aware(
+                    // Set FS base from RSI
+                    cpu_state_guard.set_register_value_by_offset(0x110, addr_concolic, 64)?;
+                    // Return 0 in RAX for success
+                    cpu_state_guard.set_register_value_by_offset(
                         rax_offset,
                         ConcolicVar::new_concrete_and_symbolic_int(
                             0,
@@ -1619,7 +1617,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         ),
                         64,
                     )?;
-                    return Ok(());
                 }
                 arch::ARCH_GET_FS => {
                     log!(
@@ -1633,15 +1630,14 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         .ok_or("Failed to read FS base register")?;
                     let fs_conc = fs_val.get_concrete_value().map_err(|e| e.to_string())?;
                     let fs_sym = fs_val.symbolic.to_bv(executor.context);
-                    drop(cpu_state_guard);
                     let mem_value = MemoryValue::new(fs_conc, fs_sym, 64);
                     executor
                         .state
                         .memory
                         .write_value(addr, &mem_value)
                         .map_err(|e| format!("Failed to write FS base to memory: {:?}", e))?;
-                    // Return 0 in RAX for success - use overlay-aware register write
-                    executor.set_register_overlay_aware(
+                    // Return 0 in RAX for success
+                    cpu_state_guard.set_register_value_by_offset(
                         rax_offset,
                         ConcolicVar::new_concrete_and_symbolic_int(
                             0,
@@ -1650,15 +1646,13 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         ),
                         64,
                     )?;
-                    return Ok(());
                 }
                 arch::ARCH_SET_GS => {
                     log!(executor.state.logger, "Setting GS base to {:#x}", addr);
-                    drop(cpu_state_guard);
-                    // Set GS base from RSI - use overlay-aware register write
-                    executor.set_register_overlay_aware(0x118, addr_concolic, 64)?;
-                    // Return 0 in RAX for success - use overlay-aware register write
-                    executor.set_register_overlay_aware(
+                    // Set GS base from RSI
+                    cpu_state_guard.set_register_value_by_offset(0x118, addr_concolic, 64)?;
+                    // Return 0 in RAX for success
+                    cpu_state_guard.set_register_value_by_offset(
                         rax_offset,
                         ConcolicVar::new_concrete_and_symbolic_int(
                             0,
@@ -1667,7 +1661,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         ),
                         64,
                     )?;
-                    return Ok(());
                 }
                 arch::ARCH_GET_GS => {
                     log!(
@@ -1681,15 +1674,14 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         .ok_or("Failed to read GS base register")?;
                     let gs_conc = gs_val.get_concrete_value().map_err(|e| e.to_string())?;
                     let gs_sym = gs_val.symbolic.to_bv(executor.context);
-                    drop(cpu_state_guard);
                     let mem_value = MemoryValue::new(gs_conc, gs_sym, 64);
                     executor
                         .state
                         .memory
                         .write_value(addr, &mem_value)
                         .map_err(|e| format!("Failed to write GS base to memory: {:?}", e))?;
-                    // Return 0 in RAX for success - use overlay-aware register write
-                    executor.set_register_overlay_aware(
+                    // Return 0 in RAX for success
+                    cpu_state_guard.set_register_value_by_offset(
                         rax_offset,
                         ConcolicVar::new_concrete_and_symbolic_int(
                             0,
@@ -1698,7 +1690,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         ),
                         64,
                     )?;
-                    return Ok(());
                 }
                 _ => {
                     log!(
@@ -1709,7 +1700,27 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     return Err(format!("Unsupported arch-prctl code: {:#x}", code));
                 }
             }
-            // Note: All match arms return, so no code needed here
+
+            drop(cpu_state_guard);
+
+            // Reflect changes or checks
+            let current_addr_hex = executor
+                .current_address
+                .map_or_else(|| "unknown".to_string(), |addr| format!("{:x}", addr));
+            let result_var_name = format!(
+                "{}-{:02}-syscall-arch_prctl",
+                current_addr_hex, executor.instruction_counter
+            );
+            executor.state.create_or_update_concolic_variable_int(
+                &result_var_name,
+                code.try_into().unwrap(),
+                SymbolicVar::Int(BV::from_u64(executor.context, code.try_into().unwrap(), 64)),
+            );
+
+            log!(
+                executor.state.logger.clone(),
+                "sys_arch_prctl operation completed successfully"
+            );
         }
         186 => {
             // sys_gettid
@@ -1718,10 +1729,8 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             // Get the actual TID using nix crate
             let tid = unsafe { gettid() } as u64;
 
-            drop(cpu_state_guard);
-
-            // Set the TID in RAX - use overlay-aware register write
-            executor.set_register_overlay_aware(
+            // Set the TID in RAX
+            cpu_state_guard.set_register_value_by_offset(
                 rax_offset,
                 ConcolicVar::new_concrete_and_symbolic_int(
                     tid,
@@ -1730,6 +1739,8 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 ),
                 64,
             )?;
+
+            drop(cpu_state_guard);
 
             // Create the concolic variables for the results
             let current_addr_hex = executor
@@ -1941,12 +1952,13 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 pid,
                 cpusetsize
             );
-
+	    let mut new_volos = executor.new_volos();
             // 6. Write the simulated mask to the memory location pointed to by mask_ptr
             let mask_memory_value = MemoryValue {
                 concrete: simulated_mask,
                 symbolic: BV::from_u64(executor.context, simulated_mask, 64),
                 size: 64,
+		volos: new_volos
             };
             executor
                 .state
@@ -1955,10 +1967,12 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 .map_err(|e| format!("Failed to write CPU affinity mask to memory: {}", e))?;
 
             // 7. Set RAX to 0 to indicate success
+	    let new_volos = executor.new_volos();
             let rax_value = MemoryValue {
                 concrete: 0,
                 symbolic: BV::from_u64(executor.context, 0, 64),
                 size: 64,
+		volos: new_volos
             };
             let rax_concolic_var = ConcolicVar::new_from_memory_value(&rax_value);
             cpu_state_guard
@@ -2122,7 +2136,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             executor
                 .state
                 .memory
-                .write_bytes(tp_ptr, &timespec_bytes)
+                .write_bytes(tp_ptr, &timespec_bytes, new_volos.clone())
                 .map_err(|e| format!("Failed to write timespec to memory: {}", e))?;
 
             // Set return value to 0 (success)
@@ -2183,10 +2197,11 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let mode = mode_var.concrete.to_u64() as u32;
 
                 // 4. Read the pathname string from memory
+					 let mut init_volos = executor.new_volos();
                 let pathname = executor
                     .state
                     .memory
-                    .read_string(pathname_ptr)
+                    .read_string(pathname_ptr, init_volos)
                     .map_err(|e| format!("Failed to read pathname string: {}", e))?;
 
                 // 5. Simulate opening the file via the virtual file system
@@ -2205,10 +2220,12 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 );
 
                 // 6. Set the return value (FD) in the RAX register
+		let new_volos = executor.new_volos();
                 let rax_memory_value = MemoryValue {
                     concrete: fd as u64,
                     symbolic: BV::from_u64(executor.context, fd as u64, 64),
                     size: 64,
+ 		    volos: new_volos
                 };
                 let rax_concolic_var = ConcolicVar::new_from_memory_value(&rax_memory_value);
                 cpu_state_guard

@@ -129,12 +129,12 @@ fn add_ascii_constraints_for_args<'ctx>(
         if let Ok(slice_ptr_bv) = executor
             .state
             .memory
-            .read_u64(os_args_addr, &mut executor.state.logger.clone())
+            .read_u64(os_args_addr, &mut executor.state.logger.clone(), executor.new_volos())
         {
             if let Ok(slice_len_bv) = executor
                 .state
                 .memory
-                .read_u64(os_args_addr + 8, &mut executor.state.logger.clone())
+                .read_u64(os_args_addr + 8, &mut executor.state.logger.clone(), executor.new_volos())
             {
                 let slice_ptr_val = slice_ptr_bv.concrete.to_u64();
                 let slice_len_val = slice_len_bv.concrete.to_u64();
@@ -147,12 +147,12 @@ fn add_ascii_constraints_for_args<'ctx>(
                     if let Ok(str_data_ptr_cv) = executor
                         .state
                         .memory
-                        .read_u64(string_struct_addr, &mut executor.state.logger.clone())
+                        .read_u64(string_struct_addr, &mut executor.state.logger.clone(), executor.new_volos())
                     {
                         if let Ok(str_data_len_cv) = executor
                             .state
                             .memory
-                            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone())
+                            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone(), executor.new_volos())
                         {
                             let str_data_ptr_val = str_data_ptr_cv.concrete.to_u64();
                             let str_data_len_val = str_data_len_cv.concrete.to_u64();
@@ -171,7 +171,7 @@ fn add_ascii_constraints_for_args<'ctx>(
                                 let mut first_byte_bv_opt: Option<z3::ast::BV> = None;
                                 for j in 0..max_len {
                                     if let Ok(byte_read) =
-                                        executor.state.memory.read_byte(str_data_ptr_val + j)
+                                        executor.state.memory.read_byte(str_data_ptr_val + j, executor.new_volos())
                                     {
                                         let byte_bv = byte_read.symbolic.to_bv(executor.context);
                                         if j == 0 {

@@ -1,0 +1,828 @@
+[
+    {
+        "switch_id": "switchdataD_004edb20",
+        "table_address": "004edb20",
+        "cases": [
+            {
+                "label": "caseD_1",
+                "destination": "004357f9",
+                "input_address": "004edb20"
+            },
+            {
+                "label": "caseD_2",
+                "destination": "0043582a",
+                "input_address": "004edb28"
+            },
+            {
+                "label": "caseD_3",
+                "destination": "00435876",
+                "input_address": "004edb30"
+            },
+            {
+                "label": "caseD_4",
+                "destination": "004358b6",
+                "input_address": "004edb38"
+            },
+            {
+                "label": "caseD_5",
+                "destination": "004358f6",
+                "input_address": "004edb40"
+            },
+            {
+                "label": "caseD_6",
+                "destination": "004358ff",
+                "input_address": "004edb48"
+            },
+            {
+                "label": "caseD_7",
+                "destination": "0043592d",
+                "input_address": "004edb50"
+            },
+            {
+                "label": "caseD_8",
+                "destination": "00435968",
+                "input_address": "004edb58"
+            },
+            {
+                "label": "caseD_9",
+                "destination": "00435993",
+                "input_address": "004edb60"
+            },
+            {
+                "label": "caseD_11",
+                "destination": "00401484",
+                "input_address": "004edb80"
+            },
+            {
+                "label": "caseD_12",
+                "destination": "00401493",
+                "input_address": "004edb88"
+            },
+            {
+                "label": "caseD_13",
+                "destination": "004014a2",
+                "input_address": "004edb90"
+            },
+            {
+                "label": "caseD_14",
+                "destination": "004014b1",
+                "input_address": "004edb98"
+            },
+            {
+                "label": "caseD_15",
+                "destination": "004014c1",
+                "input_address": "004edba0"
+            },
+            {
+                "label": "caseD_16",
+                "destination": "004014d0",
+                "input_address": "004edba8"
+            },
+            {
+                "label": "caseD_17",
+                "destination": "004014df",
+                "input_address": "004edbb0"
+            },
+            {
+                "label": "caseD_18",
+                "destination": "004014fd",
+                "input_address": "004edbb8"
+            },
+            {
+                "label": "caseD_19",
+                "destination": "004014ee",
+                "input_address": "004edbc0"
+            },
+            {
+                "label": "caseD_11",
+                "destination": "00471969",
+                "input_address": "004edbe0"
+            },
+            {
+                "label": "caseD_12",
+                "destination": "004719bc",
+                "input_address": "004edbe8"
+            },
+            {
+                "label": "caseD_13",
+                "destination": "004719f8",
+                "input_address": "004edbf0"
+            },
+            {
+                "label": "caseD_14",
+                "destination": "00471a73",
+                "input_address": "004edbf8"
+            },
+            {
+                "label": "caseD_15",
+                "destination": "00471b01",
+                "input_address": "004edc00"
+            },
+            {
+                "label": "caseD_16",
+                "destination": "00471b5c",
+                "input_address": "004edc08"
+            },
+            {
+                "label": "caseD_17",
+                "destination": "00471b8e",
+                "input_address": "004edc10"
+            },
+            {
+                "label": "caseD_18",
+                "destination": "00471c4e",
+                "input_address": "004edc18"
+            },
+            {
+                "label": "caseD_19",
+                "destination": "00471bbc",
+                "input_address": "004edc20"
+            },
+            {
+                "label": "caseD_18",
+                "destination": "00471c4e",
+                "input_address": "004edc28"
+            }
+        ]
+    },
+    {
+        "switch_id": "switchdataD_004edb80",
+        "table_address": "004edb80",
+        "cases": [
+            {
+                "label": "caseD_11",
+                "destination": "00401484",
+                "input_address": "004edb80"
+            },
+            {
+                "label": "caseD_12",
+                "destination": "00401493",
+                "input_address": "004edb88"
+            },
+            {
+                "label": "caseD_13",
+                "destination": "004014a2",
+                "input_address": "004edb90"
+            },
+            {
+                "label": "caseD_14",
+                "destination": "004014b1",
+                "input_address": "004edb98"
+            },
+            {
+                "label": "caseD_15",
+                "destination": "004014c1",
+                "input_address": "004edba0"
+            },
+            {
+                "label": "caseD_16",
+                "destination": "004014d0",
+                "input_address": "004edba8"
+            },
+            {
+                "label": "caseD_17",
+                "destination": "004014df",
+                "input_address": "004edbb0"
+            },
+            {
+                "label": "caseD_18",
+                "destination": "004014fd",
+                "input_address": "004edbb8"
+            },
+            {
+                "label": "caseD_19",
+                "destination": "004014ee",
+                "input_address": "004edbc0"
+            },
+            {
+                "label": "caseD_11",
+                "destination": "00471969",
+                "input_address": "004edbe0"
+            },
+            {
+                "label": "caseD_12",
+                "destination": "004719bc",
+                "input_address": "004edbe8"
+            },
+            {
+                "label": "caseD_13",
+                "destination": "004719f8",
+                "input_address": "004edbf0"
+            },
+            {
+                "label": "caseD_14",
+                "destination": "00471a73",
+                "input_address": "004edbf8"
+            },
+            {
+                "label": "caseD_15",
+                "destination": "00471b01",
+                "input_address": "004edc00"
+            },
+            {
+                "label": "caseD_16",
+                "destination": "00471b5c",
+                "input_address": "004edc08"
+            },
+            {
+                "label": "caseD_17",
+                "destination": "00471b8e",
+                "input_address": "004edc10"
+            },
+            {
+                "label": "caseD_18",
+                "destination": "00471c4e",
+                "input_address": "004edc18"
+            },
+            {
+                "label": "caseD_19",
+                "destination": "00471bbc",
+                "input_address": "004edc20"
+            },
+            {
+                "label": "caseD_18",
+                "destination": "00471c4e",
+                "input_address": "004edc28"
+            }
+        ]
+    },
+    {
+        "switch_id": "switchdataD_004edbe0",
+        "table_address": "004edbe0",
+        "cases": [
+            {
+                "label": "caseD_11",
+                "destination": "00471969",
+                "input_address": "004edbe0"
+            },
+            {
+                "label": "caseD_12",
+                "destination": "004719bc",
+                "input_address": "004edbe8"
+            },
+            {
+                "label": "caseD_13",
+                "destination": "004719f8",
+                "input_address": "004edbf0"
+            },
+            {
+                "label": "caseD_14",
+                "destination": "00471a73",
+                "input_address": "004edbf8"
+            },
+            {
+                "label": "caseD_15",
+                "destination": "00471b01",
+                "input_address": "004edc00"
+            },
+            {
+                "label": "caseD_16",
+                "destination": "00471b5c",
+                "input_address": "004edc08"
+            },
+            {
+                "label": "caseD_17",
+                "destination": "00471b8e",
+                "input_address": "004edc10"
+            },
+            {
+                "label": "caseD_18",
+                "destination": "00471c4e",
+                "input_address": "004edc18"
+            },
+            {
+                "label": "caseD_19",
+                "destination": "00471bbc",
+                "input_address": "004edc20"
+            },
+            {
+                "label": "caseD_18",
+                "destination": "00471c4e",
+                "input_address": "004edc28"
+            }
+        ]
+    },
+    {
+        "switch_id": "switchdataD_004edd00",
+        "table_address": "004edd00",
+        "cases": [
+            {
+                "label": "caseD_d",
+                "destination": "00475223",
+                "input_address": "004edd00"
+            },
+            {
+                "label": "caseD_e",
+                "destination": "00475234",
+                "input_address": "004edd08"
+            },
+            {
+                "label": "caseD_f",
+                "destination": "00475245",
+                "input_address": "004edd10"
+            },
+            {
+                "label": "caseD_10",
+                "destination": "00475256",
+                "input_address": "004edd18"
+            },
+            {
+                "label": "caseD_11",
+                "destination": "0047526b",
+                "input_address": "004edd20"
+            },
+            {
+                "label": "caseD_12",
+                "destination": "004753e2",
+                "input_address": "004edd28"
+            },
+            {
+                "label": "caseD_12",
+                "destination": "004753e2",
+                "input_address": "004edd30"
+            },
+            {
+                "label": "caseD_14",
+                "destination": "00475277",
+                "input_address": "004edd38"
+            },
+            {
+                "label": "caseD_12",
+                "destination": "004753e2",
+                "input_address": "004edd40"
+            },
+            {
+                "label": "caseD_12",
+                "destination": "004753e2",
+                "input_address": "004edd48"
+            },
+            {
+                "label": "caseD_12",
+                "destination": "004753e2",
+                "input_address": "004edd50"
+            },
+            {
+                "label": "caseD_18",
+                "destination": "004752a1",
+                "input_address": "004edd58"
+            },
+            {
+                "label": "caseD_19",
+                "destination": "004752b2",
+                "input_address": "004edd60"
+            }
+        ]
+    },
+    {
+        "switch_id": "switchdataD_004ee5e0",
+        "table_address": "004ee5e0",
+        "cases": [
+            {
+                "label": "caseD_1",
+                "destination": "00413614",
+                "input_address": "004ee5e0"
+            },
+            {
+                "label": "caseD_2",
+                "destination": "0041366f",
+                "input_address": "004ee5e8"
+            },
+            {
+                "label": "caseD_3",
+                "destination": "004136cf",
+                "input_address": "004ee5f0"
+            },
+            {
+                "label": "caseD_4",
+                "destination": "0041372f",
+                "input_address": "004ee5f8"
+            },
+            {
+                "label": "caseD_5",
+                "destination": "0041378f",
+                "input_address": "004ee600"
+            },
+            {
+                "label": "caseD_6",
+                "destination": "004137ef",
+                "input_address": "004ee608"
+            },
+            {
+                "label": "caseD_7",
+                "destination": "0041384f",
+                "input_address": "004ee610"
+            },
+            {
+                "label": "caseD_8",
+                "destination": "004138af",
+                "input_address": "004ee618"
+            },
+            {
+                "label": "caseD_9",
+                "destination": "0041390f",
+                "input_address": "004ee620"
+            },
+            {
+                "label": "caseD_a",
+                "destination": "0041396f",
+                "input_address": "004ee628"
+            },
+            {
+                "label": "caseD_b",
+                "destination": "004139c5",
+                "input_address": "004ee630"
+            },
+            {
+                "label": "caseD_c",
+                "destination": "00413a25",
+                "input_address": "004ee638"
+            },
+            {
+                "label": "caseD_d",
+                "destination": "00413a85",
+                "input_address": "004ee640"
+            },
+            {
+                "label": "caseD_e",
+                "destination": "00413ae5",
+                "input_address": "004ee648"
+            },
+            {
+                "label": "caseD_f",
+                "destination": "00413b45",
+                "input_address": "004ee650"
+            },
+            {
+                "label": "caseD_10",
+                "destination": "00413b95",
+                "input_address": "004ee658"
+            },
+            {
+                "label": "caseD_11",
+                "destination": "00413c47",
+                "input_address": "004ee660"
+            },
+            {
+                "label": "caseD_11",
+                "destination": "00413c47",
+                "input_address": "004ee668"
+            },
+            {
+                "label": "caseD_11",
+                "destination": "00413c47",
+                "input_address": "004ee670"
+            },
+            {
+                "label": "caseD_11",
+                "destination": "00413c47",
+                "input_address": "004ee678"
+            },
+            {
+                "label": "caseD_11",
+                "destination": "00413c47",
+                "input_address": "004ee680"
+            },
+            {
+                "label": "caseD_11",
+                "destination": "00413c47",
+                "input_address": "004ee688"
+            },
+            {
+                "label": "caseD_11",
+                "destination": "00413c47",
+                "input_address": "004ee690"
+            },
+            {
+                "label": "caseD_18",
+                "destination": "00413be5",
+                "input_address": "004ee698"
+            }
+        ]
+    },
+    {
+        "switch_id": "switchdataD_004eed80",
+        "table_address": "004eed80",
+        "cases": [
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eed80"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eed88"
+            },
+            {
+                "label": "caseD_2",
+                "destination": "004131be",
+                "input_address": "004eed90"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eed98"
+            },
+            {
+                "label": "caseD_4",
+                "destination": "004131ef",
+                "input_address": "004eeda0"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eeda8"
+            },
+            {
+                "label": "caseD_6",
+                "destination": "00413225",
+                "input_address": "004eedb0"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eedb8"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eedc0"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eedc8"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eedd0"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eedd8"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eede0"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eede8"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eedf0"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eedf8"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee00"
+            },
+            {
+                "label": "caseD_11",
+                "destination": "00413259",
+                "input_address": "004eee08"
+            },
+            {
+                "label": "caseD_12",
+                "destination": "0041328f",
+                "input_address": "004eee10"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee18"
+            },
+            {
+                "label": "caseD_14",
+                "destination": "004132c5",
+                "input_address": "004eee20"
+            },
+            {
+                "label": "caseD_15",
+                "destination": "004132fa",
+                "input_address": "004eee28"
+            },
+            {
+                "label": "caseD_16",
+                "destination": "0041331b",
+                "input_address": "004eee30"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee38"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee40"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee48"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee50"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee58"
+            },
+            {
+                "label": "caseD_1c",
+                "destination": "0041334f",
+                "input_address": "004eee60"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee68"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee70"
+            },
+            {
+                "label": "caseD_1f",
+                "destination": "0041338a",
+                "input_address": "004eee78"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee80"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee88"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee90"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eee98"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eeea0"
+            },
+            {
+                "label": "caseD_25",
+                "destination": "004133bb",
+                "input_address": "004eeea8"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eeeb0"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eeeb8"
+            },
+            {
+                "label": "caseD_28",
+                "destination": "0041340a",
+                "input_address": "004eeec0"
+            },
+            {
+                "label": "caseD_29",
+                "destination": "0041344f",
+                "input_address": "004eeec8"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eeed0"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eeed8"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eeee0"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eeee8"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eeef0"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eeef8"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eef00"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eef08"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eef10"
+            },
+            {
+                "label": "caseD_33",
+                "destination": "00413485",
+                "input_address": "004eef18"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eef20"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eef28"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eef30"
+            },
+            {
+                "label": "caseD_37",
+                "destination": "004134b9",
+                "input_address": "004eef38"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eef40"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eef48"
+            },
+            {
+                "label": "caseD_3a",
+                "destination": "004134ea",
+                "input_address": "004eef50"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eef58"
+            },
+            {
+                "label": "caseD_3c",
+                "destination": "00413516",
+                "input_address": "004eef60"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eef68"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eef70"
+            },
+            {
+                "label": "caseD_0",
+                "destination": "00413547",
+                "input_address": "004eef78"
+            }
+        ]
+    }
+]

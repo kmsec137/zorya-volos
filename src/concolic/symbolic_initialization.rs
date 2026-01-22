@@ -45,28 +45,20 @@ pub fn initialize_string_argument<'a>(
     conc: &mut Vec<ConcreteVar>,
     exec: &mut ConcolicExecutor<'a>,
 ) {
-    // Go swap: if first reg is RDX/R8/R10 → (len,ptr)
-    let (ptr_reg, len_reg) = match regs {
-        [r1, r2] if *r1 == "RDX" || *r1 == "R8" || *r1 == "R10" => (*r2, *r1),
-        [r1, r2] => (*r1, *r2),
-        _ => {
-            return;
-        }
-    };
-
-    // Try to read the concrete length before we take any mutable borrows on `exec`
-    let reg_spec = format!("{},{}", ptr_reg, len_reg);
-    let concrete_len_opt = get_concrete_string_len_value_from_regs(&*exec, &reg_spec);
-
     let ctx = exec.context;
     let cpu = &mut exec.state.cpu_state.lock().unwrap();
     let log = &mut exec.state.logger;
     let solver = &mut exec.solver;
 
-    println!(
-        "Retrieved string argument '{}' – creating a symbolic Go string with ptr in {} and len in {}...",
-        arg_name, ptr_reg, len_reg
-    );
+    // Go swap: if first reg is RDX/R8/R10 → (len,ptr)
+    let (ptr_reg, len_reg) = match regs {
+        [r1, r2] if *r1 == "RDX" || *r1 == "R8" || *r1 == "R10" => (*r2, *r1),
+        [r1, r2] => (*r1, *r2),
+        _ => {
+            log!(log, "BAD string reg list {:?}", regs);
+            return;
+        }
+    };
 
     let bv_ptr = BV::fresh_const(ctx, &format!("{}__ptr", arg_name), 64);
     let bv_len = BV::fresh_const(ctx, &format!("{}__len", arg_name), 64);
@@ -88,21 +80,6 @@ pub fn initialize_string_argument<'a>(
     );
     solver.assert(&bv_ptr._eq(&BV::from_u64(ctx, 0, 64)).not());
     solver.assert(&bv_len.bvuge(&BV::from_u64(ctx, 1, 64)));
-
-    // If we can read a concrete length for this string from the current dump/registers,
-    // constrain the symbolic length to match it. This avoids unrealistic models where
-    // len is an arbitrary 64-bit value (e.g., 2^64-1)
-    if let Some(concrete_len) = concrete_len_opt {
-        let len_bv_conc = BV::from_u64(ctx, concrete_len, 64);
-        solver.assert(&bv_len._eq(&len_bv_conc));
-        log!(
-            log,
-            "Constraining string '{}' symbolic length to concrete len={} from registers ({})",
-            arg_name,
-            concrete_len,
-            reg_spec
-        );
-    }
 
     // helper: write symbolic BV into a register
     let mut write = |reg: &str, bv: &BV<'a>| {
@@ -248,7 +225,7 @@ fn get_concrete_string_ptr_value_from_regs<'a>(
 
     log!(
         executor.state.logger.clone(),
-        "[DEBUG]: Extracting string pointer from register '{}' (from spec '{}')",
+        "DEBUG: Extracting string pointer from register '{}' (from spec '{}')",
         ptr_reg,
         reg_spec
     );
@@ -288,7 +265,7 @@ fn get_concrete_string_len_value_from_regs<'a>(
 
     log!(
         executor.state.logger.clone(),
-        "[DEBUG]: Extracting string length from register '{}' (from spec '{}')",
+        "DEBUG: Extracting string length from register '{}' (from spec '{}')",
         len_reg,
         reg_spec
     );
@@ -324,6 +301,7 @@ fn initialize_string_byte_memory<'a>(
     );
 
     // Check if this memory address is valid
+	 let mut init_volos = executor.new_volos();
     if !executor.state.memory.is_valid_address(byte_addr) {
         log!(
             executor.state.logger,
@@ -335,7 +313,7 @@ fn initialize_string_byte_memory<'a>(
     }
 
     // Read current byte value from memory
-    match executor.state.memory.read_byte(byte_addr) {
+    match executor.state.memory.read_byte(byte_addr, init_volos) {
         Ok(current_byte) => {
             log!(
                 executor.state.logger,
@@ -410,11 +388,6 @@ pub fn initialize_single_register_argument<'a>(
     concrete_values: &mut Vec<ConcreteVar>,
     executor: &mut ConcolicExecutor<'a>,
 ) {
-    println!(
-        "Retrieved single-register argument '{}' of type '{}' in '{}' – creating a symbolic register variable...",
-        arg_name, arg_type, reg_spec
-    );
-
     if is_stack_location(reg_spec) {
         // Handle stack location
         initialize_stack_argument(arg_name, reg_spec, arg_type, concrete_values, executor);
@@ -564,12 +537,12 @@ pub fn initialize_stack_argument<'a>(
                 stack_offset,
                 stack_address
             );
-
+				let mut init_volos = executor.new_volos();
             // Read current value from stack
             match executor
                 .state
                 .memory
-                .read_u64(stack_address, &mut executor.state.logger)
+                .read_u64(stack_address, &mut executor.state.logger, init_volos)
             {
                 Ok(current_stack_value) => {
                     concrete_values.push(current_stack_value.concrete.clone());
@@ -856,11 +829,11 @@ fn write_symbolic_to_location<'a>(
             {
                 let rsp_value = rsp_reg.concrete.to_u64();
                 let stack_address = (rsp_value as i64 + stack_offset) as u64;
-
+					 let mut init_volos = executor.new_volos();
                 if let Ok(current_val) = executor
                     .state
                     .memory
-                    .read_u64(stack_address, &mut executor.state.logger)
+                    .read_u64(stack_address, &mut executor.state.logger, init_volos)
                 {
                     conc.push(current_val.concrete.clone());
 
@@ -1021,18 +994,6 @@ pub fn initialize_slice_memory_contents<'a>(
                     extract_slice_concrete_values(executor, reg_name);
 
                 if let (Some(ptr_addr), Some(slice_len)) = (ptr_concrete, len_concrete) {
-                    // If the slice header points outside the captured memory, don't spam per‑element warnings:
-                    if !executor.state.memory.is_valid_address(ptr_addr) {
-                        log!(
-                    executor.state.logger,
-                    "WARNING: Slice '{}' header has invalid ptr=0x{:x} (len={}) – skipping concrete element initialization and keeping only the symbolic header.",
-                    arg_name,
-                    ptr_addr,
-                    slice_len
-                );
-                        continue;
-                    }
-
                     // Determine element size and type
                     let (element_size, element_type) = parse_slice_element_info(arg_type);
 
@@ -1105,7 +1066,7 @@ fn extract_slice_concrete_values<'a>(
 ) -> (Option<u64>, Option<u64>, Option<u64>) {
     log!(
         executor.state.logger.clone(),
-        "[DEBUG]: extract_slice_concrete_values called with reg_spec='{}'",
+        "DEBUG: extract_slice_concrete_values called with reg_spec='{}'",
         reg_spec
     );
 
@@ -1114,7 +1075,7 @@ fn extract_slice_concrete_values<'a>(
         if let Some(ptr_val) = get_concrete_value_from_location(executor, reg_spec) {
             log!(
                 executor.state.logger.clone(),
-                "[DEBUG]: Single register '{}' = 0x{:x}",
+                "DEBUG: Single register '{}' = 0x{:x}",
                 reg_spec,
                 ptr_val
             );
@@ -1126,7 +1087,7 @@ fn extract_slice_concrete_values<'a>(
     let regs: Vec<&str> = reg_spec.split(',').collect();
     log!(
         executor.state.logger.clone(),
-        "[DEBUG]: Split registers: {:?}",
+        "DEBUG: Split registers: {:?}",
         regs
     );
 
@@ -1134,7 +1095,7 @@ fn extract_slice_concrete_values<'a>(
         let val = get_concrete_value_from_location(executor, regs[0]);
         log!(
             executor.state.logger.clone(),
-            "[DEBUG]: Register '{}' (ptr) = {:?}",
+            "DEBUG: Register '{}' (ptr) = {:?}",
             regs[0],
             val
         );
@@ -1147,7 +1108,7 @@ fn extract_slice_concrete_values<'a>(
         let val = get_concrete_value_from_location(executor, regs[1]);
         log!(
             executor.state.logger.clone(),
-            "[DEBUG]: Register '{}' (len) = {:?}",
+            "DEBUG: Register '{}' (len) = {:?}",
             regs[1],
             val
         );
@@ -1160,7 +1121,7 @@ fn extract_slice_concrete_values<'a>(
         let val = get_concrete_value_from_location(executor, regs[2]);
         log!(
             executor.state.logger.clone(),
-            "[DEBUG]: Register '{}' (cap) = {:?}",
+            "DEBUG: Register '{}' (cap) = {:?}",
             regs[2],
             val
         );
@@ -1171,7 +1132,7 @@ fn extract_slice_concrete_values<'a>(
 
     log!(
         executor.state.logger.clone(),
-        "[DEBUG]: Final values - ptr={:?}, len={:?}, cap={:?}",
+        "DEBUG: Final values - ptr={:?}, len={:?}, cap={:?}",
         ptr_concrete,
         len_concrete,
         cap_concrete
@@ -1186,7 +1147,7 @@ fn get_concrete_value_from_location<'a>(
 ) -> Option<u64> {
     log!(
         executor.state.logger.clone(),
-        "[DEBUG]: get_concrete_value_from_location called with '{}'",
+        "DEBUG: get_concrete_value_from_location called with '{}'",
         location_spec
     );
 
@@ -1206,12 +1167,12 @@ fn get_concrete_value_from_location<'a>(
                 if let Ok(stack_val) = executor
                     .state
                     .memory
-                    .read_u64(stack_address, &mut executor.state.logger.clone())
+                    .read_u64(stack_address, &mut executor.state.logger.clone(), executor.new_volos())
                 {
                     let concrete_val = stack_val.concrete.to_u64();
                     log!(
                         executor.state.logger.clone(),
-                        "[DEBUG]: Stack location '{}' concrete value = 0x{:x}",
+                        "DEBUG: Stack location '{}' concrete value = 0x{:x}",
                         location_spec,
                         concrete_val
                     );
@@ -1226,7 +1187,7 @@ fn get_concrete_value_from_location<'a>(
             let bit_width = cpu.register_map.get(&offset).map(|(_, w)| *w).unwrap_or(64);
             log!(
                 executor.state.logger.clone(),
-                "[DEBUG]: Register '{}' resolved to offset 0x{:x}, bit_width={}",
+                "DEBUG: Register '{}' resolved to offset 0x{:x}, bit_width={}",
                 location_spec,
                 offset,
                 bit_width
@@ -1236,7 +1197,7 @@ fn get_concrete_value_from_location<'a>(
                 let concrete_val = reg_val.concrete.to_u64();
                 log!(
                     executor.state.logger.clone(),
-                    "[DEBUG]: Register '{}' concrete value = 0x{:x}",
+                    "DEBUG: Register '{}' concrete value = 0x{:x}",
                     location_spec,
                     concrete_val
                 );
@@ -1244,21 +1205,21 @@ fn get_concrete_value_from_location<'a>(
             } else {
                 log!(
                     executor.state.logger.clone(),
-                    "[DEBUG]: Could not get register value for '{}'",
+                    "DEBUG: Could not get register value for '{}'",
                     location_spec
                 );
             }
         } else {
             log!(
                 executor.state.logger.clone(),
-                "[DEBUG]: Could not resolve register name '{}'",
+                "DEBUG: Could not resolve register name '{}'",
                 location_spec
             );
         }
     }
     log!(
         executor.state.logger.clone(),
-        "[DEBUG]: get_concrete_value_from_location returning None for '{}'",
+        "DEBUG: get_concrete_value_from_location returning None for '{}'",
         location_spec
     );
     None
@@ -1319,6 +1280,7 @@ fn initialize_slice_element_memory<'a>(
         element_size,
         element_type
     );
+	 let mut init_volos = executor.new_volos();
 
     // Check if this memory address is valid
     if !executor.state.memory.is_valid_address(element_addr) {
@@ -1363,7 +1325,7 @@ fn initialize_slice_element_memory<'a>(
         match executor.state.memory.read_value(
             element_addr,
             bit_size,
-            &mut executor.state.logger.clone(),
+            &mut executor.state.logger.clone(), init_volos
         ) {
             Ok(current_value) => {
                 log!(
@@ -1443,7 +1405,7 @@ fn initialize_slice_element_memory<'a>(
         match executor
             .state
             .memory
-            .read_bytes(element_addr, element_size as usize)
+            .read_bytes(element_addr, element_size as usize, executor.new_volos())
         {
             Ok(concrete_bytes) => {
                 log!(
@@ -1482,10 +1444,12 @@ fn initialize_slice_element_memory<'a>(
                     .collect();
 
                 // Write back to memory using the low-level write_memory function
+		let mut new_volos = executor.new_volos();
                 match executor.state.memory.write_memory(
                     element_addr,
                     &concrete_bytes,
                     &symbolic_bytes,
+		    				new_volos
                 ) {
                     Ok(()) => {
                         log!(

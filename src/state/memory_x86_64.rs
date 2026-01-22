@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, File};
@@ -25,6 +26,107 @@ const PROT_READ: i32 = 0x1;
 const PROT_WRITE: i32 = 0x2;
 const PROT_EXEC: i32 = 0x4;
 
+//----------------------------- KEITH ADDITIONS START ------------------------- 
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum AccessType {
+    /// The thread performed a read operation.
+    Read,
+    /// The thread perfored a write (modification) operation.
+    Write,
+    ///TODO: potentially shouldn't do this, gonna have a look later and remove this
+    New, 
+}
+impl Default for AccessType {
+    fn default() -> Self {
+            AccessType::New
+    }
+}
+/// The Volos struct, representing a single, critical record of a memory access
+/// within a concurrent system.
+///
+/// Named after Veles, the Slavic god associated with hidden knowledge, the
+/// underworld, and the history of the ancestors, this struct captures the
+/// essential "history" of a thread's interaction with shared memory.
+#[derive(Debug,  Clone, PartialEq)]
+pub struct Volos {
+    /// The unique identifier of the thread performing the access.
+    pub thread_id: u64,
+
+    /// The type of operation performed (Read or Write).
+    pub access_type: AccessType,
+
+    /// A vector of identifiers for the locks currently held by the thread
+    /// at the moment of access. This is crucial for analyzing potential
+    /// deadlock or data race conditions.
+    pub locks_held: Vec<u64>,
+
+    //TODO: pub path_cnd: Vec<??> we need to add a vector of path conditions that summerise how we reach these reads/writes - implement later
+}
+#[derive(Debug)]
+pub struct VolosRegion {
+	pub start_address: u64, //optional we can operate with these being 0 as well
+	pub end_address: u64,
+	pub memory: HashMap<u64,Volos>
+}
+
+impl VolosRegion {
+	pub fn new(start_address: u64, end_address: u64, init_volos: Volos) -> Self{
+		let mut memory = HashMap::<u64,Volos>::new();
+		let mut volos_region = VolosRegion {
+			start_address,
+			end_address,
+			memory
+		};
+		volos_region.add_volos(start_address, end_address - start_address, init_volos);
+		return volos_region	
+	}
+
+	pub fn add_volos(&mut self, address:u64, size:u64, volos:Volos) {
+			
+		for index in 0..size{
+			let new_volos = volos.clone();
+			self.memory.insert(address +index, new_volos);
+		}
+	}
+}
+
+impl Volos {
+    /// Creates a new Volos record.
+    ///
+    /// # Arguments
+    /// * `thread_id` - The ID of the thread.
+    /// * `access_type` - The type of access (Read or Write).
+    /// * `locks_held` - A list of IDs representing the locks held.
+    pub fn new(thread_id: u64, access_type: AccessType, locks_held: Vec<u64>) -> Self {
+        Volos {
+            thread_id,
+            access_type,
+            locks_held,
+        }
+    }
+
+}
+impl fmt::Display for Volos {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f,
+            "[TID: {}] | Access: {:?} | Locks: {:?}",
+            self.thread_id, self.access_type, self.locks_held.clone()
+        )
+    }
+}
+
+impl Default for Volos {
+    fn default() -> Self {
+        Volos {
+            thread_id: 0,
+            access_type: AccessType::default(),
+            locks_held: Vec::new(),
+        }
+    }
+}
+
+//----------------------------- KEITH ADDITIONS END ------------------------- 
 #[derive(Debug)]
 pub enum MemoryError {
     OutOfBounds(u64, usize),
@@ -37,7 +139,6 @@ pub enum MemoryError {
     InvalidString,
     InvalidFileDescriptor,
     AddressOverflow,
-    Other(String),
 }
 
 impl Error for MemoryError {}
@@ -59,7 +160,6 @@ impl fmt::Display for MemoryError {
             MemoryError::InvalidString => write!(f, "Invalid string"),
             MemoryError::InvalidFileDescriptor => write!(f, "Invalid file descriptor"),
             MemoryError::AddressOverflow => write!(f, "Address overflow"),
-            MemoryError::Other(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -87,17 +187,23 @@ pub struct MemoryValue<'ctx> {
     pub concrete: u64,
     pub symbolic: BV<'ctx>,
     pub size: u32, // in bits
+    pub volos: Volos //KEITH: holds a volos which is analogous to the access history and concurrent information needed to do happens-before analysis
+
 }
 
 impl<'ctx> MemoryValue<'ctx> {
     pub fn new(concrete: u64, symbolic: BV<'ctx>, size: u32) -> Self {
+        let volos = Volos::new(0, AccessType::New ,Vec::<u64>::new());
+
         MemoryValue {
             concrete,
             symbolic,
             size,
+            volos
         }
     }
 }
+
 
 #[derive(Debug)]
 pub struct MemoryRegion<'ctx> {
@@ -106,6 +212,7 @@ pub struct MemoryRegion<'ctx> {
     pub concrete_data: Vec<u8>, // Holds only the concrete data (compact, 1 byte per memory cell)
     pub symbolic_data: BTreeMap<usize, Arc<BV<'ctx>>>, // Holds symbolic data for only some addresses, sorted by offset
     pub prot: i32, // Protection flags (e.g., PROT_READ, PROT_WRITE)
+    pub volos_region: VolosRegion
 }
 
 impl<'ctx> MemoryRegion<'ctx> {
@@ -126,12 +233,15 @@ impl<'ctx> MemoryRegion<'ctx> {
 
     /// Initialize a new `MemoryRegion` with the given size and protection flags.
     pub fn new(start_address: u64, size: usize, prot: i32) -> Self {
+	let mut volos = Volos::new(0, AccessType::New, Vec::<u64>::new());
+	let mut volos_region = VolosRegion::new(start_address,size.try_into().unwrap(),volos);
         Self {
             start_address,
             end_address: start_address + size as u64,
             concrete_data: vec![0; size], // Initialize the concrete data with zeros
             symbolic_data: BTreeMap::new(), // Initially, no symbolic values
-            prot,
+            volos_region: volos_region,
+            prot
         }
     }
 
@@ -291,6 +401,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
         &self,
         address: u64,
         size: usize,
+		  volos: Volos
     ) -> Result<(Vec<u8>, Vec<Option<Arc<BV<'ctx>>>>), MemoryError> {
         let regions = self.regions.read().unwrap();
 
@@ -303,7 +414,11 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 }
 
                 let concrete = region.concrete_data[offset..offset + size].to_vec();
+					 let mut v_region = &region.volos_region;
 
+					 v_region.add_volos((offset).try_into().unwrap(), size.try_into().unwrap(), volos.clone());
+
+					 println!("[VOLOS] reading memory with volos --> @[0x{:X}] {:?}", address, volos);
                 let symbolic = (offset..offset + size)
                     .map(|i| region.symbolic_data.get(&i).cloned())
                     .collect();
@@ -315,40 +430,19 @@ impl<'ctx> MemoryX86_64<'ctx> {
         Err(MemoryError::ReadOutOfBounds)
     }
 
-    /// Finds the start address of the memory region containing the given address
-    /// Returns (start_address, end_address) of the containing region
-    /// This is useful for overlay operations that need to identify regions
-    pub fn find_region_bounds(&self, address: u64, size: usize) -> Option<(u64, u64)> {
-        let regions = self.regions.read().unwrap();
-        regions
-            .iter()
-            .find(|region| region.contains(address, size))
-            .map(|region| (region.start_address, region.end_address))
-    }
-
-    /// Gets a raw pointer to a memory region by start address (unsafe, used for overlay)
-    /// SAFETY: Caller must ensure the region pointer is not used after regions are modified
-    pub fn get_region_ptr(&self, start_address: u64) -> Option<*const MemoryRegion<'ctx>> {
-        let regions = self.regions.read().unwrap();
-        regions
-            .iter()
-            .find(|region| region.start_address == start_address)
-            .map(|region| region as *const MemoryRegion<'ctx>)
-    }
-
     /// Reads a sequence of bytes from memory (concrete data only).
-    pub fn read_bytes(&self, address: u64, size: usize) -> Result<Vec<u8>, MemoryError> {
-        let (concrete, _) = self.read_memory(address, size)?;
+    pub fn read_bytes(&self, address: u64, size: usize, volos: Volos) -> Result<Vec<u8>, MemoryError> {
+        let (concrete, _) = self.read_memory(address, size, volos)?;
         Ok(concrete)
     }
 
     /// Reads a null-terminated string from memory (concrete data only).
-    pub fn read_string(&self, address: u64) -> Result<String, MemoryError> {
+    pub fn read_string(&self, address: u64, volos: Volos) -> Result<String, MemoryError> {
         let mut result = Vec::new();
         let mut addr = address;
 
         loop {
-            let (concrete, _) = self.read_memory(addr, 1)?;
+            let (concrete, _) = self.read_memory(addr, 1, volos.clone())?;
             let byte = concrete[0];
             if byte == 0 {
                 break;
@@ -361,8 +455,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
     }
 
     /// Reads exactly one byte from memory, returning a ConcolicVar (concrete and symbolic).
-    pub fn read_byte(&self, address: u64) -> Result<ConcolicVar<'ctx>, MemoryError> {
-        let (concrete, symbolic) = self.read_memory(address, 1)?;
+    pub fn read_byte(&self, address: u64, volos: Volos) -> Result<ConcolicVar<'ctx>, MemoryError> {
+        let (concrete, symbolic) = self.read_memory(address, 1, volos)?;
         let cbyte = concrete[0] as u64;
 
         let sym_bv = symbolic[0]
@@ -382,6 +476,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
         address: u64,
         size: u32,
         logger: &mut Logger,
+		  volos: Volos
     ) -> Result<ConcolicVar<'ctx>, MemoryError> {
         if size > 128 {
             // Handle large values (256-bit, 512-bit, etc.) by reading in 64-bit chunks
@@ -398,7 +493,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
             for i in 0..num_chunks {
                 let chunk_addr = address + (i as u64 * 8);
-                let (concrete_bytes, symbolic_bytes) = self.read_memory(chunk_addr, 8)?;
+                let (concrete_bytes, symbolic_bytes) = self.read_memory(chunk_addr, 8,volos.clone())?;
 
                 let chunk_value = u64::from_le_bytes(concrete_bytes.as_slice().try_into().unwrap());
                 concrete_chunks.push(chunk_value);
@@ -424,8 +519,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
         } else if size == 128 {
             log!(logger, "Reading 128-bit value from address 0x{:x}", address);
 
-            let (concrete_low, symbolic_low) = self.read_memory(address, 8)?;
-            let (concrete_high, symbolic_high) = self.read_memory(address + 8, 8)?;
+            let (concrete_low, symbolic_low) = self.read_memory(address, 8, volos.clone())?;
+            let (concrete_high, symbolic_high) = self.read_memory(address + 8, 8, volos.clone())?;
 
             let low = u64::from_le_bytes(concrete_low.as_slice().try_into().unwrap());
             let high = u64::from_le_bytes(concrete_high.as_slice().try_into().unwrap());
@@ -459,7 +554,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
             })
         } else if size <= 64 {
             let byte_size = ((size + 7) / 8) as usize;
-            let (mut concrete, symbolic) = self.read_memory(address, byte_size)?;
+            let (mut concrete, symbolic) = self.read_memory(address, byte_size, volos)?;
 
             //log!(logger, "Reading {}-bit value ({} bytes) from address 0x{:x}", size, byte_size, address);
             //log!(logger, "Raw concrete bytes: {:02x?}", concrete);
@@ -626,11 +721,12 @@ impl<'ctx> MemoryX86_64<'ctx> {
         address: u64,
         concrete: &[u8],
         symbolic: &[Option<Arc<BV<'ctx>>>],
+			volos: Volos
     ) -> Result<(), MemoryError> {
         if concrete.len() != symbolic.len() {
             return Err(MemoryError::IncorrectSliceLength);
         }
-
+			println!("[VOLOS] writing memory with volos --> @[0x{:X}] {:?}", address, volos);
         let mut regions = self.regions.write().unwrap();
         // Check if the address falls within an existing memory region
         for region in regions.iter_mut() {
@@ -640,6 +736,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 // Write concrete data
                 for (i, &byte) in concrete.iter().enumerate() {
                     region.concrete_data[offset + i] = byte;
+						  region.volos_region.add_volos((offset+i).try_into().unwrap(),concrete.len().try_into().unwrap(),volos.clone())
                 }
 
                 // Write or remove symbolic data
@@ -650,21 +747,20 @@ impl<'ctx> MemoryX86_64<'ctx> {
                         region.remove_symbolic(offset + i); // Remove symbolic data if `None`
                     }
                 }
-
                 return Ok(());
             }
         }
+		 //VOLOS we need to run a check here to ensure that no region contains conflicting access
 
         // If we reach here, the address is out of bounds of all current regions
         Err(MemoryError::WriteOutOfBounds)
     }
 
-    /// Writes a sequence of bytes to memory.
-    pub fn write_bytes(&self, address: u64, bytes: &[u8]) -> Result<(), MemoryError> {
+    /// Writes a sequence of bytes to memory. **volos we need thread_id meta_data here
+    pub fn write_bytes(&self, address: u64, bytes: &[u8], volos: Volos) -> Result<(), MemoryError> {
         // Create a vector of `None` for symbolic values as we're only dealing with concrete data
         let symbolic: Vec<Option<Arc<BV<'ctx>>>> = vec![None; bytes.len()];
-
-        self.write_memory(address, bytes, &symbolic)
+        self.write_memory(address, bytes, &symbolic, volos)
     }
 
     /// Writes a MemoryValue (both concrete and symbolic) to memory.
@@ -706,7 +802,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
             .collect();
 
         // Write to memory
-        self.write_memory(address, &concrete_bytes, &symbolic)
+        self.write_memory(address, &concrete_bytes, &symbolic, value.volos.clone())
     }
 
     // Additional methods for reading and writing standard data types
@@ -714,8 +810,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
         &self,
         address: u64,
         logger: &mut Logger,
+		  volos: Volos
     ) -> Result<ConcolicVar<'ctx>, MemoryError> {
-        self.read_value(address, 64, logger)
+        self.read_value(address, 64, logger, volos)
     }
 
     pub fn write_u64(&self, address: u64, value: &MemoryValue<'ctx>) -> Result<(), MemoryError> {
@@ -726,8 +823,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
         &self,
         address: u64,
         logger: &mut Logger,
+		  volos: Volos
     ) -> Result<ConcolicVar<'ctx>, MemoryError> {
-        self.read_value(address, 32, logger)
+        self.read_value(address, 32, logger, volos)
     }
 
     pub fn write_u32(&self, address: u64, value: &MemoryValue<'ctx>) -> Result<(), MemoryError> {
@@ -757,7 +855,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
         }
 
         drop(regions); // Drop the lock after modifying the regions
-
+		  let mut new_volos = Volos::new(0, AccessType::New, Vec::<u64>::new());
         // Now write the values to memory
         for (i, &concrete_value) in values.iter().enumerate() {
             let address = start_address + (i as u64) * 4; // Calculate address for each variable
@@ -767,6 +865,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 concrete: concrete_value as u64,
                 symbolic: symbolic_value,
                 size: 32,
+					 volos: new_volos.clone()
             };
             self.write_value(address, &mem_value)?; // Writing values to memory
         }
@@ -782,12 +881,14 @@ impl<'ctx> MemoryX86_64<'ctx> {
         &self,
         address: u64,
         logger: &mut Logger,
+		  volos: Volos
     ) -> Result<Sigaction<'ctx>, MemoryError> {
+		 
         // Read the sigaction structure from memory
-        let handler = self.read_u64(address, logger)?.to_memory_value_u64();
-        let flags = self.read_u64(address + 8, logger)?.to_memory_value_u64();
-        let restorer = self.read_u64(address + 16, logger)?.to_memory_value_u64();
-        let mask = self.read_u64(address + 24, logger)?.to_memory_value_u64();
+        let handler = self.read_u64(address, logger, volos.clone())?.to_memory_value_u64();
+        let flags = self.read_u64(address + 8, logger, volos.clone())?.to_memory_value_u64();
+        let restorer = self.read_u64(address + 16, logger, volos.clone())?.to_memory_value_u64();
+        let mask = self.read_u64(address + 24, logger, volos.clone())?.to_memory_value_u64();
         Ok(Sigaction {
             handler,
             flags,
@@ -800,6 +901,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
         &self,
         address: u64,
         sigaction: &Sigaction<'ctx>,
+		  volos: Volos
     ) -> Result<(), MemoryError> {
         // Write the sigaction structure to memory
         self.write_u64(address, &sigaction.handler)?;
@@ -818,6 +920,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
         flags: i32,
         fd: i32,
         offset: usize,
+		  volos: Volos
     ) -> Result<u64, MemoryError> {
         const MAP_ANONYMOUS: i32 = 0x20;
         const MAP_FIXED: i32 = 0x10;
@@ -913,7 +1016,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 concrete_data[bytes_read..].fill(0);
             }
         }
-
+		  //let volos = Volos::new(thread_id, READ, Vec<u64>::new());
+        let volos_region = VolosRegion::new(start_address, end_address - start_address, volos);
         // Create and insert the new memory region
         let memory_region = MemoryRegion {
             start_address,
@@ -921,6 +1025,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
             concrete_data,
             symbolic_data,
             prot,
+            volos_region
         };
 
         regions.push(memory_region);
@@ -1047,27 +1152,31 @@ pub struct Sigaction<'ctx> {
 }
 
 impl<'ctx> Sigaction<'ctx> {
-    pub fn new_default(ctx: &'ctx Context) -> Self {
+    pub fn new_default(ctx: &'ctx Context, new_volos: Volos) -> Self {
         Sigaction {
             handler: MemoryValue {
                 concrete: 0, // Default to SIG_DFL
                 symbolic: BV::from_u64(ctx, 0, 64),
                 size: 64,
+					 volos: new_volos.clone()
             },
             flags: MemoryValue {
                 concrete: 0, // No special flags
                 symbolic: BV::from_u64(ctx, 0, 64),
                 size: 64,
+					 volos: new_volos.clone()
             },
             restorer: MemoryValue {
                 concrete: 0, // Typically unused
                 symbolic: BV::from_u64(ctx, 0, 64),
                 size: 64,
+				    volos: new_volos.clone()
             },
             mask: MemoryValue {
                 concrete: 0, // No signals blocked
                 symbolic: BV::from_u64(ctx, 0, 64),
                 size: 64,
+				    volos: new_volos.clone()
             },
         }
     }

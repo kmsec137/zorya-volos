@@ -2,19 +2,8 @@
 name = "zorya"
 version = "0.0.4"
 edition = "2021"
-default-run = "zorya"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-# Main binary: Zorya concolic executor
-[[bin]]
-name = "zorya"
-path = "src/main.rs"
-
-# Additional tool: Fuzzer for automated test campaigns
-[[bin]]
-name = "zorya-fuzzer"
-path = "src/fuzzer/main.rs"
 
 [dependencies]
 z3 = "0.12.1"

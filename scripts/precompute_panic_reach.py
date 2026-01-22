@@ -2,17 +2,12 @@
 import sys
 import os
 import time
+import pyhidra
 
 try:
-    import pyhidra
     from pyhidra import open_program
 except ImportError:
-    print("ERROR: Pyhidra is not available in this Python environment.")
-    print("")
-    print("Please check:")
-    print("  1) That Pyhidra is installed (e.g. via 'make ghidra-config' or")
-    print("     'python3 -m pip install --user pyhidra').")
-    print("  2) That the GHIDRA_INSTALL_DIR environment variable points to your Ghidra installation.")
+    print("ERROR: Pyhidra not installed. Run: pip install pyhidra")
     sys.exit(1)
 
 
@@ -189,7 +184,7 @@ def main():
         }
         indirect_call_cache = {}  # addr -> resolved_targets set (placeholder)
         
-        print(f"\n[GHIDRA] Starting reverse BFS from {initial_panic_count} panic blocks...")
+        print(f"Starting reverse BFS from {initial_panic_count} panic blocks...")
         start_time = time.time()
         while work:
             iteration_start_size = len(reachable)

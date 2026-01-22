@@ -11,6 +11,8 @@
   
 </p>
 
+ZORYA VOLOS IS A PRIVATE FORK OF ZORYA OWNED BY KEITH MAKAN SECURITY CONSULTANCY (PTY) LTD
+
 Zorya is a **concolic execution framework** designed to detect **logic-related bugs, language-specific vulnerabilities, and identify new patterns of security issues mainly in Go binaries**. The analysis begins by generating CPU register and memory dumps using ```gdb```. Zorya loads these dumps to initialize execution from a specified starting address, ensuring a realistic and accurate representation of the program state.
 
 The core methodology involves **translating binary code into Ghidra's raw P-Code**, a low-level intermediate representation, which is subsequently parsed for precise execution path analysis. Other programs like C programs can also be translated to P-Code.
@@ -24,46 +26,19 @@ Zorya supports both concrete and symbolic data types, x86-64 instructions and sy
 
 > 🚧 Zorya is under active development. Expect breaking changes.
 
-## 1. Install
+## :inbox_tray: Install
+Make sure to have Rust, Golang and Python properly installed. FYI, the project is beeing developped and maintained under a Linux Ubuntu distrubution.
 
-### Option A: Docker Installation
-
-```bash
-git clone --recursive https://github.com/Ledger-Donjon/zorya
-cd zorya
-docker build -t zorya:latest .
-
-# Run Zorya interactively
-# Note: --security-opt and --cap-add are required for GDB and ASLR control
-docker run -it --rm \
-  --security-opt seccomp=unconfined \
-  --cap-add=SYS_PTRACE \
-  -v $(pwd)/results:/opt/zorya/results \
-  zorya:latest
-
-# Test with included crashme binary
-zorya /opt/zorya/tests/programs/crashme-tinygo/crashme
 ```
-
-**Docker Security Options Explained:**
-- `--security-opt seccomp=unconfined`: Allows GDB to function properly inside the container
-- `--cap-add=SYS_PTRACE`: Required for GDB to attach to processes and generate memory dumps
-- The Docker entrypoint automatically disables ASLR using `setarch` for consistent memory layouts
-
-### Option B: Native Installation
-
-Make sure to have Rust, Golang and Python properly installed. FYI, the project is being developed and maintained under a Linux Ubuntu distribution.
-
-```bash
 git clone --recursive https://github.com/Ledger-Donjon/zorya
 cd zorya
 make ghidra-config    # if you don't have Ghidra nor Pyhidra
 make all
 ```
 
-## 2. Usage
+## :wrench: Usage
 
-### A. Interactive Usage
+### A. Interactive Usage (prefered)
 Zorya provides a guided mode, so you don't need to remember the options or flags. It prompts you with questions to outline three typical scenarios:
 
 - Standard Execution - Automatically detects the main function or entry point.
@@ -109,23 +84,6 @@ Notes:
 - Arguments (--arg) are optional.
 - The ```--negate-path-exploration``` flag enables alternate path exploration (symbolic branch negation) to increase code coverage. It is enabled by default unless explicitly disabled using ```--no-negate-path-exploration```, if the execution takes too much time for instance.
 
-### C. Fuzzer Mode (Automated Test Campaigns)
-For automated testing of multiple starting addresses and configurations, use the **Zorya Fuzzer** module. The fuzzer allows you to define test campaigns in a JSON configuration file and execute them systematically with timeout management and organized result storage.
-
-See the complete fuzzer documentation: [Fuzzer.md](doc/Fuzzer.md)
-
-Quick start:
-```bash
-# Build the fuzzer
-cargo build --release --bin zorya-fuzzer
-
-# Create a configuration template
-./target/release/zorya-fuzzer --create-example fuzzer_config.json
-
-# Edit fuzzer_config.json with your test configurations, then run:
-./target/release/zorya-fuzzer fuzzer_config.json
-```
-
 ## How to build your binary?
 Zorya needs the binary to have the debug symbols to perform the complete analysis. Striped binaries could be also analyzed, but it required to disable many functionnalities of the tool.
 
@@ -133,7 +91,7 @@ For Go:
 - ```tinygo build -gc=conservative -opt=0 .```
 - ```go build -gcflags=all="-N -l" .```
 
-## 3. Try it out with our test binaries
+## :mag_right: Try it out with our test binaries
 You can run Zorya on precompiled binaries with TinyGo located in ```tests/programs```.
 All the execution results can be found in ```results```, except the P-Code file which is in ```external/pcode-generator/results```.
 
@@ -183,7 +141,7 @@ The user input nr.1 must be => "K", the raw value being [67] (len=1)
 ```
 This is it, you have entered the concrete value "a", and Zorya tells you that if you have entered the value "K", the program would have panicked.
 
-## 4. Deep dive inside
+## :books: Deep dive inside
 
 ### Architecture
 - Implement a concolic execution engine (concrete and symbolic) written in Rust,
@@ -229,25 +187,22 @@ Zorya uses **compiler-aware detection strategies** to find vulnerabilities in bi
 
 **Detection Methods:**
 1. **AST-based panic exploration**: Reverse BFS through the control flow graph to find paths leading to explicit panic functions (e.g., `runtime.nilPanic`, `panic()`).
-2. **Overlay path analysis**: Full concolic execution on unexplored branches using copy-on-write state to detect implicit vulnerabilities like null pointer dereferences and division by zero.
+2. **Lightweight path analysis**: Pattern-based scanning of unexplored branches to detect implicit vulnerabilities like null pointer dereferences and division by zero without full state cloning.
 
 **Automatic Strategy Selection:**
 - **TinyGo binaries**: AST-based exploration only (TinyGo inserts explicit panic calls)
-- **Go GC binaries**: AST + Overlay path analysis (standard Go uses CPU traps for null derefs)
-- **C/C++ binaries**: Overlay path analysis only (no panic infrastructure)
+- **Go GC binaries**: AST + Lightweight path analysis (standard Go uses CPU traps for null derefs)
+- **C/C++ binaries**: Lightweight path analysis only (no panic infrastructure)
 
 Zorya automatically selects the right strategy based on the `--lang` and `--compiler` flags you provide.
 
 For detailed technical information:
 - [Compiler-Aware Strategies](doc/Compiler-Aware-Strategies.md) - Strategy selection and configuration
-- [Overlay Path Analysis](doc/Overlay-Path-Analysis.md) - Vulnerability detection using overlay mechanism
+- [Lightweight Path Analysis](doc/Lightweight-Path-Analysis.md) - Vulnerability detection without explicit panic calls
 - [General Strategies Overview](doc/Strategies.md) - High-level overview
-- [Multi-threading Support](doc/Multi-threading.md) - Thread state management and restoration
-- [Fuzzer Documentation](doc/Fuzzer.md) - Automated test campaigns and configuration
-- [Go Binary Analysis](doc/Go-Binary-Analysis.md) - Runtime offsets and function signature extraction
 
 
-## 5. Demo videos
+## :movie_camera: Demo video
 In this demo, we showcase how the Zorya Concolic Executor analyzes a Go binary named "broken-calculator", compiled using the TinyGo compiler. The calculator works correctly on inputs like "2 + 3", but contains an artificial vulnerability that causes a panic when both operands are "5".
 
 Zorya explores execution paths symbolically and is currently able to identify the conditions leading to the panic independently: ```operand1 == 5 and operand2 == 5```
@@ -258,21 +213,15 @@ Link to the demo : [Demo](https://youtu.be/8PeSZFvr6WA)
 
 Link to the overall presentation of Zorya at EthCC 2025 : [Presentation](https://www.youtube.com/live/QpcAtfN3B9M)
 
-## 6. Roadmap 
-Zorya has been developed and tested on Linux Ubuntu as the execution environment with x86-64 binary targets. See the [roadmap](doc/roadmap-zorya_october-2025.png) for details on features that have been added over time and those that are planned.
+## :spiral_calendar: Roadmap 
+Zorya has been developeped and tested for now on Linux Ubuntu as the execution environement with x86-64 binaries targets. The roadmap below details the features that have been added over time and those that are planned:
+<div align="left">
+  <img src="doc/roadmap-zorya_october-2025.png" alt="Roadmap" width="900"/>
+</div>
 
-## 7. Academic work
-You can find the preprint of our second paper on ArXiv under the title : [Zorya: Automated Concolic Execution of Single-Threaded Go Binaries](https://arxiv.org/abs/2512.10799).
-```
-@article{gorna2025zorya,
-  title={Zorya: Automated Concolic Execution of Single-Threaded Go Binaries},
-  author={Gorna, Karolina and Iooss, Nicolas and Seurin, Yannick and Khatoun, Rida},
-  journal={arXiv preprint arXiv:2512.10799},
-  year={2025}
-  note={Accepted at the 41st ACM/SIGAPP Symposium On Applied Computing (SAC 2026)}
-}
-```
-Our first paper is also on ArXiv under the title : [Exposing Go's Hidden Bugs: A Novel Concolic Framework](https://arxiv.org/abs/2505.20183v1).
+## :memo: Academic work
+You can find the preprint of our first paper on ArXiv under the title : [Exposing Go's Hidden Bugs: A Novel Concolic Framework](https://arxiv.org/abs/2505.20183v1).
+
 ```
 @article{gorna2025exposing,
   title={Exposing Go's Hidden Bugs: A Novel Concolic Framework},
@@ -282,4 +231,3 @@ Our first paper is also on ArXiv under the title : [Exposing Go's Hidden Bugs: A
   note={Accepted at the 23rd IEEE/ACIS International Conference on Software Engineering, Management and Applications (SERA 2025)}
 }
 ```
-All the evaluation of Zorya can be found in the [Zorya Evaluation](https://github.com/Ledger-Donjon/zorya-evaluation).

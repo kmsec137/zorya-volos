@@ -39,6 +39,10 @@ pub struct OSThread<'ctx> {
 
     /// Child clear TID pointer (for CLONE_CHILD_CLEARTID)
     pub child_cleartid_ptr: Option<u64>,
+
+    /// Locks Held a la Volos
+    pub locks_held: Vec<u64>
+
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +72,7 @@ impl<'ctx> OSThread<'ctx> {
         clone_flags: u64,
         child_tid_ptr: Option<u64>,
         child_cleartid_ptr: Option<u64>,
+        locks_held: Vec<u64>,
         ctx: &'ctx Context,
     ) -> Result<Self> {
         // Clone the parent's CPU state
@@ -119,7 +124,7 @@ impl<'ctx> OSThread<'ctx> {
         cpu_state
             .set_register_value_by_offset(rax_offset, rax_concolic, rax_size)
             .map_err(|e| anyhow!("Failed to set RAX: {}", e))?;
-
+        let clone_locks_held = locks_held.clone();
         Ok(OSThread {
             tid,
             parent_tid,
@@ -129,6 +134,7 @@ impl<'ctx> OSThread<'ctx> {
             gs_base: 0, // Not set during clone, only via arch_prctl
             entry_point,
             status: ThreadStatus::Ready,
+            locks_held: clone_locks_held,
             clone_flags,
             child_tid_ptr,
             child_cleartid_ptr,
@@ -191,13 +197,14 @@ pub struct ThreadManager<'ctx> {
 
     /// Instructions per time slice before considering a switch
     pub time_slice_instructions: usize,
+
 }
 
 impl<'ctx> ThreadManager<'ctx> {
     /// Create a new ThreadManager with an initial main thread
     pub fn new(initial_tid: u64, initial_cpu: CpuState<'ctx>, ctx: &'ctx Context) -> Self {
         let mut threads = BTreeMap::new();
-
+        let mut new_locks_held: Vec<u64> = Vec::new();
         // Create the main thread
         let main_thread = OSThread {
             tid: initial_tid,
@@ -209,6 +216,7 @@ impl<'ctx> ThreadManager<'ctx> {
             entry_point: 0,
             status: ThreadStatus::Running,
             clone_flags: 0,
+            locks_held: Vec::new(),
             child_tid_ptr: None,
             child_cleartid_ptr: None,
         };
@@ -234,7 +242,14 @@ impl<'ctx> ThreadManager<'ctx> {
             .get(&self.current_tid)
             .ok_or_else(|| anyhow!("Current thread {} not found", self.current_tid))
     }
-
+    pub fn current_thread_takelock(&self,new_lock: u64) -> () {
+				//check if have taken this lock already
+			   //we need to check against other threads if they've taken it?
+			   //probably need some "quicklist" of last 3/4 taken locks to check against
+				let cur_tid = self.current_thread().unwrap();
+				let mut cur_locks = cur_tid.locks_held.clone(); 
+				cur_locks.push(new_lock);
+    }
     /// Get the current running thread (mutable)
     pub fn current_thread_mut(&mut self) -> Result<&mut OSThread<'ctx>> {
         self.threads
@@ -262,6 +277,10 @@ impl<'ctx> ThreadManager<'ctx> {
             .get(&parent_tid)
             .ok_or_else(|| anyhow!("Parent thread {} not found", parent_tid))?
             .cpu_state;
+        let parent_locks_held = &self
+                                .threads.get(&parent_tid)
+                                .ok_or_else(|| anyhow!("Parent thread {} not found", parent_tid))?
+                                .locks_held;
 
         // Create the new thread
         let new_thread = OSThread::new_from_clone(
@@ -274,6 +293,7 @@ impl<'ctx> ThreadManager<'ctx> {
             clone_flags,
             child_tid_ptr,
             child_cleartid_ptr,
+            parent_locks_held.clone(),
             self.ctx,
         )?;
 
@@ -362,7 +382,7 @@ impl<'ctx> ThreadManager<'ctx> {
             .get_register_by_offset(0x288, 64) // RIP
             .map(|v| v.concrete.to_u64())
             .unwrap_or(0);
-
+        let new_locks_held: Vec<u64> = Vec::new();
         let thread = OSThread {
             tid,
             parent_tid: 0, // Unknown from dump
@@ -379,6 +399,7 @@ impl<'ctx> ThreadManager<'ctx> {
             clone_flags: 0,
             child_tid_ptr: None,
             child_cleartid_ptr: None,
+            locks_held: new_locks_held  
         };
 
         self.threads.insert(tid, thread);

@@ -28,7 +28,6 @@ mod tests {
             trace_logger,
             function_symbolic_arguments: BTreeMap::new(),
             constraint_vector: Vec::new(),
-            overlay_state: None,
         }
     }
 

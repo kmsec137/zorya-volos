@@ -45,61 +45,37 @@ impl<'ctx> SymbolicVar<'ctx> {
         const DEFAULT_SLICE_LEN: usize = 3;
 
         let result = match typ {
-            // Go aliases: 'byte' is an alias for 'uint8', and some DWARF toolchains
-            // surface it as 'uint8'. Treat all of them as integer-like here.
-            TypeDesc::Primitive(s)
-                if s == "int" || s == "uintptr" || s == "byte" || s == "uint8" =>
-            {
-                println!(
-                    "Retrieved integer argument '{}' – creating a 64-bit symbolic integer variable...",
-                    name
-                );
+            TypeDesc::Primitive(s) if s == "int" || s == "uintptr" || s == "byte" => {
                 SymbolicVar::Int(BV::fresh_const(ctx, name, 64))
             }
 
             TypeDesc::Primitive(s) if s == "bool" => {
-                println!(
-                    "Retrieved boolean argument '{}' – creating a symbolic boolean variable...",
-                    name
-                );
                 SymbolicVar::Bool(Bool::fresh_const(ctx, name))
             }
 
             TypeDesc::Primitive(s) if s == "float64" => {
-                println!(
-                    "Retrieved float64 argument '{}' – creating a symbolic float64 variable...",
-                    name
-                );
                 SymbolicVar::Float(Float::new_const(ctx, name, 11, 53))
             }
 
             TypeDesc::Pointer { .. } => {
                 // model pointers as 64-bit bitvectors
-                println!(
-                    "Retrieved pointer argument '{}' – creating a 64-bit symbolic pointer variable...",
-                    name
-                );
                 SymbolicVar::Int(BV::fresh_const(ctx, name, 64))
             }
 
             TypeDesc::Array { element, count } => {
                 // a fixed-size array or even a Go static array like [32]byte
                 let len = count.map(|n| n as usize).unwrap_or(DEFAULT_SLICE_LEN);
-                println!(
-                    "Retrieved array argument '{}' – creating a symbolic slice view with element type {:?} and length {}...",
-                    name, element, len
-                );
                 SymbolicVar::make_symbolic_slice(ctx, name, element, len)
             }
 
             TypeDesc::Unknown(s) if s.starts_with("[]") => {
-                // covers raw Go slices: []T, and nested like [][32]byte
+                // covers Raw Go slices: []T, and nested like [][32]byte
                 let inner = &s[2..];
 
                 // if the inner is a fixed-size array, e.g. "[32]byte"
                 if let Some(caps) = Regex::new(r"^\[(\d+)\](.+)$").unwrap().captures(inner) {
                     let fixed_len = caps[1].parse::<usize>().unwrap_or(DEFAULT_SLICE_LEN);
-                    let elem_ty_str = caps[2].trim();
+                    let elem_ty_str = &caps[2];
 
                     // Create a proper TypeDesc for the fixed-size array element
                     let elem_type = TypeDesc::Array {
@@ -107,32 +83,16 @@ impl<'ctx> SymbolicVar<'ctx> {
                         count: Some(fixed_len as u64),
                     };
 
-                    println!(
-                        "Retrieved slice argument '{}' with fixed-size element [{}]{} – creating a symbolic slice of {} element(s)...",
-                        name,
-                        fixed_len,
-                        elem_ty_str,
-                        DEFAULT_SLICE_LEN
-                    );
                     SymbolicVar::make_symbolic_slice(ctx, name, &elem_type, DEFAULT_SLICE_LEN)
                 } else {
                     // simple dynamic slice, e.g. []int or []string
                     let elem_type = TypeDesc::Primitive(inner.to_string());
-                    println!(
-                        "Retrieved dynamic slice argument '{}' with element type {} – creating a symbolic slice of {} element(s)...",
-                        name,
-                        inner,
-                        DEFAULT_SLICE_LEN
-                    );
                     SymbolicVar::make_symbolic_slice(ctx, name, &elem_type, DEFAULT_SLICE_LEN)
                 }
             }
 
             _ => {
-                println!(
-                    "[WARNING]: Could not identify precise type of argument '{}'. Falling back to a 64-bit symbolic integer for type {:?}.",
-                    name, typ
-                );
+                println!("DEBUG: Fallback case for '{}' with type: {:?}", name, typ);
                 // fallback for everything else
                 SymbolicVar::Int(BV::fresh_const(ctx, name, 64))
             }
@@ -166,8 +126,8 @@ impl<'ctx> SymbolicVar<'ctx> {
         default_len: usize,
     ) -> SymbolicVar<'ctx> {
         println!(
-            "Retrieved slice argument '{}' – creating a symbolic slice of {} element(s) with element type {:?}...",
-            name, default_len, element_type
+            "DEBUG: make_symbolic_slice called for '{}' with element_type: {:?}, default_len: {}",
+            name, element_type, default_len
         );
 
         let pointer = BV::fresh_const(ctx, &format!("{name}_ptr"), 64);

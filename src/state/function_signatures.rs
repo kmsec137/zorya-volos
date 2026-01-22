@@ -541,19 +541,12 @@ pub fn load_go_function_args_map(
     );
     let func_signatures_path = "results/function_signatures_go.json";
 
-    // Add --extract-runtime-g flag for Go binaries to extract goroutine ID offsets
     let out = std::process::Command::new(&go_bin)
         .arg(binary_path)
         .arg(func_signatures_path)
-        .arg("--extract-runtime-g")  // Extract runtime.g struct offsets
         .output()?;
     if !out.status.success() {
         return Err(format!("go script failed: {}", String::from_utf8_lossy(&out.stderr)).into());
-    }
-    
-    // Print output for runtime.g extraction info
-    if !out.stderr.is_empty() {
-        print!("{}", String::from_utf8_lossy(&out.stderr));
     }
 
     log!(
