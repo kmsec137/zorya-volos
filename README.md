@@ -11,7 +11,10 @@
   
 </p>
 
-ZORYA VOLOS IS A PRIVATE FORK OF ZORYA OWNED BY KEITH MAKAN SECURITY CONSULTANCY (PTY) LTD
+ZORYA VOLOS IS A FORK OF ZORYA OWNED AND MAINTAINED BY KEITH MAKAN SECURITY CONSULTANCY (PTY) LTD
+
+What KMSEC has added:
+- volos memory interaction tracking system
 
 Zorya is a **concolic execution framework** designed to detect **logic-related bugs, language-specific vulnerabilities, and identify new patterns of security issues mainly in Go binaries**. The analysis begins by generating CPU register and memory dumps using ```gdb```. Zorya loads these dumps to initialize execution from a specified starting address, ensuring a realistic and accurate representation of the program state.
 
