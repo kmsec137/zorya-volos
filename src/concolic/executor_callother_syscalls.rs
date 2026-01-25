@@ -210,7 +210,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             let data = executor
                 .state
                 .memory
-                .read_bytes(buf_ptr, count,  executor.new_volos())
+                .read_bytes(buf_ptr, count,  executor.new_volos(), false)
                 .map_err(|e| format!("Failed to read bytes from memory: {}", e))?;
 
             // Write data to the virtual file system

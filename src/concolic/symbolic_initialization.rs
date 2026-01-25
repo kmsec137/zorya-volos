@@ -1405,7 +1405,7 @@ fn initialize_slice_element_memory<'a>(
         match executor
             .state
             .memory
-            .read_bytes(element_addr, element_size as usize, executor.new_volos())
+            .read_bytes(element_addr, element_size as usize, executor.new_volos(), true)
         {
             Ok(concrete_bytes) => {
                 log!(

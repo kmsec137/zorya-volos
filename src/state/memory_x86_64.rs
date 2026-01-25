@@ -402,7 +402,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
         &self,
         address: u64,
         size: usize,
-		  volos: Volos
+		  volos: Volos,
+		  internal: bool
     ) -> Result<(Vec<u8>, Vec<Option<Arc<BV<'ctx>>>>), MemoryError> {
         let regions = self.regions.read().unwrap();
 
@@ -415,9 +416,10 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 }
 
                 let concrete = region.concrete_data[offset..offset + size].to_vec();
-					 let v_region = &mut region.volos_region.borrow_mut();
-
-					 v_region.add_volos((offset).try_into().unwrap(), size.try_into().unwrap(), volos.clone());
+					 if internal == true {
+					 	let v_region = &mut region.volos_region.borrow_mut();
+					 	v_region.add_volos((offset).try_into().unwrap(), size.try_into().unwrap(), volos.clone());
+					 }
 
 					 println!("[VOLOS] reading memory with volos --> @[0x{:X}] {:?}", address, volos);
                 let symbolic = (offset..offset + size)
@@ -432,8 +434,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
     }
 
     /// Reads a sequence of bytes from memory (concrete data only).
-    pub fn read_bytes(&self, address: u64, size: usize, volos: Volos) -> Result<Vec<u8>, MemoryError> {
-        let (concrete, _) = self.read_memory(address, size, volos)?;
+    pub fn read_bytes(&self, address: u64, size: usize, volos: Volos, internal: bool) -> Result<Vec<u8>, MemoryError> {
+        let (concrete, _) = self.read_memory(address, size, volos, internal)?;
         Ok(concrete)
     }
 
@@ -443,7 +445,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
         let mut addr = address;
 
         loop {
-            let (concrete, _) = self.read_memory(addr, 1, volos.clone())?;
+            let (concrete, _) = self.read_memory(addr, 1, volos.clone(), false)?;
             let byte = concrete[0];
             if byte == 0 {
                 break;
@@ -457,7 +459,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
     /// Reads exactly one byte from memory, returning a ConcolicVar (concrete and symbolic).
     pub fn read_byte(&self, address: u64, volos: Volos) -> Result<ConcolicVar<'ctx>, MemoryError> {
-        let (concrete, symbolic) = self.read_memory(address, 1, volos)?;
+        let (concrete, symbolic) = self.read_memory(address, 1, volos, true)?;
         let cbyte = concrete[0] as u64;
 
         let sym_bv = symbolic[0]
@@ -494,7 +496,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
             for i in 0..num_chunks {
                 let chunk_addr = address + (i as u64 * 8);
-                let (concrete_bytes, symbolic_bytes) = self.read_memory(chunk_addr, 8,volos.clone())?;
+                let (concrete_bytes, symbolic_bytes) = self.read_memory(chunk_addr, 8,volos.clone(), true)?;
 
                 let chunk_value = u64::from_le_bytes(concrete_bytes.as_slice().try_into().unwrap());
                 concrete_chunks.push(chunk_value);
@@ -520,8 +522,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
         } else if size == 128 {
             log!(logger, "Reading 128-bit value from address 0x{:x}", address);
 
-            let (concrete_low, symbolic_low) = self.read_memory(address, 8, volos.clone())?;
-            let (concrete_high, symbolic_high) = self.read_memory(address + 8, 8, volos.clone())?;
+            let (concrete_low, symbolic_low) = self.read_memory(address, 8, volos.clone(), true)?;
+            let (concrete_high, symbolic_high) = self.read_memory(address + 8, 8, volos.clone(), true)?;
 
             let low = u64::from_le_bytes(concrete_low.as_slice().try_into().unwrap());
             let high = u64::from_le_bytes(concrete_high.as_slice().try_into().unwrap());
@@ -555,7 +557,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
             })
         } else if size <= 64 {
             let byte_size = ((size + 7) / 8) as usize;
-            let (mut concrete, symbolic) = self.read_memory(address, byte_size, volos)?;
+            let (mut concrete, symbolic) = self.read_memory(address, byte_size, volos, true)?;
 
             //log!(logger, "Reading {}-bit value ({} bytes) from address 0x{:x}", size, byte_size, address);
             //log!(logger, "Raw concrete bytes: {:02x?}", concrete);

@@ -718,7 +718,7 @@ fn execute_instructions_from(
 						            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
 											//println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
 											println!("[VOLOS::main.rs] got lock function call {:?} mutex=0x{:x}",symbol_name, value.concrete);
-											let mut thread_manager = executor.state.thread_manager.lock().unwrap();
+											let thread_manager = executor.state.thread_manager.lock().unwrap();
 											let mut _locks = thread_manager.current_thread().unwrap().locks_held.clone();
 											_locks.push(value.concrete.to_u64());
 											let len = _locks.len();
@@ -738,13 +738,13 @@ fn execute_instructions_from(
               println!("[VOLOS] encountered {} operation",symbol_name); 
               if let Some((_, args)) = function_args_map.get(&current_rip) {
 						let cpu = executor.state.cpu_state.lock().unwrap();
-						for (arg_name, reg_names, _arg_type) in args {
+						for (_arg_name, reg_names, _arg_type) in args {
 						    for reg_name in reg_names {
 						        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
 						            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
 											//println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
 											println!("[VOLOS::main.rs] got lock function call {:?} mutex=0x{:x}",symbol_name, value.concrete);
-											let mut thread_manager = executor.state.thread_manager.lock().unwrap();
+											let thread_manager = executor.state.thread_manager.lock().unwrap();
 											let mut _locks = thread_manager.current_thread().unwrap().locks_held.clone();
 											_locks.retain(|&x| x != value.concrete.to_u64());
 											let len = _locks.len();
@@ -2066,7 +2066,7 @@ pub fn initialize_symbolic_part_args(
         }
 
         // Read the actual string bytes
-        let concrete_str_bytes = mem.read_bytes(str_data_ptr, str_data_len as usize, new_volos.clone())?;
+        let concrete_str_bytes = mem.read_bytes(str_data_ptr, str_data_len as usize, new_volos.clone(), true)?;
 
         // Create fresh symbolic variables for each byte of this argument
         let mut fresh_symbolic = Vec::with_capacity(str_data_len as usize);
