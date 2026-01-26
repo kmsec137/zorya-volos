@@ -82,6 +82,11 @@ pub fn analyze_untaken_path_with_overlay<'ctx>(
     // These are temporary computation results that must be preserved across overlay exploration
     let saved_unique_variables = executor.unique_variables.clone();
     let saved_current_address = executor.current_address;
+    
+    // Save call stack state before overlay (for dangling pointer detection cleanup)
+    let saved_call_stack_depth = executor.state.call_stack.len();
+    let saved_freed_frames_count = executor.state.freed_stack_frames.len();
+    
     log!(
         executor.state.logger,
         "[OVERLAY] Saved {} unique variables before overlay exploration",
@@ -91,6 +96,11 @@ pub fn analyze_untaken_path_with_overlay<'ctx>(
         executor.state.logger,
         "[OVERLAY] Saved current_address before overlay: {:?}",
         saved_current_address
+    );
+    log!(
+        executor.state.logger,
+        "[OVERLAY] Saved call stack state: depth={}, freed_frames={}",
+        saved_call_stack_depth, saved_freed_frames_count
     );
 
     // Create overlay state
@@ -137,6 +147,17 @@ pub fn analyze_untaken_path_with_overlay<'ctx>(
 
     // Clear overlay state
     executor.overlay_state = None;
+
+    // Restore call stack state - remove any frames pushed/freed during overlay
+    // This prevents speculative execution from polluting dangling pointer detection
+    executor.state.call_stack.truncate(saved_call_stack_depth);
+    executor.state.freed_stack_frames.truncate(saved_freed_frames_count);
+    log!(
+        executor.state.logger,
+        "[OVERLAY] Restored call stack state: depth={}, freed_frames={}",
+        executor.state.call_stack.len(),
+        executor.state.freed_stack_frames.len()
+    );
 
     // Restore unique variables and current address after overlay exploration
     // This prevents overlay execution from polluting the real execution state

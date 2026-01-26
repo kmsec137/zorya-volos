@@ -239,6 +239,7 @@ Zorya uses **compiler-aware detection strategies** to find vulnerabilities in bi
 Zorya automatically selects the right strategy based on the `--lang` and `--compiler` flags you provide.
 
 For detailed technical information:
+- [Vulnerability Detection](doc/Vulnerability-Detection.md) - NULL deref, div/0, and dangling pointer detection mechanisms
 - [Compiler-Aware Strategies](doc/Compiler-Aware-Strategies.md) - Strategy selection and configuration
 - [Overlay Path Analysis](doc/Overlay-Path-Analysis.md) - Vulnerability detection using overlay mechanism
 - [General Strategies Overview](doc/Strategies.md) - High-level overview

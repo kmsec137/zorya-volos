@@ -16,7 +16,7 @@ use parser::parser::Varnode;
 use regex::Regex;
 use std::fmt;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fs::{self, File},
     io::{self, Read, Write},
@@ -35,6 +35,11 @@ macro_rules! log {
 #[derive(Clone, Debug)]
 pub struct FunctionFrame {
     pub local_variables: BTreeSet<String>, // Addresses of local variables (as hex strings)
+    // Stack frame tracking for dangling pointer detection
+    pub function_addr: u64,      // Address of the function
+    pub rsp_on_entry: u64,        // RSP when function was called
+    pub rsp_on_exit: Option<u64>, // RSP when function returns (None if active)
+    pub is_active: bool,          // True if function hasn't returned yet
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +74,7 @@ pub struct State<'a> {
     pub exit_status: Option<i32>, // Stores the exit status code of the process
     pub signal_handlers: HashMap<i32, Sigaction<'a>>, // Stores the signal handlers
     pub call_stack: Vec<FunctionFrame>, // Stack of function frames to track local variables
+    pub freed_stack_frames: VecDeque<FunctionFrame>, // Recently freed frames for dangling pointer detection
     pub jump_tables: BTreeMap<u64, JumpTable>, // Maps base addresses to jump table metadata
     pub thread_manager: Arc<Mutex<ThreadManager<'a>>>, // Manages OS threads for Go runtime
 }
@@ -192,6 +198,7 @@ impl<'a> State<'a> {
             exit_status: None,
             signal_handlers: HashMap::new(),
             call_stack: Vec::new(),
+            freed_stack_frames: VecDeque::new(),
             jump_tables: BTreeMap::new(),
             thread_manager,
         };
@@ -240,6 +247,7 @@ impl<'a> State<'a> {
             exit_status: None,
             signal_handlers: HashMap::new(),
             call_stack: Vec::new(),
+            freed_stack_frames: VecDeque::new(),
             jump_tables: BTreeMap::new(),
             thread_manager: Arc::new(Mutex::new(ThreadManager::new(1, CpuState::new(ctx), ctx))),
         })

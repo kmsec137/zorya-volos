@@ -2325,6 +2325,62 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             process::exit(1);
         }
 
+        // Check for dangling pointer access (freed stack frame)
+        if let Some((func_addr, frame_rsp)) = self.check_dangling_pointer_access(pointer_offset_concrete) {
+            log!(
+                self.state.logger.clone(),
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+            );
+            log!(
+                self.state.logger.clone(),
+                "VULN: Zorya detected DANGLING POINTER access at address 0x{:x}", pointer_offset_concrete
+            );
+            log!(
+                self.state.logger.clone(),
+                "      Memory belongs to freed stack frame from function 0x{:x} (frame RSP: 0x{:x})",
+                func_addr, frame_rsp
+            );
+            log!(
+                self.state.logger.clone(),
+                "      This is a Use-After-Free vulnerability (stack memory reuse)"
+            );
+            log!(
+                self.state.logger.clone(),
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+            );
+            println!("/!\\ DANGLING POINTER (Use-After-Free) detected at 0x{:x}, execution halted!\n", pointer_offset_concrete);
+            println!("    Freed stack frame from function 0x{:x}\n", func_addr);
+            process::exit(1);
+        }
+
+        // Check for dangling pointer access (freed stack frame)
+        if let Some((func_addr, frame_rsp)) = self.check_dangling_pointer_access(pointer_offset_concrete) {
+            log!(
+                self.state.logger.clone(),
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+            );
+            log!(
+                self.state.logger.clone(),
+                "VULN: Zorya detected DANGLING POINTER access at address 0x{:x}", pointer_offset_concrete
+            );
+            log!(
+                self.state.logger.clone(),
+                "      Memory belongs to freed stack frame from function 0x{:x} (frame RSP: 0x{:x})",
+                func_addr, frame_rsp
+            );
+            log!(
+                self.state.logger.clone(),
+                "      This is a Use-After-Free vulnerability (stack memory reuse)"
+            );
+            log!(
+                self.state.logger.clone(),
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+            );
+            println!("/!\\ DANGLING POINTER (Use-After-Free) detected at 0x{:x}, execution halted!\n", pointer_offset_concrete);
+            println!("    Freed stack frame from function 0x{:x}\n", func_addr);
+            process::exit(1);
+        }
+
         // Cases covered : 'void a(void) { b(); c(); }', do the 'reinitialization'' of variables used by b() when b() finishes.
         // Implement scope management for variables
         // Clean up variables from functions that have finished
@@ -2751,6 +2807,62 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
             );
             println!("/!\\ Dereferencing NULL pointer detected, execution halted!\n");
+            process::exit(1);
+        }
+
+        // Check for dangling pointer access (freed stack frame)
+        if let Some((func_addr, frame_rsp)) = self.check_dangling_pointer_access(pointer_offset_concrete) {
+            log!(
+                self.state.logger.clone(),
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+            );
+            log!(
+                self.state.logger.clone(),
+                "VULN: Zorya detected DANGLING POINTER WRITE at address 0x{:x}", pointer_offset_concrete
+            );
+            log!(
+                self.state.logger.clone(),
+                "      Memory belongs to freed stack frame from function 0x{:x} (frame RSP: 0x{:x})",
+                func_addr, frame_rsp
+            );
+            log!(
+                self.state.logger.clone(),
+                "      This is a Use-After-Free vulnerability (stack memory reuse)"
+            );
+            log!(
+                self.state.logger.clone(),
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+            );
+            println!("/!\\ DANGLING POINTER WRITE (Use-After-Free) detected at 0x{:x}, execution halted!\n", pointer_offset_concrete);
+            println!("    Freed stack frame from function 0x{:x}\n", func_addr);
+            process::exit(1);
+        }
+
+        // Check for dangling pointer access (freed stack frame)
+        if let Some((func_addr, frame_rsp)) = self.check_dangling_pointer_access(pointer_offset_concrete) {
+            log!(
+                self.state.logger.clone(),
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+            );
+            log!(
+                self.state.logger.clone(),
+                "VULN: Zorya detected DANGLING POINTER WRITE at address 0x{:x}", pointer_offset_concrete
+            );
+            log!(
+                self.state.logger.clone(),
+                "      Memory belongs to freed stack frame from function 0x{:x} (frame RSP: 0x{:x})",
+                func_addr, frame_rsp
+            );
+            log!(
+                self.state.logger.clone(),
+                "      This is a Use-After-Free vulnerability (stack memory reuse)"
+            );
+            log!(
+                self.state.logger.clone(),
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+            );
+            println!("/!\\ DANGLING POINTER WRITE (Use-After-Free) detected at 0x{:x}, execution halted!\n", pointer_offset_concrete);
+            println!("    Freed stack frame from function 0x{:x}\n", func_addr);
             process::exit(1);
         }
 
@@ -3770,18 +3882,44 @@ impl<'ctx> ConcolicExecutor<'ctx> {
 
     // Push a new function frame onto the call stack
     pub fn push_function_frame(&mut self) {
+        // Get current RSP value
+        let rsp_value = self.state
+            .cpu_state
+            .lock()
+            .unwrap()
+            .get_register_by_offset(0x20, 64)  // RSP offset = 0x20
+            .map(|r| r.concrete.to_u64())
+            .unwrap_or(0);
+        
+        // Get current function address
+        let func_addr = self.current_address.unwrap_or(0);
+        
         self.state.call_stack.push(FunctionFrame {
             local_variables: BTreeSet::new(),
+            function_addr: func_addr,
+            rsp_on_entry: rsp_value,
+            rsp_on_exit: None,
+            is_active: true,
         });
         log!(
             self.state.logger.clone(),
-            "Pushed a new function frame onto the call stack."
+            "[STACK_FRAME] Pushed frame for func 0x{:x}, RSP=0x{:x} (depth: {})",
+            func_addr, rsp_value, self.state.call_stack.len()
         );
     }
 
     // Pop the top function frame from the call stack and clean up variables
     pub fn pop_function_frame(&mut self) {
-        if let Some(finished_frame) = self.state.call_stack.pop() {
+        // Get current RSP (on return)
+        let rsp_on_return = self.state
+            .cpu_state
+            .lock()
+            .unwrap()
+            .get_register_by_offset(0x20, 64)
+            .map(|r| r.concrete.to_u64())
+            .unwrap_or(0);
+        
+        if let Some(mut finished_frame) = self.state.call_stack.pop() {
             // Remove variables associated with this function's scope from initialized variables
             for var_address in &finished_frame.local_variables {
                 self.initialiazed_var.remove(var_address);
@@ -3792,10 +3930,23 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     var_address
                 );
             }
+            
+            // Mark frame as inactive and record exit RSP
+            finished_frame.is_active = false;
+            finished_frame.rsp_on_exit = Some(rsp_on_return);
+            
             log!(
                 self.state.logger.clone(),
-                "Popped a function frame from the call stack."
+                "[STACK_FRAME] Popped frame for func 0x{:x}, RSP entry=0x{:x}, exit=0x{:x}",
+                finished_frame.function_addr, finished_frame.rsp_on_entry, rsp_on_return
             );
+            
+            // Store freed frame for dangling pointer detection
+            // Keep the last 10 freed frames
+            self.state.freed_stack_frames.push_back(finished_frame);
+            if self.state.freed_stack_frames.len() > 10 {
+                self.state.freed_stack_frames.pop_front();
+            }
         } else {
             log!(
                 self.state.logger.clone(),
@@ -3815,6 +3966,44 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             // Pop the function frame and clean up variables
             self.pop_function_frame();
         }
+    }
+
+    /// Check if a memory access is to a freed stack frame (dangling pointer)
+    /// Returns (is_dangling, function_addr, frame_rsp) if dangling
+    pub fn check_dangling_pointer_access(&self, address: u64) -> Option<(u64, u64)> {
+        // Get current RSP
+        let current_rsp = self.state
+            .cpu_state
+            .lock()
+            .unwrap()
+            .get_register_by_offset(0x20, 64)
+            .map(|r| r.concrete.to_u64())
+            .unwrap_or(0);
+        
+        // Check if address points to any freed stack frame
+        for freed_frame in &self.state.freed_stack_frames {
+            let frame_start = freed_frame.rsp_on_entry;
+            let frame_end = freed_frame.rsp_on_exit.unwrap_or(freed_frame.rsp_on_entry);
+            
+            // Normalize (stack grows down, so frame_start > frame_end)
+            let (low, high) = if frame_start > frame_end {
+                (frame_end, frame_start)
+            } else {
+                (frame_start, frame_end)
+            };
+            
+            // Check if address is in the freed frame range
+            // AND current RSP is above the freed frame (meaning it's truly freed)
+            if address >= low && address < high && current_rsp >= high {
+                log!(
+                    self.state.logger.clone(),
+                    "[DANGLING_POINTER] Access to freed frame! addr=0x{:x}, func=0x{:x}, frame_rsp=[0x{:x}..0x{:x}], current_rsp=0x{:x}",
+                    address, freed_frame.function_addr, low, high, current_rsp
+                );
+                return Some((freed_frame.function_addr, frame_start));
+            }
+        }
+        None
     }
 }
 
