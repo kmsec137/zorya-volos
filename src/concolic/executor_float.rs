@@ -403,7 +403,7 @@ pub fn handle_trunc(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
     let result_int = if input_size_bits == 32 {
         // 32-bit float (f32) to integer
         let input_f32 = f32::from_bits(input_bits as u32);
-        
+
         if input_f32.is_nan() {
             log!(
                 executor.state.logger.clone(),
@@ -414,7 +414,11 @@ pub fn handle_trunc(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
             log!(
                 executor.state.logger.clone(),
                 "TRUNC: Input is infinite ({}), clamping to max/min",
-                if input_f32.is_sign_positive() { "+inf" } else { "-inf" }
+                if input_f32.is_sign_positive() {
+                    "+inf"
+                } else {
+                    "-inf"
+                }
             );
             // Clamp to output range
             if input_f32.is_sign_positive() {
@@ -441,7 +445,7 @@ pub fn handle_trunc(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
     } else if input_size_bits == 64 {
         // 64-bit float (f64) to integer
         let input_f64 = f64::from_bits(input_bits);
-        
+
         if input_f64.is_nan() {
             log!(
                 executor.state.logger.clone(),
@@ -452,7 +456,11 @@ pub fn handle_trunc(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
             log!(
                 executor.state.logger.clone(),
                 "TRUNC: Input is infinite ({}), clamping to max/min",
-                if input_f64.is_sign_positive() { "+inf" } else { "-inf" }
+                if input_f64.is_sign_positive() {
+                    "+inf"
+                } else {
+                    "-inf"
+                }
             );
             // Clamp to output range
             if input_f64.is_sign_positive() {

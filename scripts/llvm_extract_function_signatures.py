@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+"""
+Extract function signatures from Go binaries using llvm-dwarfdump
+This script properly handles DWARF5 which has bugs in GNU binutils
+"""
+
+import subprocess
+import json
+import sys
+import re
+import os
+from collections import defaultdict
+
+def run_llvm_dwarfdump(binary_path):
+    """Run llvm-dwarfdump and return the output"""
+    try:
+        result = subprocess.run(
+            ['llvm-dwarfdump-18', '--debug-info', binary_path],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        print(f"Error running llvm-dwarfdump: {e}", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError:
+        print("Error: llvm-dwarfdump-18 not found. Install with: sudo apt install llvm-18-tools", file=sys.stderr)
+        sys.exit(1)
+
+def get_symbol_addresses(binary_path):
+    """Get function addresses from symbol table as fallback"""
+    try:
+        result = subprocess.run(
+            ['nm', binary_path],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        symbol_map = {}
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 3:
+                addr, typ, name = parts[0], parts[1], ' '.join(parts[2:])
+                symbol_map[name] = addr
+        return symbol_map
+    except:
+        return {}
+
+def parse_dwarf_output(dwarf_output, symbol_map):
+    """Parse llvm-dwarfdump output to extract function signatures"""
+    functions = []
+    current_function = None
+    current_cu_addr_base = 0
+    
+    lines = dwarf_output.split('\n')
+    i = 0
+    
+    while i < len(lines):
+        line = lines[i]
+        
+        # Track addr_base for the compilation unit
+        if 'DW_AT_addr_base' in line:
+            match = re.search(r'DW_AT_addr_base\s*\(\s*0x([0-9a-fA-F]+)\s*\)', line)
+            if match:
+                current_cu_addr_base = int(match.group(1), 16)
+        
+        # Detect start of a subprogram (function)
+        if 'DW_TAG_subprogram' in line:
+            if current_function:
+                functions.append(current_function)
+            
+            current_function = {
+                'name': '',
+                'address': '0x0',
+                'arguments': []
+            }
+            
+            # Parse function details
+            j = i + 1
+            while j < len(lines) and not lines[j].strip().startswith('0x') and 'DW_TAG' not in lines[j]:
+                detail_line = lines[j]
+                
+                # Extract function name
+                if 'DW_AT_name' in detail_line:
+                    match = re.search(r'DW_AT_name\s*\(\s*"([^"]+)"\s*\)', detail_line)
+                    if match:
+                        current_function['name'] = match.group(1)
+                
+                # Extract low_pc (function address)
+                elif 'DW_AT_low_pc' in detail_line:
+                    match = re.search(r'DW_AT_low_pc\s*\(\s*0x([0-9a-fA-F]+)\s*\)', detail_line)
+                    if match:
+                        current_function['address'] = f"0x{match.group(1)}"
+                
+                j += 1
+            
+            # If DWARF address is 0, try symbol table
+            if current_function['address'] == '0x0' and current_function['name']:
+                if current_function['name'] in symbol_map:
+                    current_function['address'] = f"0x{symbol_map[current_function['name']]}"
+            
+            i = j
+            continue
+        
+        # Detect function parameters
+        if 'DW_TAG_formal_parameter' in line and current_function:
+            param = {
+                'name': '',
+                'type': 'unknown',
+                'registers': [],
+                'location': 'llvm-dwarfdump'
+            }
+            
+            # Parse parameter details
+            j = i + 1
+            while j < len(lines) and not lines[j].strip().startswith('0x') and 'DW_TAG' not in lines[j]:
+                param_line = lines[j]
+                
+                # Extract parameter name
+                if 'DW_AT_name' in param_line:
+                    match = re.search(r'DW_AT_name\s*\(\s*"([^"]+)"\s*\)', param_line)
+                    if match:
+                        param['name'] = match.group(1)
+                
+                # Extract type info
+                elif 'DW_AT_type' in param_line:
+                    # Try to extract the type name from quotes after the hex offset
+                    # Format: DW_AT_type (0xHEXADDR "typename")
+                    type_match = re.search(r'DW_AT_type\s*\(\s*0x[0-9a-fA-F]+\s+"([^"]+)"\s*\)', param_line)
+                    if type_match:
+                        param['type'] = type_match.group(1)
+                    else:
+                        # Fallback if no quoted type name is present
+                        param['type'] = 'type-ref'
+                
+                # Extract location (registers)
+                elif 'DW_AT_location' in param_line:
+                    # The actual location list is on the NEXT line(s)
+                    # Look ahead to find the first location entry (at function entry)
+                    k = j + 1
+                    while k < len(lines) and k < j + 5:  # Look ahead up to 5 lines
+                        loc_line = lines[k]
+                        # Find the first location list entry: [0xADDR, 0xADDR): ...
+                        if re.search(r'\[0x[0-9a-fA-F]+,\s*0x[0-9a-fA-F]+\):', loc_line):
+                            # Extract register names (e.g., "DW_OP_reg0 RAX")
+                            # Pattern: DW_OP_reg\d+ REGNAME or just register names
+                            reg_matches = re.findall(r'DW_OP_reg\d+\s+([A-Z0-9]+)', loc_line)
+                            if reg_matches:
+                                param['registers'] = reg_matches
+                                param['location'] = loc_line.strip()
+                            break
+                        k += 1
+                
+                j += 1
+            
+            # Skip output parameters (~r0, ~r1, etc.) and unnamed params
+            if param['name'] and not param['name'].startswith('~r'):
+                current_function['arguments'].append(param)
+            
+            i = j
+            continue
+        
+        i += 1
+    
+    # Add last function
+    if current_function and current_function['name']:
+        functions.append(current_function)
+    
+    return functions
+
+def get_register_name(reg_num):
+    """Map DWARF register numbers to x86-64 register names"""
+    reg_map = {
+        0: 'RAX', 1: 'RDX', 2: 'RCX', 3: 'RBX',
+        4: 'RSI', 5: 'RDI', 6: 'RBP', 7: 'RSP',
+        8: 'R8', 9: 'R9', 10: 'R10', 11: 'R11',
+        12: 'R12', 13: 'R13', 14: 'R14', 15: 'R15'
+    }
+    return reg_map.get(reg_num)
+
+def main():
+    if len(sys.argv) < 3:
+        print(f"Usage: {sys.argv[0]} <binary_path> <output_json>", file=sys.stderr)
+        sys.exit(1)
+    
+    binary_path = sys.argv[1]
+    output_path = sys.argv[2]
+    
+    if not os.path.exists(binary_path):
+        print(f"Error: Binary not found: {binary_path}", file=sys.stderr)
+        sys.exit(1)
+    
+    print(f"Extracting function signatures from: {binary_path}")
+    print("Using llvm-dwarfdump-18 for DWARF5 support...")
+    
+    # Get symbol table addresses as fallback
+    print("Reading symbol table...")
+    symbol_map = get_symbol_addresses(binary_path)
+    print(f"Found {len(symbol_map)} symbols")
+    
+    # Run llvm-dwarfdump
+    print("Running llvm-dwarfdump (this may take a while for large binaries)...")
+    dwarf_output = run_llvm_dwarfdump(binary_path)
+    
+    # Parse the output
+    print("Parsing DWARF information...")
+    functions = parse_dwarf_output(dwarf_output, symbol_map)
+    
+    # Save to JSON
+    print(f"Extracted {len(functions)} functions")
+    print(f"Writing to: {output_path}")
+    
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, 'w') as f:
+        json.dump(functions, f, indent=2)
+    
+    print("Done!")
+    
+    # Show a sample of extracted functions
+    if functions:
+        print("\nSample of extracted functions:")
+        for func in functions[:5]:
+            print(f"  - {func['name']} @ {func['address']} ({len(func['arguments'])} args)")
+
+if __name__ == '__main__':
+    main()
+

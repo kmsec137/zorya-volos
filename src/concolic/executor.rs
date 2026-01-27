@@ -148,7 +148,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     /// This works for both Go GC and TinyGo binaries.
     pub fn get_current_goroutine_id(&self) -> Result<u64, String> {
         let source_lang = std::env::var("SOURCE_LANG").unwrap_or_default();
-        
+
         // Only extract for Go binaries
         if source_lang.to_lowercase() != "go" {
             return Ok(0);
@@ -159,7 +159,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     }
 
     /// Extract goroutine ID from TLS by reading the runtime.g structure
-    /// 
+    ///
     /// TLS access pattern:
     ///   1. Read FS register (0x110) → TLS base
     ///   2. Read g pointer at TLS base - 8
@@ -169,44 +169,50 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     /// which is generated during DWARF analysis.
     fn extract_gid_from_tls(&self) -> Result<u64, String> {
         // Read FS base register (TLS base)
-        let cpu_state = self.state.cpu_state.lock()
+        let cpu_state = self
+            .state
+            .cpu_state
+            .lock()
             .map_err(|e| format!("Failed to lock CPU state: {}", e))?;
-        
-        let fs_base = cpu_state.get_register_by_offset(0x110, 64) // FS_OFFSET
+
+        let fs_base = cpu_state
+            .get_register_by_offset(0x110, 64) // FS_OFFSET
             .map(|v| v.concrete.to_u64())
             .unwrap_or(0);
-        
+
         drop(cpu_state); // Release lock
-        
+
         if fs_base == 0 {
             // TLS not set up yet, return 0 (main goroutine)
             return Ok(0);
         }
-        
+
         // Read g pointer at fs_base - 8
         // In Go runtime, the current goroutine pointer is stored at FS:[-8]
         // See https://github.com/golang/go/commit/658a338f78ef5dce4c81527c34fb52be95357ef7
         let g_ptr_addr = fs_base.wrapping_sub(8);
-        let g_ptr = self.state.memory.read_value(
-            g_ptr_addr,
-            64,
-            &mut self.state.logger.clone()
-        ).map(|v| v.concrete.to_u64()).unwrap_or(0);
-        
+        let g_ptr = self
+            .state
+            .memory
+            .read_value(g_ptr_addr, 64, &mut self.state.logger.clone())
+            .map(|v| v.concrete.to_u64())
+            .unwrap_or(0);
+
         if g_ptr == 0 {
             // No goroutine context, return 0
             return Ok(0);
         }
-        
+
         // Read goid field from g struct using dynamically loaded offset
         // The offset is extracted from DWARF at initialization time
         let goid_offset = crate::state::RuntimeGOffsets::get_goid_offset();
-        let goid = self.state.memory.read_value(
-            g_ptr + goid_offset,
-            64,
-            &mut self.state.logger.clone()
-        ).map(|v| v.concrete.to_u64()).unwrap_or(0);
-        
+        let goid = self
+            .state
+            .memory
+            .read_value(g_ptr + goid_offset, 64, &mut self.state.logger.clone())
+            .map(|v| v.concrete.to_u64())
+            .unwrap_or(0);
+
         Ok(goid)
     }
 
@@ -1496,8 +1502,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 );
 
                 // Create concolic variable for branch target and update RIP register
-                let symbolic_var =
-                    SymbolicVar::from_u64(&self.context, branch_target_address, 64).to_bv(&self.context);
+                let symbolic_var = SymbolicVar::from_u64(&self.context, branch_target_address, 64)
+                    .to_bv(&self.context);
                 let branch_target_concolic = ConcolicVar::new_concrete_and_symbolic_int(
                     branch_target_address,
                     symbolic_var,
@@ -2326,14 +2332,17 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         }
 
         // Check for dangling pointer access (freed stack frame)
-        if let Some((func_addr, frame_rsp)) = self.check_dangling_pointer_access(pointer_offset_concrete) {
+        if let Some((func_addr, frame_rsp)) =
+            self.check_dangling_pointer_access(pointer_offset_concrete)
+        {
             log!(
                 self.state.logger.clone(),
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
             );
             log!(
                 self.state.logger.clone(),
-                "VULN: Zorya detected DANGLING POINTER access at address 0x{:x}", pointer_offset_concrete
+                "VULN: Zorya detected DANGLING POINTER access at address 0x{:x}",
+                pointer_offset_concrete
             );
             log!(
                 self.state.logger.clone(),
@@ -2348,20 +2357,26 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 self.state.logger.clone(),
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
             );
-            println!("/!\\ DANGLING POINTER (Use-After-Free) detected at 0x{:x}, execution halted!\n", pointer_offset_concrete);
+            println!(
+                "/!\\ DANGLING POINTER (Use-After-Free) detected at 0x{:x}, execution halted!\n",
+                pointer_offset_concrete
+            );
             println!("    Freed stack frame from function 0x{:x}\n", func_addr);
             process::exit(1);
         }
 
         // Check for dangling pointer access (freed stack frame)
-        if let Some((func_addr, frame_rsp)) = self.check_dangling_pointer_access(pointer_offset_concrete) {
+        if let Some((func_addr, frame_rsp)) =
+            self.check_dangling_pointer_access(pointer_offset_concrete)
+        {
             log!(
                 self.state.logger.clone(),
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
             );
             log!(
                 self.state.logger.clone(),
-                "VULN: Zorya detected DANGLING POINTER access at address 0x{:x}", pointer_offset_concrete
+                "VULN: Zorya detected DANGLING POINTER access at address 0x{:x}",
+                pointer_offset_concrete
             );
             log!(
                 self.state.logger.clone(),
@@ -2376,7 +2391,10 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 self.state.logger.clone(),
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
             );
-            println!("/!\\ DANGLING POINTER (Use-After-Free) detected at 0x{:x}, execution halted!\n", pointer_offset_concrete);
+            println!(
+                "/!\\ DANGLING POINTER (Use-After-Free) detected at 0x{:x}, execution halted!\n",
+                pointer_offset_concrete
+            );
             println!("    Freed stack frame from function 0x{:x}\n", func_addr);
             process::exit(1);
         }
@@ -2811,14 +2829,17 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         }
 
         // Check for dangling pointer access (freed stack frame)
-        if let Some((func_addr, frame_rsp)) = self.check_dangling_pointer_access(pointer_offset_concrete) {
+        if let Some((func_addr, frame_rsp)) =
+            self.check_dangling_pointer_access(pointer_offset_concrete)
+        {
             log!(
                 self.state.logger.clone(),
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
             );
             log!(
                 self.state.logger.clone(),
-                "VULN: Zorya detected DANGLING POINTER WRITE at address 0x{:x}", pointer_offset_concrete
+                "VULN: Zorya detected DANGLING POINTER WRITE at address 0x{:x}",
+                pointer_offset_concrete
             );
             log!(
                 self.state.logger.clone(),
@@ -2839,14 +2860,17 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         }
 
         // Check for dangling pointer access (freed stack frame)
-        if let Some((func_addr, frame_rsp)) = self.check_dangling_pointer_access(pointer_offset_concrete) {
+        if let Some((func_addr, frame_rsp)) =
+            self.check_dangling_pointer_access(pointer_offset_concrete)
+        {
             log!(
                 self.state.logger.clone(),
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
             );
             log!(
                 self.state.logger.clone(),
-                "VULN: Zorya detected DANGLING POINTER WRITE at address 0x{:x}", pointer_offset_concrete
+                "VULN: Zorya detected DANGLING POINTER WRITE at address 0x{:x}",
+                pointer_offset_concrete
             );
             log!(
                 self.state.logger.clone(),
@@ -3883,17 +3907,18 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     // Push a new function frame onto the call stack
     pub fn push_function_frame(&mut self) {
         // Get current RSP value
-        let rsp_value = self.state
+        let rsp_value = self
+            .state
             .cpu_state
             .lock()
             .unwrap()
-            .get_register_by_offset(0x20, 64)  // RSP offset = 0x20
+            .get_register_by_offset(0x20, 64) // RSP offset = 0x20
             .map(|r| r.concrete.to_u64())
             .unwrap_or(0);
-        
+
         // Get current function address
         let func_addr = self.current_address.unwrap_or(0);
-        
+
         self.state.call_stack.push(FunctionFrame {
             local_variables: BTreeSet::new(),
             function_addr: func_addr,
@@ -3904,21 +3929,24 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         log!(
             self.state.logger.clone(),
             "[STACK_FRAME] Pushed frame for func 0x{:x}, RSP=0x{:x} (depth: {})",
-            func_addr, rsp_value, self.state.call_stack.len()
+            func_addr,
+            rsp_value,
+            self.state.call_stack.len()
         );
     }
 
     // Pop the top function frame from the call stack and clean up variables
     pub fn pop_function_frame(&mut self) {
         // Get current RSP (on return)
-        let rsp_on_return = self.state
+        let rsp_on_return = self
+            .state
             .cpu_state
             .lock()
             .unwrap()
             .get_register_by_offset(0x20, 64)
             .map(|r| r.concrete.to_u64())
             .unwrap_or(0);
-        
+
         if let Some(mut finished_frame) = self.state.call_stack.pop() {
             // Remove variables associated with this function's scope from initialized variables
             for var_address in &finished_frame.local_variables {
@@ -3930,17 +3958,19 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     var_address
                 );
             }
-            
+
             // Mark frame as inactive and record exit RSP
             finished_frame.is_active = false;
             finished_frame.rsp_on_exit = Some(rsp_on_return);
-            
+
             log!(
                 self.state.logger.clone(),
                 "[STACK_FRAME] Popped frame for func 0x{:x}, RSP entry=0x{:x}, exit=0x{:x}",
-                finished_frame.function_addr, finished_frame.rsp_on_entry, rsp_on_return
+                finished_frame.function_addr,
+                finished_frame.rsp_on_entry,
+                rsp_on_return
             );
-            
+
             // Store freed frame for dangling pointer detection
             // Keep the last 10 freed frames
             self.state.freed_stack_frames.push_back(finished_frame);
@@ -3972,26 +4002,27 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     /// Returns (is_dangling, function_addr, frame_rsp) if dangling
     pub fn check_dangling_pointer_access(&self, address: u64) -> Option<(u64, u64)> {
         // Get current RSP
-        let current_rsp = self.state
+        let current_rsp = self
+            .state
             .cpu_state
             .lock()
             .unwrap()
             .get_register_by_offset(0x20, 64)
             .map(|r| r.concrete.to_u64())
             .unwrap_or(0);
-        
+
         // Check if address points to any freed stack frame
         for freed_frame in &self.state.freed_stack_frames {
             let frame_start = freed_frame.rsp_on_entry;
             let frame_end = freed_frame.rsp_on_exit.unwrap_or(freed_frame.rsp_on_entry);
-            
+
             // Normalize (stack grows down, so frame_start > frame_end)
             let (low, high) = if frame_start > frame_end {
                 (frame_end, frame_start)
             } else {
                 (frame_start, frame_end)
             };
-            
+
             // Check if address is in the freed frame range
             // AND current RSP is above the freed frame (meaning it's truly freed)
             if address >= low && address < high && current_rsp >= high {

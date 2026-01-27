@@ -36,7 +36,7 @@ macro_rules! log {
 pub struct FunctionFrame {
     pub local_variables: BTreeSet<String>, // Addresses of local variables (as hex strings)
     // Stack frame tracking for dangling pointer detection
-    pub function_addr: u64,      // Address of the function
+    pub function_addr: u64,       // Address of the function
     pub rsp_on_entry: u64,        // RSP when function was called
     pub rsp_on_exit: Option<u64>, // RSP when function returns (None if active)
     pub is_active: bool,          // True if function hasn't returned yet
@@ -75,7 +75,7 @@ pub struct State<'a> {
     pub signal_handlers: HashMap<i32, Sigaction<'a>>, // Stores the signal handlers
     pub call_stack: Vec<FunctionFrame>, // Stack of function frames to track local variables
     pub freed_stack_frames: VecDeque<FunctionFrame>, // Recently freed frames for dangling pointer detection
-    pub jump_tables: BTreeMap<u64, JumpTable>, // Maps base addresses to jump table metadata
+    pub jump_tables: BTreeMap<u64, JumpTable>,       // Maps base addresses to jump table metadata
     pub thread_manager: Arc<Mutex<ThreadManager<'a>>>, // Manages OS threads for Go runtime
 }
 

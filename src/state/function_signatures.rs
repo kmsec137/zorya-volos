@@ -530,35 +530,42 @@ pub fn load_go_function_args_map(
     executor: &mut ConcolicExecutor,
 ) -> Result<HashMap<u64, (String, Vec<(String, Vec<String>, String)>)>, Box<dyn std::error::Error>>
 {
-    log!(
-        executor.state.logger,
-        "Calling get-funct-arg-types to extract Go function info..."
-    );
-
-    let go_bin = format!(
-        "{}/scripts/get-funct-arg-types/main",
-        env::var("ZORYA_DIR")?
-    );
     let func_signatures_path = "results/function_signatures_go.json";
 
-    // Add --extract-runtime-g flag for Go binaries to extract goroutine ID offsets
-    let out = std::process::Command::new(&go_bin)
-        .arg(binary_path)
-        .arg(func_signatures_path)
-        .arg("--extract-runtime-g")  // Extract runtime.g struct offsets
-        .output()?;
-    if !out.status.success() {
-        return Err(format!("go script failed: {}", String::from_utf8_lossy(&out.stderr)).into());
-    }
-    
-    // Print output for runtime.g extraction info
-    if !out.stderr.is_empty() {
-        print!("{}", String::from_utf8_lossy(&out.stderr));
+    // Check if we need to regenerate signatures
+    if !Path::new(func_signatures_path).exists() {
+        log!(
+            executor.state.logger,
+            "Function signatures not found. Extracting from binary using llvm-dwarfdump..."
+        );
+
+        // Use llvm-dwarfdump for all languages (C, C++, Go, Rust, etc.)
+        // It has better DWARF5 support than GNU binutils
+        let llvm_script = format!(
+            "{}/scripts/llvm_extract_function_signatures.py",
+            env::var("ZORYA_DIR")?
+        );
+
+        let out = std::process::Command::new("python3")
+            .arg(&llvm_script)
+            .arg(binary_path)
+            .arg(func_signatures_path)
+            .output()?;
+
+        if !out.status.success() {
+            let error_msg = String::from_utf8_lossy(&out.stderr);
+            return Err(format!("llvm-dwarfdump extraction failed: {}", error_msg).into());
+        }
+
+        log!(
+            executor.state.logger,
+            "Successfully extracted function signatures"
+        );
     }
 
     log!(
         executor.state.logger,
-        "Loading Go signatures from {}...",
+        "Loading function signatures from {}...",
         func_signatures_path
     );
 
@@ -572,7 +579,7 @@ pub fn load_go_function_args_map(
         functions.len()
     );
 
-    let mut go_signatures = HashMap::new();
+    let mut function_map = HashMap::new();
     for func in functions {
         if let Ok(addr) = u64::from_str_radix(func.address.trim_start_matches("0x"), 16) {
             let args = func
@@ -586,7 +593,7 @@ pub fn load_go_function_args_map(
                     )
                 })
                 .collect();
-            go_signatures.insert(addr, (func.name, args));
+            function_map.insert(addr, (func.name, args));
         } else {
             log!(
                 executor.state.logger,
@@ -599,9 +606,9 @@ pub fn load_go_function_args_map(
 
     log!(
         executor.state.logger,
-        "Processed {} Go signatures.",
-        go_signatures.len()
+        "Processed {} function signatures.",
+        function_map.len()
     );
 
-    Ok(go_signatures)
+    Ok(function_map)
 }
