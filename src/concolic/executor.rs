@@ -3909,10 +3909,22 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             );
 
             // Store freed frame for dangling pointer detection
-            // Keep the last 10 freed frames
-            self.state.freed_stack_frames.push_back(finished_frame);
-            if self.state.freed_stack_frames.len() > 10 {
-                self.state.freed_stack_frames.pop_front();
+            // Skip Go runtime internal functions to avoid false positives
+            // Go runtime functions manage memory differently and stack reuse is expected
+            let should_track = !self.is_go_runtime_internal_function(finished_frame.function_addr);
+
+            if should_track {
+                // Keep the last 10 freed frames
+                self.state.freed_stack_frames.push_back(finished_frame);
+                if self.state.freed_stack_frames.len() > 10 {
+                    self.state.freed_stack_frames.pop_front();
+                }
+            } else {
+                log!(
+                    self.state.logger.clone(),
+                    "[STACK_FRAME] Skipping dangling pointer tracking for runtime function 0x{:x}",
+                    finished_frame.function_addr
+                );
             }
         } else {
             log!(
@@ -3972,6 +3984,39 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             }
         }
         None
+    }
+
+    /// Check if a function address corresponds to a Go runtime internal function
+    /// These functions (runtime.*, internal/abi.*, etc.) manage memory differently
+    /// and stack reuse after their return is expected, not a vulnerability
+    fn is_go_runtime_internal_function(&self, func_addr: u64) -> bool {
+        // Check the source language - only filter for Go binaries
+        let source_lang = std::env::var("SOURCE_LANG").unwrap_or_default();
+        if source_lang.to_lowercase() != "go" {
+            return false;
+        }
+
+        // Look up function name in symbol table
+        if let Some(func_name) = self.symbol_table.get(&func_addr) {
+            // Filter out Go runtime internal functions that commonly cause false positives
+            // These prefixes indicate runtime/internal functions where stack reuse is normal
+            let runtime_prefixes = [
+                "runtime.",
+                "internal/abi.",
+                "internal/runtime",
+                "sync.",
+                "sync/atomic.",
+                "reflect.",
+            ];
+
+            for prefix in &runtime_prefixes {
+                if func_name.starts_with(prefix) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 
