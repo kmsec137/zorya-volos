@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use parser::parser::{Inst, Opcode, Var, Varnode};
 use z3::{Config, Context, Optimize};
 use zorya::concolic::ConcolicExecutor;

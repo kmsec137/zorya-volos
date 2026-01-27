@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use std::sync::Mutex;
 /// File containing all the information regarding the binary file to be analyzed by zorya
 use std::{env, path::PathBuf};

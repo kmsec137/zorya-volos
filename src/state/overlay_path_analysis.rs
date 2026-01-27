@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /// Overlay path analysis module for exploring untaken paths
 /// This performs full concolic execution on unexplored paths using copy-on-write state
 use crate::executor::ConcolicExecutor;

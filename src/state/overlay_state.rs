@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /// Overlay mechanism for concolic exploration of untaken paths
 /// This provides copy-on-write semantics for CPU state and memory
 /// to enable lightweight exploration without full state cloning

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /// Thread loader - loads multi-thread state from GDB dumps
 use crate::concolic::ConcolicVar;
 use crate::state::cpu_state::CpuState;

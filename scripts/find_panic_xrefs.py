@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # find_panic_xrefs.py
 # Used in main.rs by the get_cross_references function to find cross-references to panic functions.
 import sys

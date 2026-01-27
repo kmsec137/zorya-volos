@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """
 Extract function signatures from Go binaries using llvm-dwarfdump
 This script properly handles DWARF5 which has bugs in GNU binutils

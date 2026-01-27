@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Strategies for Finding Bugs, Panics, and Vulnerabilities with Zorya
 
 Zorya is a **concolic execution engine** that can explore execution paths of a binary or a specific function by combining concrete and symbolic execution. It works at the level of Ghidra’s P-Code intermediate representation, executing P-Code instructions concolically to reason about both concrete values and symbolic constraints.

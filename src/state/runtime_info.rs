@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 //! Runtime information cache for Go binaries
 //!
 //! This module handles caching of Go runtime structure offsets,

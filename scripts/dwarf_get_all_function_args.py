@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # This script is  not used anymore to extract function arguments from DWARF debug info.
 # It has been replaced by a Go script located in /scripts/get-funct-arg-types/main.go
 # but is kept for reference.

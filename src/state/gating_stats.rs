@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static GATED_BY_REACH: AtomicU64 = AtomicU64::new(0);
