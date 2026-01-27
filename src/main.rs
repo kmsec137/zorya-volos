@@ -709,8 +709,6 @@ fn execute_instructions_from(
         function_args_map
     };
 
-    // counters are global atomics in gating_stats; they start at 0 at process start
-
     while let Some(instructions) = instructions_map.get(&current_rip) {
         if current_rip == end_address {
             log!(

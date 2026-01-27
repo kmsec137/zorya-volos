@@ -2122,9 +2122,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             drop(tm);
         }
 
-        // Push a new function frame onto the call stack
-        self.push_function_frame();
-
         // Fetch the branch target (input0)
         // Fetch the data to be stored (treated as assembly address directly)
         log!(
@@ -2161,6 +2158,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             "Data to call: {:x}",
             data_to_call_concrete
         );
+
+        // Push a new function frame onto the call stack with the CORRECT target function address
+        self.push_function_frame(data_to_call_concrete);
 
         // Update the RIP register to the branch target address (overlay-aware)
         self.set_register_overlay_aware(0x288, data_to_call_concolic, 64)?;
@@ -3842,7 +3842,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     }
 
     // Push a new function frame onto the call stack
-    pub fn push_function_frame(&mut self) {
+    // target_func_addr: the address of the function being called (entry point)
+    pub fn push_function_frame(&mut self, target_func_addr: u64) {
         // Get current RSP value
         let rsp_value = self
             .state
@@ -3853,12 +3854,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             .map(|r| r.concrete.to_u64())
             .unwrap_or(0);
 
-        // Get current function address
-        let func_addr = self.current_address.unwrap_or(0);
-
         self.state.call_stack.push(FunctionFrame {
             local_variables: BTreeSet::new(),
-            function_addr: func_addr,
+            function_addr: target_func_addr,
             rsp_on_entry: rsp_value,
             rsp_on_exit: None,
             is_active: true,
@@ -3866,7 +3864,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         log!(
             self.state.logger.clone(),
             "[STACK_FRAME] Pushed frame for func 0x{:x}, RSP=0x{:x} (depth: {})",
-            func_addr,
+            target_func_addr,
             rsp_value,
             self.state.call_stack.len()
         );
@@ -3989,6 +3987,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     /// Check if a function address corresponds to a Go runtime internal function
     /// These functions (runtime.*, internal/abi.*, etc.) manage memory differently
     /// and stack reuse after their return is expected, not a vulnerability
+    /// Goal : avoid false positives (during dangling pointers detection)
     fn is_go_runtime_internal_function(&self, func_addr: u64) -> bool {
         // Check the source language - only filter for Go binaries
         let source_lang = std::env::var("SOURCE_LANG").unwrap_or_default();
@@ -3996,17 +3995,35 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             return false;
         }
 
-        // Look up function name in symbol table
-        if let Some(func_name) = self.symbol_table.get(&func_addr) {
-            // Filter out Go runtime internal functions that commonly cause false positives
-            // These prefixes indicate runtime/internal functions where stack reuse is normal
+        // Look up function name from the existing symbol_table (key is hex address string)
+        let func_addr_hex = format!("{:x}", func_addr);
+        if let Some(func_name) = self.symbol_table.get(&func_addr_hex) {
+            // Filter out Go runtime and standard library internal functions that commonly cause false positives
+            // These prefixes indicate runtime/stdlib functions where stack reuse is normal
             let runtime_prefixes = [
+                // Go runtime
                 "runtime.",
                 "internal/abi.",
                 "internal/runtime",
+                // Sync primitives
                 "sync.",
                 "sync/atomic.",
+                // Reflection
                 "reflect.",
+                // Common stdlib packages that manage memory/goroutines internally
+                "time.",
+                "context.",
+                "os.",
+                "io.",
+                "fmt.",
+                "strings.",
+                "bytes.",
+                "encoding/",
+                "math.",
+                "strconv.",
+                "unicode.",
+                "sort.",
+                "container/",
             ];
 
             for prefix in &runtime_prefixes {
