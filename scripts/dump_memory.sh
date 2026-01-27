@@ -68,6 +68,8 @@ cd "$SCRIPTS_DUMP"
 # Redirect GDB output to log files
 GDB_LOG="$RESULTS_DIR/initialization_data/gdb_log.txt"
 
+# PHASE 1: Get memory mappings only (first GDB session)
+# This is needed to generate dump_commands.txt before we can dump memory
 gdb -batch \
     -ex "set auto-load safe-path /" \
     -ex "set pagination off" \
@@ -77,26 +79,24 @@ gdb -batch \
     -ex "show args" \
     -ex "break *$START_POINT" \
     -ex "run" \
-    -ex "set logging file $CPU_MAP_PATH" \
-    -ex "set logging enabled on" \
-    -ex "info all-registers" \
-    -ex "set logging enabled off" \
     -ex "set logging file $MEMORY_MAP_PATH" \
     -ex "set logging enabled on" \
     -ex "info proc mappings" \
     -ex "set logging enabled off" \
     -ex "quit" &> "$GDB_LOG"
 
-# Check if CPU and memory mappings were successfully created
-if [ ! -s $CPU_MAP_PATH ] || [ ! -s $MEMORY_MAP_PATH ]; then
-    echo "Error: Failed to generate cpu_mapping.txt or memory_mapping.txt. Check $GDB_LOG for details."
+# Check if memory mapping was successfully created
+if [ ! -s $MEMORY_MAP_PATH ]; then
+    echo "Error: Failed to generate memory_mapping.txt. Check $GDB_LOG for details."
     exit 1
 fi
 
 echo "Generating dump_commands.txt using parse_and_generate.py..."
 python3 parse_and_generate.py
 
-echo "Executing dump commands locally in GDB..."
+# PHASE 2: Single combined session for registers, memory dumps, and thread states
+# This ensures all data comes from the same process with consistent TLS addresses
+echo "Executing memory dumps, registers, and thread state capture in single GDB session..."
 gdb -batch \
     -ex "set auto-load safe-path /" \
     -ex "set pagination off" \
@@ -105,8 +105,14 @@ gdb -batch \
     -ex "set args ${ARGS}" \
     -ex "break *$START_POINT" \
     -ex "run" \
+    -ex "set logging file $CPU_MAP_PATH" \
+    -ex "set logging enabled on" \
+    -ex "info all-registers" \
+    -ex "set logging enabled off" \
     -ex "source execute_commands.py" \
     -ex "exec $DUMP_COMMANDS_PATH" \
+    -ex "source $SCRIPTS_DUMP/dump_threads.py" \
+    -ex "dump-threads" \
     -ex "quit" &>> "$GDB_LOG"
 
 # Check if execution was successful
@@ -116,20 +122,7 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Dump commands executed successfully in GDB."
-
-# Dump all thread states (registers + FS/GS base)
 echo "Dumping thread states (registers + TLS bases)..."
-gdb -batch \
-    -ex "set auto-load safe-path /" \
-    -ex "set pagination off" \
-    -ex "set confirm off" \
-    -ex "file $BIN_PATH" \
-    -ex "set args ${ARGS}" \
-    -ex "break *$START_POINT" \
-    -ex "run" \
-    -ex "source $SCRIPTS_DUMP/dump_threads.py" \
-    -ex "dump-threads" \
-    -ex "quit" &>> "$GDB_LOG"
 
 # Check if thread dump was successful
 if [ $? -ne 0 ]; then
