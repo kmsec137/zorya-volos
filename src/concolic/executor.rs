@@ -2362,45 +2362,10 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
             );
             println!(
-                "/!\\ DANGLING POINTER (Use-After-Free) detected at 0x{:x}, execution halted!\n",
+                "\n/!\\ DANGLING POINTER (Use-After-Free) detected at 0x{:x}, execution halted!",
                 pointer_offset_concrete
             );
             println!("    Freed stack frame from function 0x{:x}\n", func_addr);
-            process::exit(1);
-        }
-
-        // Check for dangling pointer access (freed stack frame)
-        if let Some((func_addr, frame_rsp)) =
-            self.check_dangling_pointer_access(pointer_offset_concrete)
-        {
-            log!(
-                self.state.logger.clone(),
-                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-            );
-            log!(
-                self.state.logger.clone(),
-                "VULN: Zorya detected DANGLING POINTER access at address 0x{:x}",
-                pointer_offset_concrete
-            );
-            log!(
-                self.state.logger.clone(),
-                "      Memory belongs to freed stack frame from function 0x{:x} (frame RSP: 0x{:x})",
-                func_addr, frame_rsp
-            );
-            log!(
-                self.state.logger.clone(),
-                "      This is a Use-After-Free vulnerability (stack memory reuse)"
-            );
-            log!(
-                self.state.logger.clone(),
-                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
-            );
-            println!(
-                "/!\\ DANGLING POINTER (Use-After-Free) detected at 0x{:x}, execution halted!\n",
-                pointer_offset_concrete
-            );
-            println!("    Freed stack frame from function 0x{:x}\n", func_addr);
-            process::exit(1);
         }
 
         // Cases covered : 'void a(void) { b(); c(); }', do the 'reinitialization'' of variables used by b() when b() finishes.
