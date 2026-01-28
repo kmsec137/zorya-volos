@@ -627,7 +627,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let new_mask = executor
                     .state
                     .memory
-                    .read_u64(set_ptr, &mut executor.state.logger.clone(), executor.new_volos())
+                    .read_u64(set_ptr, &mut executor.state.logger.clone(), executor.new_volos(), false)
                     .map_err(|e| format!("Failed to read new signal mask from memory: {}", e))?
                     .concrete
                     .to_u64();
@@ -723,7 +723,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let tv_sec = executor
                     .state
                     .memory
-                    .read_u64(req_ptr, &mut executor.state.logger.clone(), executor.new_volos())
+                    .read_u64(req_ptr, &mut executor.state.logger.clone(), executor.new_volos(), false)
                     .map_err(|e| format!("Failed to read tv_sec: {}", e))?
                     .concrete
                     .to_u64();
@@ -731,7 +731,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let tv_nsec = executor
                     .state
                     .memory
-                    .read_u64(req_ptr + 8, &mut executor.state.logger.clone(), executor.new_volos())
+                    .read_u64(req_ptr + 8, &mut executor.state.logger.clone(), executor.new_volos(), false)
                     .map_err(|e| format!("Failed to read tv_nsec: {}", e))?
                     .concrete
                     .to_u64();
@@ -1041,7 +1041,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let arg_ptr = executor
                     .state
                     .memory
-                    .read_u64(argv_ptr + (i * 8), &mut executor.state.logger.clone(), executor.new_volos())
+                    .read_u64(argv_ptr + (i * 8), &mut executor.state.logger.clone(), executor.new_volos(), false)
                     .map_err(|e| format!("Failed to read argv_ptr at index {}: {}", i, e))?
                     .concrete;
                 if arg_ptr == ConcreteVar::Int(0) {
@@ -1064,7 +1064,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let env_ptr = executor
                     .state
                     .memory
-                    .read_u64(envp_ptr + (j * 8), &mut executor.state.logger.clone(), executor.new_volos())
+                    .read_u64(envp_ptr + (j * 8), &mut executor.state.logger.clone(), executor.new_volos(), false)
                     .map_err(|e| format!("Failed to read envp_ptr at index {}: {}", j, e))?
                     .concrete;
                 if env_ptr == ConcreteVar::Int(0) {
@@ -1428,7 +1428,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let ss_sp = match executor
                     .state
                     .memory
-                    .read_u64(ss_ptr, &mut executor.state.logger.clone(), executor.new_volos())
+                    .read_u64(ss_ptr, &mut executor.state.logger.clone(), executor.new_volos(), false)
                 {
                     Ok(value) => value.concrete,
                     Err(e) => {
@@ -1445,7 +1445,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let ss_flags = match executor
                     .state
                     .memory
-                    .read_u32(ss_ptr + 8, &mut executor.state.logger.clone(), executor.new_volos())
+                    .read_u32(ss_ptr + 8, &mut executor.state.logger.clone(), executor.new_volos(), false)
                 {
                     Ok(value) => value.concrete.to_i32(),
                     Err(e) => {
@@ -1466,7 +1466,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let ss_size = match executor
                     .state
                     .memory
-                    .read_u64(ss_ptr + 16, &mut executor.state.logger.clone(), init_volos)
+                    .read_u64(ss_ptr + 16, &mut executor.state.logger.clone(), init_volos, false) //assuing its not internal since its in a syscall
                 {
                     Ok(value) => value.concrete,
                     Err(e) => {

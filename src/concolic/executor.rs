@@ -196,7 +196,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         let g_ptr = self
             .state
             .memory
-            .read_value(g_ptr_addr, 64, &mut self.state.logger.clone(), true)
+            .read_value(g_ptr_addr, 64, &mut self.state.logger.clone(), self.new_volos(), true)
             .map(|v| v.concrete.to_u64())
             .unwrap_or(0);
 
@@ -211,7 +211,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         let goid = self
             .state
             .memory
-            .read_value(g_ptr + goid_offset, 64, &mut self.state.logger.clone(), true)
+            .read_value(g_ptr + goid_offset, 64, &mut self.state.logger.clone(), self.new_volos(), true)
             .map(|v| v.concrete.to_u64())
             .unwrap_or(0);
 
@@ -251,7 +251,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         }
 
         // Fall back to base state
-        self.state.memory.read_memory(address, size)
+        self.state.memory.read_memory(address, size, self.new_volos(), true)
     }
 
     /// Write memory with overlay support
@@ -299,7 +299,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 };
             self.state
                 .memory
-                .write_memory(address, concrete_data, &symbolic_vec)
+                .write_memory(address, concrete_data, &symbolic_vec, self.new_volos(), true)
                 .map_err(|e| format!("Failed to write memory: {:?}", e))
         }
     }
