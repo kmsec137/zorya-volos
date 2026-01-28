@@ -83,15 +83,17 @@ impl VolosRegion {
 			end_address,
 			memory
 		};
-		volos_region.add_volos(start_address, end_address - start_address, init_volos);
+		volos_region.add_volos(start_address, end_address - start_address, init_volos, true);
 		return volos_region	
 	}
 
-	pub fn add_volos(&mut self, address:u64, size:u64, volos:Volos) {
-			
+	pub fn add_volos(&mut self, address:u64, size:u64, volos:Volos, init: bool) {
+		
+		if init != true {	
 		for index in 0..size{
 			let new_volos = volos.clone();
 			self.memory.insert(address +index, new_volos);
+		}
 		}
 	}
 }
@@ -422,9 +424,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 }
 
                 let concrete = region.concrete_data[offset..offset + size].to_vec();
-					 if internal == true {
+					 if internal != true {
 					 	let v_region = &mut region.volos_region.borrow_mut();
-					 	v_region.add_volos((offset).try_into().unwrap(), size.try_into().unwrap(), volos.clone());
+					 	v_region.add_volos((offset).try_into().unwrap(), size.try_into().unwrap(), volos.clone(), internal);
 					 }
 
 					 println!("[VOLOS] reading memory with volos --> @[0x{:X}] {:?}", address, volos);
@@ -769,7 +771,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 for (i, &byte) in concrete.iter().enumerate() {
                     region.concrete_data[offset + i] = byte;
 						  if internal == false {
-						  	region.volos_region.borrow_mut().add_volos((offset+i).try_into().unwrap(),concrete.len().try_into().unwrap(),volos.clone())
+						  	region.volos_region.borrow_mut().add_volos((offset+i).try_into().unwrap(),concrete.len().try_into().unwrap(),volos.clone(),internal)
 						  }
                 }
 
