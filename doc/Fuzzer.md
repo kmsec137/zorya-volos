@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Zorya Fuzzer Module
 
 The Zorya Fuzzer is an automated test campaign orchestrator for the Zorya concolic executor. It allows you to configure multiple test runs with different starting addresses and arguments in a single JSON file, then execute them all systematically.

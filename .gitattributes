@@ -1,1 +1,5 @@
+# SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+#
+# SPDX-License-Identifier: Apache-2.0
+
 tests/pcode/*.txt filter=lfs diff=lfs merge=lfs -text

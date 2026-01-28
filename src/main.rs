@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use core::panic;
 use std::collections::{BTreeMap, HashMap};
 use std::env;
@@ -345,20 +349,21 @@ fn main() -> Result<(), Box<dyn Error>> {
             "go" => {
                 log!(
                     executor.state.logger,
-                    "Calling get-funct-arg-types to extract Go function info..."
+                    "Extracting Go function signatures using llvm-dwarfdump..."
                 );
-                let go_bin = format!(
-                    "{}/scripts/get-funct-arg-types/main",
+                let llvm_script = format!(
+                    "{}/scripts/llvm_extract_function_signatures.py",
                     env::var("ZORYA_DIR")?
                 );
                 let func_signatures_path = "results/function_signatures_go.json";
-                let out = std::process::Command::new(&go_bin)
+                let out = std::process::Command::new("python3")
+                    .arg(&llvm_script)
                     .arg(&binary_path)
                     .arg(func_signatures_path)
                     .output()?;
                 if !out.status.success() {
                     return Err(format!(
-                        "go script failed: {}",
+                        "llvm-dwarfdump extraction failed: {}",
                         String::from_utf8_lossy(&out.stderr)
                     )
                     .into());
@@ -438,41 +443,46 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "=== PHASE 1: Initializing argument structures ==="
             );
 
-            for (arg_name, reg_name, arg_type) in args {
+            for (arg_name, reg_spec, arg_type) in args.iter() {
+                // reg_spec is a comma-separated string like "RAX,RBX,RCX" or "RDI"
+                // Split it back into a Vec for uniform handling
+                let regs: Vec<&str> = if reg_spec.is_empty() {
+                    vec![]
+                } else {
+                    reg_spec.split(',').collect()
+                };
+
                 log!(
                     executor.state.logger,
                     "Assigning symbolic var '{}' to register '{}' of type {}",
                     arg_name,
-                    reg_name,
+                    reg_spec,
                     arg_type
                 );
 
                 // Special handling for Go strings: two registers (ptr, len)
-                if arg_type == "string" && reg_name.contains(',') {
-                    let regs: Vec<&str> = reg_name.split(',').collect();
-                    if regs.len() == 2 {
-                        initialize_string_argument(
-                            arg_name,
-                            &regs,
-                            &mut concrete_values_of_args,
-                            &mut executor,
-                        );
-                    } else {
-                        log!(
-                            executor.state.logger,
-                            "WARNING: unexpected registers '{}' for string '{}', skipping",
-                            reg_name,
-                            arg_name
-                        );
-                    }
+                if arg_type == "string" && regs.len() == 2 {
+                    initialize_string_argument(
+                        arg_name,
+                        &regs,
+                        &mut concrete_values_of_args,
+                        &mut executor,
+                    );
+                    continue;
+                } else if arg_type == "string" && regs.len() != 2 {
+                    log!(
+                        executor.state.logger,
+                        "WARNING: unexpected registers '{}' for string '{}', skipping",
+                        reg_spec,
+                        arg_name
+                    );
                     continue;
                 }
 
                 // Handle slice types (including multi-dimensional slices like [][32]byte)
                 if arg_type.starts_with("[]") {
-                    if reg_name.contains(',') {
+                    if regs.len() > 1 {
                         // Multi-register slice (ptr, len, cap)
-                        let regs: Vec<&str> = reg_name.split(',').collect();
                         initialize_slice_argument(
                             arg_name,
                             arg_type,
@@ -480,27 +490,55 @@ fn main() -> Result<(), Box<dyn Error>> {
                             &mut concrete_values_of_args,
                             &mut executor,
                         );
-                    } else {
+                    } else if regs.len() == 1 {
                         // Single register slice (just pointer)
                         initialize_single_register_slice(
                             arg_name,
                             arg_type,
-                            reg_name,
+                            regs[0],
                             &mut concrete_values_of_args,
                             &mut executor,
+                        );
+                    } else {
+                        log!(
+                            executor.state.logger,
+                            "WARNING: no registers for slice '{}', skipping",
+                            arg_name
                         );
                     }
                     continue;
                 }
 
                 // General case: single-register arguments
-                initialize_single_register_argument(
-                    arg_name,
-                    reg_name,
-                    arg_type,
-                    &mut concrete_values_of_args,
-                    &mut executor,
-                );
+                if regs.len() == 1 {
+                    initialize_single_register_argument(
+                        arg_name,
+                        regs[0],
+                        arg_type,
+                        &mut concrete_values_of_args,
+                        &mut executor,
+                    );
+                } else if regs.is_empty() {
+                    log!(
+                        executor.state.logger,
+                        "WARNING: no register for argument '{}', skipping",
+                        arg_name
+                    );
+                } else {
+                    log!(
+                        executor.state.logger,
+                        "WARNING: multiple registers '{}' for non-slice/string argument '{}', using first register",
+                        reg_spec,
+                        arg_name
+                    );
+                    initialize_single_register_argument(
+                        arg_name,
+                        regs[0],
+                        arg_type,
+                        &mut concrete_values_of_args,
+                        &mut executor,
+                    );
+                }
             }
 
             // Phase 2: Initialize memory contents pointed to by slices
@@ -670,8 +708,6 @@ fn execute_instructions_from(
         let function_args_map = load_function_args_map();
 		  function_args_map
     };
-
-    // counters are global atomics in gating_stats; they start at 0 at process start
 
     while let Some(instructions) = instructions_map.get(&current_rip) {
         if current_rip == end_address {

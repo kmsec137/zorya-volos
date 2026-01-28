@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 pub mod cpu_state;
 pub mod evaluate_z3;
 pub mod explore_ast;

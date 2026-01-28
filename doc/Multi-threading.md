@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Multi-Thread Support in Zorya
 
 Zorya supports multi-threaded Go binaries by automatically dumping and restoring all OS thread states (registers + FS/GS bases) from GDB.

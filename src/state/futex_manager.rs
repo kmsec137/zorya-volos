@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // FutexManager is a simple implementation of the futex system call
 // It is used to implement the futex system call in the kernel
 

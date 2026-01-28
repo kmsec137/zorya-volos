@@ -1,4 +1,9 @@
 #!/bin/bash
+
+# SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+#
+# SPDX-License-Identifier: Apache-2.0
+
 ##############################################################################
 # generate_vdso_pcode.sh - Generate p-code for VDSO and merge with main binary
 #

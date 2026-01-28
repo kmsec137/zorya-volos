@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+#
+# SPDX-License-Identifier: Apache-2.0
+
 ##############################################################################
 #                             Z O R Y A  wrapper
 #   Interactive by default – but any missing info can be supplied via flags.

@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+#
+# SPDX-License-Identifier: Apache-2.0
+
+version = 1
+
+[[annotations]]
+path = ["doc/*.png", "Cargo.lock", "fuzzer_config.json"]
+SPDX-FileCopyrightText = "2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM"
+SPDX-License-Identifier = "Apache-2.0"

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /// Overlay mechanism for concolic exploration of untaken paths
 /// This provides copy-on-write semantics for CPU state and memory
 /// to enable lightweight exploration without full state cloning
@@ -225,6 +229,9 @@ pub struct OverlayState<'ctx> {
     pub cpu_overlay: CpuStateOverlay<'ctx>,
     /// Memory region overlays (address -> overlay)
     pub memory_overlays: BTreeMap<u64, MemoryRegionOverlay<'ctx>>,
+    /// Standalone memory writes (address -> byte) for syscall handlers
+    /// These are not tied to memory regions and are discarded when overlay ends
+    pub standalone_memory_writes: BTreeMap<u64, u8>,
     /// Depth of exploration in this overlay
     pub exploration_depth: usize,
     /// Starting address of this overlay exploration
@@ -253,6 +260,7 @@ impl<'ctx> OverlayState<'ctx> {
         Ok(Self {
             cpu_overlay,
             memory_overlays: BTreeMap::new(),
+            standalone_memory_writes: BTreeMap::new(),
             exploration_depth: 0,
             start_address,
         })
@@ -319,6 +327,35 @@ impl<'ctx> OverlayState<'ctx> {
         }
 
         Ok(())
+    }
+
+    /// Write raw bytes to overlay memory storage (for syscall handlers)
+    /// This uses a simple standalone storage indexed by address, not tied to memory regions
+    /// These writes will be visible to overlay reads but are discarded when overlay ends
+    pub fn write_memory_bytes(&mut self, address: u64, data: &[u8]) {
+        // Store in a simple address-indexed map within the existing memory_overlays structure
+        // We use a synthetic region at the address itself for simplicity
+        // Since this is overlay-only and will be discarded, we don't need complex region matching
+        for (i, byte) in data.iter().enumerate() {
+            let addr = address + i as u64;
+            // Store each byte - the overlay read logic will find these
+            // We use region_start = address for the standalone storage
+            self.standalone_memory_writes.insert(addr, *byte);
+        }
+    }
+
+    /// Read from standalone memory writes (for overlay reads)
+    pub fn read_standalone_memory(&self, address: u64, size: usize) -> Option<Vec<u8>> {
+        let mut result = Vec::with_capacity(size);
+        for i in 0..size {
+            let addr = address + i as u64;
+            if let Some(byte) = self.standalone_memory_writes.get(&addr) {
+                result.push(*byte);
+            } else {
+                return None; // Not all bytes present in overlay
+            }
+        }
+        Some(result)
     }
 
     /// Increment exploration depth

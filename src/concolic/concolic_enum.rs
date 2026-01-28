@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use super::{concrete_var::VarError, ConcolicVar, ConcreteVar, SymbolicVar};
 use crate::state::{cpu_state::CpuConcolicValue, memory_x86_64::MemoryValue};
 use z3::{

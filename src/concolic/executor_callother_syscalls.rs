@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /// Focuses on implementing the execution of the CALLOTHER opcode, especially syscalls, from Ghidra's Pcode specification
 /// This implementation relies on Ghidra 11.0.1 with the specfiles in /specfiles
 /// https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl
@@ -83,16 +87,52 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
         drop(tm);
     }
 
-    // Lock the CPU state and retrieve the value in the RAX register to determine the syscall
+    // Check if we're in overlay mode (speculative execution)
+    let in_overlay_mode = executor.is_overlay_mode();
+
+    // Lock the CPU state - needed for all register accesses in syscall handlers
     let mut cpu_state_guard = executor.state.cpu_state.lock().unwrap();
+
+    // Retrieve the value in the RAX register to determine the syscall
+    // In overlay mode, we should use overlay-aware register access for RAX
     let rax_offset = 0x0; // RAX register offset
 	 let new_volos: Volos = executor.new_volos();
-    let rax = cpu_state_guard
-        .get_register_by_offset(rax_offset, 64)
-        .unwrap()
-        .get_concrete_value()?;
+    let rax = if in_overlay_mode {
+        // Drop the guard temporarily to use overlay-aware access
+        drop(cpu_state_guard);
+        let rax_val = executor
+            .get_register_overlay_aware(rax_offset, 64)
+            .ok_or("Failed to get RAX in overlay mode")?
+            .get_concrete_value()?;
+        // Re-acquire the guard for subsequent operations
+        cpu_state_guard = executor.state.cpu_state.lock().unwrap();
+        rax_val
+    } else {
+        cpu_state_guard
+            .get_register_by_offset(rax_offset, 64)
+            .unwrap()
+            .get_concrete_value()?
+    };
 
     log!(executor.state.logger.clone(), "Syscall number: {}", rax);
+
+    // Validate syscall number - in overlay mode, invalid syscalls are common
+    // due to speculative execution with incomplete register state
+    let max_valid_syscall: u64 = 500; // Linux has ~400 syscalls, use 500 as reasonable upper bound
+    if rax > max_valid_syscall {
+        if in_overlay_mode {
+            log!(
+                executor.state.logger.clone(),
+                "[OVERLAY] Invalid syscall number {} (likely pointer/garbage) - stopping speculative execution",
+                rax
+            );
+            return Err(format!(
+                "Invalid syscall number {} in overlay mode - stopping speculative execution",
+                rax
+            ));
+        }
+        // Not in overlay mode - this is a real issue, will be handled in match default case
+    }
 
     log!(
         executor.trace_logger,
@@ -2063,8 +2103,11 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 tp_ptr
             );
 
+            // Drop the CPU state guard before calling overlay-aware methods
+            drop(cpu_state_guard);
+
             // Retrieve the current time based on clk_id
-            let (tv_sec, tv_nsec) = {
+            let time_result: Result<(i64, i64), String> = {
                 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
                 match clk_id {
@@ -2078,7 +2121,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         let tv_sec = duration_since_epoch.as_secs() as i64;
                         let tv_nsec = duration_since_epoch.subsec_nanos() as i64;
 
-                        (tv_sec, tv_nsec)
+                        Ok((tv_sec, tv_nsec))
                     }
                     1 => {
                         // CLOCK_MONOTONIC
@@ -2088,7 +2131,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         let tv_sec = duration_since_start.as_secs() as i64;
                         let tv_nsec = duration_since_start.subsec_nanos() as i64;
 
-                        (tv_sec, tv_nsec)
+                        Ok((tv_sec, tv_nsec))
                     }
                     4 => {
                         // CLOCK_MONOTONIC_RAW
@@ -2100,24 +2143,30 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                         let tv_sec = duration_since_start.as_secs() as i64;
                         let tv_nsec = duration_since_start.subsec_nanos() as i64;
 
-                        (tv_sec, tv_nsec)
+                        Ok((tv_sec, tv_nsec))
                     }
                     _ => {
-                        // Unsupported clk_id
-                        // Set RAX to -1 to indicate error
-                        let rax_value = ConcolicVar::new_concrete_and_symbolic_int(
-                            -1i64 as u64,
-                            BV::from_u64(executor.context, (-1i64) as u64, 64),
-                            executor.context,
-                        );
-                        cpu_state_guard
-                            .set_register_value_by_offset(rax_offset, rax_value, 64)
-                            .map_err(|e| format!("Failed to set RAX: {}", e))?;
-
-                        drop(cpu_state_guard);
-
-                        return Err(format!("Unsupported clk_id: {}", clk_id));
+                        Err(format!("Unsupported clk_id: {}", clk_id))
                     }
+                }
+            };
+
+            // Handle error case with overlay-aware register write
+            let (tv_sec, tv_nsec) = match time_result {
+                Ok((sec, nsec)) => (sec, nsec),
+                Err(e) => {
+                    // Unsupported clk_id - set RAX to -1 to indicate error
+                    let rax_value = ConcolicVar::new_concrete_and_symbolic_int(
+                        -1i64 as u64,
+                        BV::from_u64(executor.context, (-1i64) as u64, 64),
+                        executor.context,
+                    );
+                    // Use overlay-aware register write to not corrupt base state
+                    executor
+                        .set_register_overlay_aware(rax_offset, rax_value, 64)
+                        .map_err(|err| format!("Failed to set RAX: {}", err))?;
+
+                    return Err(e);
                 }
             };
 
@@ -2133,23 +2182,38 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 .map_err(|e| format!("Failed to write tv_nsec to buffer: {}", e))?;
 
             // Write the timespec data to memory at tp_ptr
+<<<<<<< HEAD
             executor
                 .state
                 .memory
                 .write_bytes(tp_ptr, &timespec_bytes, new_volos.clone())
                 .map_err(|e| format!("Failed to write timespec to memory: {}", e))?;
+=======
+            // Use overlay-aware memory write if in overlay mode
+            if in_overlay_mode {
+                // Write to overlay memory
+                if let Some(ref mut overlay) = executor.overlay_state {
+                    overlay.write_memory_bytes(tp_ptr, &timespec_bytes);
+                }
+            } else {
+                // Write to base memory
+                executor
+                    .state
+                    .memory
+                    .write_bytes(tp_ptr, &timespec_bytes)
+                    .map_err(|e| format!("Failed to write timespec to memory: {}", e))?;
+            }
+>>>>>>> upstream/main
 
-            // Set return value to 0 (success)
+            // Set return value to 0 (success) using overlay-aware register write
             let rax_value = ConcolicVar::new_concrete_and_symbolic_int(
                 0,
                 BV::from_u64(executor.context, 0, 64),
                 executor.context,
             );
-            cpu_state_guard
-                .set_register_value_by_offset(rax_offset, rax_value, 64)
+            executor
+                .set_register_overlay_aware(rax_offset, rax_value, 64)
                 .map_err(|e| format!("Failed to set RAX: {}", e))?;
-
-            drop(cpu_state_guard);
 
             // Record the operation for tracing
             let current_addr_hex = executor
@@ -2252,6 +2316,19 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
         _ => {
             // Invalid syscall (negative numbers from thread switches or unimplemented syscalls)
             let signed_rax = rax as i64;
+
+            // In overlay mode, just return error instead of exiting
+            if in_overlay_mode {
+                log!(
+                    executor.state.logger.clone(),
+                    "[OVERLAY] Unhandled syscall {} in overlay mode - stopping speculative execution",
+                    signed_rax
+                );
+                return Err(format!(
+                    "Unhandled syscall {} in overlay mode",
+                    signed_rax
+                ));
+            }
 
             // Print clear error message to stderr and exit
             if signed_rax < 0 {

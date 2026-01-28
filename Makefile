@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Makefile for Zorya
 
 # Variables (can be overridden by passing VAR=value)
@@ -9,7 +13,7 @@ QEMU_CLOUDIMG_DIR := $(ZORYA_DIR)/external/qemu-cloudimg
 TARGET_INFO_RS := $(ZORYA_DIR)/src/target_info.rs
 
 # System dependencies
-SYS_DEPS := qemu-kvm qemu-system-x86 virt-manager virt-viewer libvirt-daemon-system libvirt-clients bridge-utils build-essential libclang-dev clang binutils-dev wget netcat-openbsd python3 cloud-image-utils
+SYS_DEPS := qemu-kvm qemu-system-x86 virt-manager virt-viewer libvirt-daemon-system libvirt-clients bridge-utils build-essential libclang-dev clang binutils-dev wget netcat-openbsd python3 cloud-image-utils llvm-18-tools
 GHIDRA_VERSION ?= 11.3.1
 GHIDRA_SNAP_PATH = /snap/ghidra/current/ghidra_$(GHIDRA_VERSION)_PUBLIC
 

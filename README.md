@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 <div align="center">
   <img src="doc/zorya_logo.png" alt="Logo" width="250"/>
 </div>
@@ -200,6 +206,7 @@ Zorya uses **compiler-aware detection strategies** to find vulnerabilities in bi
 Zorya automatically selects the right strategy based on the `--lang` and `--compiler` flags you provide.
 
 For detailed technical information:
+- [Vulnerability Detection](doc/Vulnerability-Detection.md) - NULL deref, div/0, and dangling pointer detection mechanisms
 - [Compiler-Aware Strategies](doc/Compiler-Aware-Strategies.md) - Strategy selection and configuration
 - [Lightweight Path Analysis](doc/Lightweight-Path-Analysis.md) - Vulnerability detection without explicit panic calls
 - [General Strategies Overview](doc/Strategies.md) - High-level overview

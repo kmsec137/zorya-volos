@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use super::ConcreteVar;
 /// Focuses on implementing the execution of the FLOAT related opcodes from Ghidra's Pcode specification
 /// This implementation relies on Ghidra 11.0.1 with the specfiles in /specfiles
@@ -365,6 +369,180 @@ pub fn handle_float_mult(executor: &mut ConcolicExecutor, instruction: Inst) -> 
     executor.state.create_or_update_concolic_variable_int(
         &result_var_name,
         result_bits,
+        result_value.symbolic,
+    );
+
+    Ok(())
+}
+
+/// TRUNC: Float to Integer conversion (truncate towards zero)
+/// Converts a floating-point value to a signed integer by dropping the fractional part
+pub fn handle_trunc(executor: &mut ConcolicExecutor, instruction: Inst) -> Result<(), String> {
+    if instruction.opcode != Opcode::Trunc || instruction.inputs.len() != 1 {
+        return Err("Invalid instruction format for TRUNC".to_string());
+    }
+
+    log!(
+        executor.state.logger.clone(),
+        "* Fetching floating-point input for TRUNC"
+    );
+
+    let input_var = executor
+        .varnode_to_concolic(&instruction.inputs[0])
+        .map_err(|e| e.to_string())?;
+
+    // Get input and output sizes
+    let input_size_bits = instruction.inputs[0].size.to_bitvector_size() as u32;
+    let output_size_bits = instruction
+        .output
+        .as_ref()
+        .ok_or("Output varnode not specified for TRUNC")?
+        .size
+        .to_bitvector_size() as u32;
+
+    // Read the input as bit pattern
+    let input_bits = input_var.get_concrete_value();
+
+    // Convert floating-point to integer by truncating
+    let result_int = if input_size_bits == 32 {
+        // 32-bit float (f32) to integer
+        let input_f32 = f32::from_bits(input_bits as u32);
+
+        if input_f32.is_nan() {
+            log!(
+                executor.state.logger.clone(),
+                "TRUNC: Input is NaN, returning 0"
+            );
+            0i64
+        } else if input_f32.is_infinite() {
+            log!(
+                executor.state.logger.clone(),
+                "TRUNC: Input is infinite ({}), clamping to max/min",
+                if input_f32.is_sign_positive() {
+                    "+inf"
+                } else {
+                    "-inf"
+                }
+            );
+            // Clamp to output range
+            if input_f32.is_sign_positive() {
+                match output_size_bits {
+                    8 => i8::MAX as i64,
+                    16 => i16::MAX as i64,
+                    32 => i32::MAX as i64,
+                    64 => i64::MAX,
+                    _ => i64::MAX,
+                }
+            } else {
+                match output_size_bits {
+                    8 => i8::MIN as i64,
+                    16 => i16::MIN as i64,
+                    32 => i32::MIN as i64,
+                    64 => i64::MIN,
+                    _ => i64::MIN,
+                }
+            }
+        } else {
+            // Normal truncation: round towards zero
+            input_f32.trunc() as i64
+        }
+    } else if input_size_bits == 64 {
+        // 64-bit float (f64) to integer
+        let input_f64 = f64::from_bits(input_bits);
+
+        if input_f64.is_nan() {
+            log!(
+                executor.state.logger.clone(),
+                "TRUNC: Input is NaN, returning 0"
+            );
+            0i64
+        } else if input_f64.is_infinite() {
+            log!(
+                executor.state.logger.clone(),
+                "TRUNC: Input is infinite ({}), clamping to max/min",
+                if input_f64.is_sign_positive() {
+                    "+inf"
+                } else {
+                    "-inf"
+                }
+            );
+            // Clamp to output range
+            if input_f64.is_sign_positive() {
+                match output_size_bits {
+                    8 => i8::MAX as i64,
+                    16 => i16::MAX as i64,
+                    32 => i32::MAX as i64,
+                    64 => i64::MAX,
+                    _ => i64::MAX,
+                }
+            } else {
+                match output_size_bits {
+                    8 => i8::MIN as i64,
+                    16 => i16::MIN as i64,
+                    32 => i32::MIN as i64,
+                    64 => i64::MIN,
+                    _ => i64::MIN,
+                }
+            }
+        } else {
+            // Normal truncation: round towards zero
+            input_f64.trunc() as i64
+        }
+    } else {
+        return Err(format!(
+            "Unsupported input float size for TRUNC: {} bits (expected 32 or 64)",
+            input_size_bits
+        ));
+    };
+
+    // Convert to unsigned representation for the output
+    let result_u64 = result_int as u64;
+
+    // Mask the result to fit the output size
+    let result_masked = if output_size_bits < 64 {
+        result_u64 & ((1u64 << output_size_bits) - 1)
+    } else {
+        result_u64
+    };
+
+    log!(
+        executor.state.logger.clone(),
+        "*** Result of TRUNC: {} (0x{:x}) -> integer output 0x{:x} ({} bits)",
+        if input_size_bits == 32 {
+            f32::from_bits(input_bits as u32) as f64
+        } else {
+            f64::from_bits(input_bits)
+        },
+        input_bits,
+        result_masked,
+        output_size_bits
+    );
+
+    // Create symbolic bitvector from the concrete result
+    // For now, use concrete symbolic value since float-to-int conversion is complex symbolically
+    let result_symbolic_bv = BV::from_u64(executor.context, result_masked, output_size_bits);
+
+    // Create an integer ConcolicVar with the truncated result
+    let result_value = ConcolicVar::new_concrete_and_symbolic_int(
+        result_masked,
+        result_symbolic_bv,
+        executor.context,
+    );
+
+    // Handle the result based on the output varnode
+    executor.handle_output(instruction.output.as_ref(), result_value.clone())?;
+
+    // Log the operation for tracking
+    let current_addr_hex = executor
+        .current_address
+        .map_or_else(|| "unknown".to_string(), |addr| format!("{:x}", addr));
+    let result_var_name = format!(
+        "{}-{:02}-trunc",
+        current_addr_hex, executor.instruction_counter
+    );
+    executor.state.create_or_update_concolic_variable_int(
+        &result_var_name,
+        result_masked,
         result_value.symbolic,
     );
 

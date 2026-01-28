@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # QEMU-cloudimg usage
 
 This directory can be used to do the concolic execution running a specific CPU-emulated version with QEMU in case you want to analyse your binary on a specific CPU.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use core::panic;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -76,6 +80,316 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             function_symbolic_arguments: BTreeMap::new(),
             constraint_vector: Vec::new(),
         })
+    }
+
+    /// Check if overlay mode is active
+    pub fn is_overlay_mode(&self) -> bool {
+        self.overlay_state.is_some()
+    }
+
+    /// Get register value with overlay support
+    /// If overlay mode is active, reads from overlay first, then falls back to base
+    pub fn get_register_overlay_aware(
+        &self,
+        offset: u64,
+        access_size: u32,
+    ) -> Option<crate::state::cpu_state::CpuConcolicValue<'ctx>> {
+        if let Some(ref overlay) = self.overlay_state {
+            // Try overlay first
+            if let Some(val) = overlay
+                .cpu_overlay
+                .get_register_by_offset(offset, access_size)
+            {
+                return Some(val);
+            }
+        }
+
+        // Fall back to base state
+        self.state
+            .cpu_state
+            .lock()
+            .ok()
+            .and_then(|cpu| cpu.get_register_by_offset(offset, access_size))
+    }
+
+    /// Set register value with overlay support
+    /// If overlay mode is active, writes to overlay only
+    /// Otherwise writes to base state
+    pub fn set_register_overlay_aware(
+        &mut self,
+        offset: u64,
+        value: ConcolicVar<'ctx>,
+        size: u32,
+    ) -> Result<(), String> {
+        if let Some(ref mut overlay) = self.overlay_state {
+            // Write to overlay
+            overlay
+                .cpu_overlay
+                .set_register_value_by_offset(offset, value, size)
+        } else {
+            // Write to base state
+            self.state
+                .cpu_state
+                .lock()
+                .map_err(|e| format!("Failed to lock CPU state: {}", e))?
+                .set_register_value_by_offset(offset, value, size)
+        }
+    }
+
+    /// Extract current goroutine ID from TLS (Thread Local Storage)
+    ///
+    /// For Go binaries, the goroutine ID is stored in the runtime.g structure.
+    /// The current g pointer is accessible via TLS:
+    /// - FS register (0x110) points to TLS base
+    /// - g pointer is at FS:[-8] (fs_base - 8)
+    /// - goid field offset is dynamically loaded from DWARF debug info
+    ///
+    /// The offset varies by Go version (e.g., 152 for Go 1.25.1, 192 for Go 1.21+)
+    /// and is automatically extracted during function signature analysis.
+    ///
+    /// This works for both Go GC and TinyGo binaries.
+    pub fn get_current_goroutine_id(&self) -> Result<u64, String> {
+        let source_lang = std::env::var("SOURCE_LANG").unwrap_or_default();
+
+        // Only extract for Go binaries
+        if source_lang.to_lowercase() != "go" {
+            return Ok(0);
+        }
+
+        // Try to extract from TLS (works for both gc and tinygo)
+        self.extract_gid_from_tls()
+    }
+
+    /// Extract goroutine ID from TLS by reading the runtime.g structure
+    ///
+    /// TLS access pattern:
+    ///   1. Read FS register (0x110) → TLS base
+    ///   2. Read g pointer at TLS base - 8
+    ///   3. Read goid field at g + offset
+    ///
+    /// The goid offset is loaded from results/runtime_g_offsets.json,
+    /// which is generated during DWARF analysis.
+    fn extract_gid_from_tls(&self) -> Result<u64, String> {
+        // Read FS base register (TLS base)
+        let cpu_state = self
+            .state
+            .cpu_state
+            .lock()
+            .map_err(|e| format!("Failed to lock CPU state: {}", e))?;
+
+        let fs_base = cpu_state
+            .get_register_by_offset(0x110, 64) // FS_OFFSET
+            .map(|v| v.concrete.to_u64())
+            .unwrap_or(0);
+
+        drop(cpu_state); // Release lock
+
+        if fs_base == 0 {
+            // TLS not set up yet, return 0 (main goroutine)
+            return Ok(0);
+        }
+
+        // Read g pointer at fs_base - 8
+        // In Go runtime, the current goroutine pointer is stored at FS:[-8]
+        // See https://github.com/golang/go/commit/658a338f78ef5dce4c81527c34fb52be95357ef7
+        let g_ptr_addr = fs_base.wrapping_sub(8);
+        let g_ptr = self
+            .state
+            .memory
+            .read_value(g_ptr_addr, 64, &mut self.state.logger.clone())
+            .map(|v| v.concrete.to_u64())
+            .unwrap_or(0);
+
+        if g_ptr == 0 {
+            // No goroutine context, return 0
+            return Ok(0);
+        }
+
+        // Read goid field from g struct using dynamically loaded offset
+        // The offset is extracted from DWARF at initialization time
+        let goid_offset = crate::state::RuntimeGOffsets::get_goid_offset();
+        let goid = self
+            .state
+            .memory
+            .read_value(g_ptr + goid_offset, 64, &mut self.state.logger.clone())
+            .map(|v| v.concrete.to_u64())
+            .unwrap_or(0);
+
+        Ok(goid)
+    }
+
+    /// Read memory with overlay support
+    /// If overlay mode is active, reads from overlay first, then falls back to base
+    pub fn read_memory_overlay_aware(
+        &mut self,
+        address: u64,
+        size: usize,
+    ) -> Result<
+        (Vec<u8>, Vec<Option<std::sync::Arc<BV<'ctx>>>>),
+        crate::state::memory_x86_64::MemoryError,
+    > {
+        if let Some(ref mut overlay) = self.overlay_state {
+            // Find the region containing this address
+            if let Some((region_start, _)) = self.state.memory.find_region_bounds(address, size) {
+                if let Some(region_ptr) = self.state.memory.get_region_ptr(region_start) {
+                    // SAFETY: Region exists and won't be modified during overlay operation
+                    let region = unsafe { &*region_ptr };
+
+                    if let Some((concrete, symbolic_opt)) =
+                        overlay.read_memory(address, size, region)
+                    {
+                        // Convert Option<Arc<BV>> to Vec<Option<Arc<BV>>>
+                        let symbolic_vec = if let Some(sym) = symbolic_opt {
+                            vec![Some(sym); size]
+                        } else {
+                            vec![None; size]
+                        };
+                        return Ok((concrete, symbolic_vec));
+                    }
+                }
+            }
+        }
+
+        // Fall back to base state
+        self.state.memory.read_memory(address, size)
+    }
+
+    /// Write memory with overlay support
+    /// If overlay mode is active, writes to overlay only
+    /// Otherwise writes to base state
+    pub fn write_memory_overlay_aware(
+        &mut self,
+        address: u64,
+        concrete_data: &[u8],
+        symbolic_data: Option<std::sync::Arc<BV<'ctx>>>,
+    ) -> Result<(), String> {
+        if let Some(ref mut overlay) = self.overlay_state {
+            // Find the region containing this address
+            let (region_start, _) = self
+                .state
+                .memory
+                .find_region_bounds(address, concrete_data.len())
+                .ok_or(format!(
+                    "No memory region found for address 0x{:x}",
+                    address
+                ))?;
+
+            let region_ptr = self
+                .state
+                .memory
+                .get_region_ptr(region_start)
+                .ok_or(format!(
+                    "Failed to get region pointer for address 0x{:x}",
+                    region_start
+                ))?;
+
+            // SAFETY: Region exists and won't be modified during overlay operation
+            let region = unsafe { &*region_ptr };
+
+            // Write to overlay
+            overlay.write_memory(address, concrete_data, symbolic_data, region)
+        } else {
+            // Write to base state
+            // Convert single Option<Arc<BV>> to Vec<Option<Arc<BV>>>
+            let symbolic_vec: Vec<Option<std::sync::Arc<BV<'ctx>>>> =
+                if let Some(sym) = symbolic_data {
+                    vec![Some(sym); concrete_data.len()]
+                } else {
+                    vec![None; concrete_data.len()]
+                };
+            self.state
+                .memory
+                .write_memory(address, concrete_data, &symbolic_vec)
+                .map_err(|e| format!("Failed to write memory: {:?}", e))
+        }
+    }
+
+    /// Read a value from memory in overlay mode
+    /// This is a helper that mimics the behavior of MemoryX86_64::read_value but uses overlay
+    fn read_value_overlay_mode(
+        &mut self,
+        address: u64,
+        size_bits: u32,
+    ) -> Result<ConcolicVar<'ctx>, String> {
+        let byte_size = ((size_bits + 7) / 8) as usize;
+
+        // Use overlay-aware memory reading
+        let (concrete_bytes, symbolic_vec) = self
+            .read_memory_overlay_aware(address, byte_size)
+            .map_err(|e| format!("Failed to read from overlay at 0x{:x}: {:?}", address, e))?;
+
+        // Convert bytes to u64
+        let mut padded = vec![0u8; 8.max(byte_size)];
+        padded[..concrete_bytes.len()].copy_from_slice(&concrete_bytes);
+        let value = u64::from_le_bytes(padded[..8].try_into().unwrap());
+
+        // Apply mask for the requested size
+        let mask = if size_bits < 64 {
+            (1u64 << size_bits) - 1
+        } else {
+            u64::MAX
+        };
+        let masked = value & mask;
+
+        // Build symbolic value - check if any bytes have symbolic data
+        let has_symbolic = symbolic_vec.iter().any(|opt| opt.is_some());
+
+        let symbolic_bv = if has_symbolic {
+            // Concatenate symbolic bytes (similar to MemoryX86_64::concatenate_symbolic_bytes)
+            let mut result: Option<BV<'ctx>> = None;
+            for (sym_opt, &concrete_byte) in symbolic_vec.iter().zip(concrete_bytes.iter()).rev() {
+                let byte_bv = if let Some(sym_ref) = sym_opt {
+                    sym_ref.as_ref().clone()
+                } else {
+                    BV::from_u64(self.context, concrete_byte as u64, 8)
+                };
+
+                result = Some(if let Some(acc) = result {
+                    byte_bv.concat(&acc)
+                } else {
+                    byte_bv
+                });
+            }
+            result.unwrap_or_else(|| BV::from_u64(self.context, masked, size_bits))
+        } else {
+            BV::from_u64(self.context, masked, size_bits)
+        };
+
+        // Resize if needed
+        let resized_sym = if symbolic_bv.get_size() < size_bits {
+            symbolic_bv.zero_ext(size_bits - symbolic_bv.get_size())
+        } else if symbolic_bv.get_size() > size_bits {
+            symbolic_bv.extract(size_bits - 1, 0)
+        } else {
+            symbolic_bv
+        };
+
+        Ok(ConcolicVar {
+            concrete: ConcreteVar::Int(masked),
+            symbolic: SymbolicVar::Int(resized_sym),
+            ctx: self.context,
+        })
+    }
+
+    /// Write a value to memory in overlay mode
+    /// This is a helper that mimics the behavior of MemoryX86_64::write_value but uses overlay
+    fn write_value_overlay_mode(
+        &mut self,
+        address: u64,
+        mem_value: &MemoryValue<'ctx>,
+    ) -> Result<(), crate::state::memory_x86_64::MemoryError> {
+        let size_bits = mem_value.size;
+        let byte_size = ((size_bits + 7) / 8) as usize;
+
+        // Convert concrete value to bytes
+        let concrete_bytes = mem_value.concrete.to_le_bytes()[..byte_size].to_vec();
+
+        // Convert symbolic BV to Arc<BV> for overlay
+        let symbolic_arc = Some(std::sync::Arc::new(mem_value.symbolic.clone()));
+
+        // Use overlay-aware memory writing
+        self.write_memory_overlay_aware(address, &concrete_bytes, symbolic_arc)
+            .map_err(|_| crate::state::memory_x86_64::MemoryError::WriteOutOfBounds)
     }
 
     pub fn populate_symbol_table(&mut self, elf_data: &[u8]) -> Result<(), goblin::error::Error> {
@@ -1044,6 +1358,100 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             symbolic_var,
             &self.context,
         );
+        // Check if this is an internal P-code jump (Const varnode) or an absolute address jump
+        match &branch_target_varnode.var {
+            Var::Const(value) => {
+                // This is an internal P-code jump offset (can be negative)
+                log!(
+                    self.state.logger.clone(),
+                    "Branch target is a constant: {:?}, treating as internal P-code line offset",
+                    value
+                );
+                let value_string = value.to_string();
+                let value_str = value_string.trim_start_matches("0x");
+
+                let value_u64 = match u64::from_str_radix(value_str, 16) {
+                    Ok(parsed) => {
+                        log!(
+                            self.state.logger.clone(),
+                            "Parsed branch offset: 0x{:x} (signed: {})",
+                            parsed,
+                            parsed as i64
+                        );
+                        parsed
+                    }
+                    Err(e) => {
+                        return Err(format!("Failed to parse constant as u64: {:?}", e));
+                    }
+                };
+
+                // Set the internal jump offset (can be negative for backward jumps)
+                self.pcode_internal_lines_to_be_jumped = value_u64 as i64;
+                log!(
+                    self.state.logger.clone(),
+                    "BRANCH: Setting internal P-code jump offset to {} lines",
+                    self.pcode_internal_lines_to_be_jumped
+                );
+
+                // Create concolic variable for logging
+                let current_addr_hex = self
+                    .current_address
+                    .map_or_else(|| "unknown".to_string(), |addr| format!("{:x}", addr));
+                let result_var_name = format!(
+                    "{}-{:02}-branch",
+                    current_addr_hex, self.instruction_counter
+                );
+                let symbolic_var = SymbolicVar::from_u64(&self.context, value_u64, 64);
+                self.state.create_or_update_concolic_variable_int(
+                    &result_var_name,
+                    value_u64,
+                    symbolic_var,
+                );
+            }
+            _ => {
+                // This is an absolute address jump (Memory, Register, or Unique)
+                let branch_target_address =
+                    self.extract_branch_target_address(branch_target_varnode, instruction.clone())?;
+
+                log!(
+                    self.state.logger.clone(),
+                    "Branch target is an absolute address: 0x{:x}",
+                    branch_target_address
+                );
+
+                // Create concolic variable for branch target and update RIP register
+                let symbolic_var = SymbolicVar::from_u64(&self.context, branch_target_address, 64)
+                    .to_bv(&self.context);
+                let branch_target_concolic = ConcolicVar::new_concrete_and_symbolic_int(
+                    branch_target_address,
+                    symbolic_var,
+                    &self.context,
+                );
+
+                // Update RIP to branch target (overlay-aware)
+                self.set_register_overlay_aware(0x288, branch_target_concolic.clone(), 64)?;
+
+                // Log the branch decision as a concolic variable for tracking
+                let current_addr_hex = self
+                    .current_address
+                    .map_or_else(|| "unknown".to_string(), |addr| format!("{:x}", addr));
+                let result_var_name = format!(
+                    "{}-{:02}-branch",
+                    current_addr_hex, self.instruction_counter
+                );
+                self.state.create_or_update_concolic_variable_int(
+                    &result_var_name,
+                    branch_target_address,
+                    branch_target_concolic.symbolic,
+                );
+
+                log!(
+                    self.state.logger.clone(),
+                    "Updated RIP register with branch target: 0x{:x}",
+                    branch_target_address
+                );
+            }
+        }
 
         // Update the instruction counter
         self.instruction_counter += 1;
@@ -1708,9 +2116,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             drop(tm);
         }
 
-        // Push a new function frame onto the call stack
-        self.push_function_frame();
-
         // Fetch the branch target (input0)
         // Fetch the data to be stored (treated as assembly address directly)
         log!(
@@ -1748,13 +2153,11 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             data_to_call_concrete
         );
 
-        // Update the RIP register to the branch target address
-        {
-            let mut cpu_state_guard = self.state.cpu_state.lock().unwrap();
-            cpu_state_guard
-                .set_register_value_by_offset(0x288, data_to_call_concolic, 64)
-                .map_err(|e| e.to_string())?;
-        }
+        // Push a new function frame onto the call stack with the CORRECT target function address
+        self.push_function_frame(data_to_call_concrete);
+
+        // Update the RIP register to the branch target address (overlay-aware)
+        self.set_register_overlay_aware(0x288, data_to_call_concolic, 64)?;
         // Update the instruction counter
         self.instruction_counter += 1;
 
@@ -1933,6 +2336,39 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
             );
             process::exit(1);
+        }
+
+        // Check for dangling pointer access (freed stack frame)
+        if let Some((func_addr, frame_rsp)) =
+            self.check_dangling_pointer_access(pointer_offset_concrete)
+        {
+            log!(
+                self.state.logger.clone(),
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+            );
+            log!(
+                self.state.logger.clone(),
+                "VULN: Zorya detected DANGLING POINTER access at address 0x{:x}",
+                pointer_offset_concrete
+            );
+            log!(
+                self.state.logger.clone(),
+                "      Memory belongs to freed stack frame from function 0x{:x} (frame RSP: 0x{:x})",
+                func_addr, frame_rsp
+            );
+            log!(
+                self.state.logger.clone(),
+                "      This is a Use-After-Free vulnerability (stack memory reuse)"
+            );
+            log!(
+                self.state.logger.clone(),
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+            );
+            println!(
+                "\n/!\\ DANGLING POINTER (Use-After-Free) detected at 0x{:x}, execution halted!",
+                pointer_offset_concrete
+            );
+            println!("    Freed stack frame from function 0x{:x}\n", func_addr);
         }
 
         // Cases covered : 'void a(void) { b(); c(); }', do the 'reinitialization'' of variables used by b() when b() finishes.
@@ -2345,6 +2781,36 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
             );
             return Err("Attempted null pointer dereference".to_string());
+        }
+
+        // Check for dangling pointer access (freed stack frame)
+        if let Some((func_addr, frame_rsp)) =
+            self.check_dangling_pointer_access(pointer_offset_concrete)
+        {
+            log!(
+                self.state.logger.clone(),
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+            );
+            log!(
+                self.state.logger.clone(),
+                "VULN: Zorya detected DANGLING POINTER WRITE at address 0x{:x}",
+                pointer_offset_concrete
+            );
+            log!(
+                self.state.logger.clone(),
+                "      Memory belongs to freed stack frame from function 0x{:x} (frame RSP: 0x{:x})",
+                func_addr, frame_rsp
+            );
+            log!(
+                self.state.logger.clone(),
+                "      This is a Use-After-Free vulnerability (stack memory reuse)"
+            );
+            log!(
+                self.state.logger.clone(),
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+            );
+            println!("\n/!\\ DANGLING POINTER WRITE (Use-After-Free) detected at 0x{:x}, execution halted!", pointer_offset_concrete);
+            println!("    Freed stack frame from function 0x{:x}\n", func_addr);
         }
 
         // Fetch the data to be stored
@@ -3349,19 +3815,47 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     }
 
     // Push a new function frame onto the call stack
-    pub fn push_function_frame(&mut self) {
+    // target_func_addr: the address of the function being called (entry point)
+    pub fn push_function_frame(&mut self, target_func_addr: u64) {
+        // Get current RSP value
+        let rsp_value = self
+            .state
+            .cpu_state
+            .lock()
+            .unwrap()
+            .get_register_by_offset(0x20, 64) // RSP offset = 0x20
+            .map(|r| r.concrete.to_u64())
+            .unwrap_or(0);
+
         self.state.call_stack.push(FunctionFrame {
             local_variables: BTreeSet::new(),
+            function_addr: target_func_addr,
+            rsp_on_entry: rsp_value,
+            rsp_on_exit: None,
+            is_active: true,
         });
         log!(
             self.state.logger.clone(),
-            "Pushed a new function frame onto the call stack."
+            "[STACK_FRAME] Pushed frame for func 0x{:x}, RSP=0x{:x} (depth: {})",
+            target_func_addr,
+            rsp_value,
+            self.state.call_stack.len()
         );
     }
 
     // Pop the top function frame from the call stack and clean up variables
     pub fn pop_function_frame(&mut self) {
-        if let Some(finished_frame) = self.state.call_stack.pop() {
+        // Get current RSP (on return)
+        let rsp_on_return = self
+            .state
+            .cpu_state
+            .lock()
+            .unwrap()
+            .get_register_by_offset(0x20, 64)
+            .map(|r| r.concrete.to_u64())
+            .unwrap_or(0);
+
+        if let Some(mut finished_frame) = self.state.call_stack.pop() {
             // Remove variables associated with this function's scope from initialized variables
             for var_address in &finished_frame.local_variables {
                 self.initialiazed_var.remove(var_address);
@@ -3372,10 +3866,37 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     var_address
                 );
             }
+
+            // Mark frame as inactive and record exit RSP
+            finished_frame.is_active = false;
+            finished_frame.rsp_on_exit = Some(rsp_on_return);
+
             log!(
                 self.state.logger.clone(),
-                "Popped a function frame from the call stack."
+                "[STACK_FRAME] Popped frame for func 0x{:x}, RSP entry=0x{:x}, exit=0x{:x}",
+                finished_frame.function_addr,
+                finished_frame.rsp_on_entry,
+                rsp_on_return
             );
+
+            // Store freed frame for dangling pointer detection
+            // Skip Go runtime internal functions to avoid false positives
+            // Go runtime functions manage memory differently and stack reuse is expected
+            let should_track = !self.is_go_runtime_internal_function(finished_frame.function_addr);
+
+            if should_track {
+                // Keep the last 10 freed frames
+                self.state.freed_stack_frames.push_back(finished_frame);
+                if self.state.freed_stack_frames.len() > 10 {
+                    self.state.freed_stack_frames.pop_front();
+                }
+            } else {
+                log!(
+                    self.state.logger.clone(),
+                    "[STACK_FRAME] Skipping dangling pointer tracking for runtime function 0x{:x}",
+                    finished_frame.function_addr
+                );
+            }
         } else {
             log!(
                 self.state.logger.clone(),
@@ -3395,6 +3916,97 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             // Pop the function frame and clean up variables
             self.pop_function_frame();
         }
+    }
+
+    /// Check if a memory access is to a freed stack frame (dangling pointer)
+    /// Returns (is_dangling, function_addr, frame_rsp) if dangling
+    pub fn check_dangling_pointer_access(&self, address: u64) -> Option<(u64, u64)> {
+        // Get current RSP
+        let current_rsp = self
+            .state
+            .cpu_state
+            .lock()
+            .unwrap()
+            .get_register_by_offset(0x20, 64)
+            .map(|r| r.concrete.to_u64())
+            .unwrap_or(0);
+
+        // Check if address points to any freed stack frame
+        for freed_frame in &self.state.freed_stack_frames {
+            let frame_start = freed_frame.rsp_on_entry;
+            let frame_end = freed_frame.rsp_on_exit.unwrap_or(freed_frame.rsp_on_entry);
+
+            // Normalize (stack grows down, so frame_start > frame_end)
+            let (low, high) = if frame_start > frame_end {
+                (frame_end, frame_start)
+            } else {
+                (frame_start, frame_end)
+            };
+
+            // Check if address is in the freed frame range
+            // AND current RSP is above the freed frame (meaning it's truly freed)
+            if address >= low && address < high && current_rsp >= high {
+                log!(
+                    self.state.logger.clone(),
+                    "[DANGLING_POINTER] Access to freed frame! addr=0x{:x}, func=0x{:x}, frame_rsp=[0x{:x}..0x{:x}], current_rsp=0x{:x}",
+                    address, freed_frame.function_addr, low, high, current_rsp
+                );
+                return Some((freed_frame.function_addr, frame_start));
+            }
+        }
+        None
+    }
+
+    /// Check if a function address corresponds to a Go runtime internal function
+    /// These functions (runtime.*, internal/abi.*, etc.) manage memory differently
+    /// and stack reuse after their return is expected, not a vulnerability
+    /// Goal : avoid false positives (during dangling pointers detection)
+    fn is_go_runtime_internal_function(&self, func_addr: u64) -> bool {
+        // Check the source language - only filter for Go binaries
+        let source_lang = std::env::var("SOURCE_LANG").unwrap_or_default();
+        if source_lang.to_lowercase() != "go" {
+            return false;
+        }
+
+        // Look up function name from the existing symbol_table (key is hex address string)
+        let func_addr_hex = format!("{:x}", func_addr);
+        if let Some(func_name) = self.symbol_table.get(&func_addr_hex) {
+            // Filter out Go runtime and standard library internal functions that commonly cause false positives
+            // These prefixes indicate runtime/stdlib functions where stack reuse is normal
+            let runtime_prefixes = [
+                // Go runtime
+                "runtime.",
+                "internal/abi.",
+                "internal/runtime",
+                // Sync primitives
+                "sync.",
+                "sync/atomic.",
+                // Reflection
+                "reflect.",
+                // Common stdlib packages that manage memory/goroutines internally
+                "time.",
+                "context.",
+                "os.",
+                "io.",
+                "fmt.",
+                "strings.",
+                "bytes.",
+                "encoding/",
+                "math.",
+                "strconv.",
+                "unicode.",
+                "sort.",
+                "container/",
+            ];
+
+            for prefix in &runtime_prefixes {
+                if func_name.starts_with(prefix) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 

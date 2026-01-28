@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use super::config::{FuzzerConfig, TestConfig};
 use std::collections::HashMap;
 use std::env;
@@ -50,10 +54,13 @@ impl FuzzerRunner {
     /// Generate P-code for the binary
     fn generate_pcode(&self) -> Result<(), Box<dyn std::error::Error>> {
         let pcode_generator_dir = self.zorya_dir.join("external/pcode-generator");
-        
-        println!("Running P-code generator for: {}", self.config.global.binary_path);
+
+        println!(
+            "Running P-code generator for: {}",
+            self.config.global.binary_path
+        );
         println!();
-        
+
         let mut cmd = Command::new("cargo");
         cmd.current_dir(&pcode_generator_dir)
             .arg("run")
@@ -66,7 +73,7 @@ impl FuzzerRunner {
             .stderr(Stdio::inherit());
 
         let status = cmd.status()?;
-        
+
         if !status.success() {
             return Err("P-code generation failed".into());
         }
@@ -76,7 +83,7 @@ impl FuzzerRunner {
             .file_name()
             .ok_or("Invalid binary path")?
             .to_string_lossy();
-        
+
         let pcode_file = pcode_generator_dir
             .join("results")
             .join(format!("{}_low_pcode.txt", binary_name));
@@ -94,7 +101,7 @@ impl FuzzerRunner {
     /// Precompute static analysis (panic xrefs and reverse BFS) - done once for all tests
     fn precompute_static_analysis(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Running panic cross-reference analysis...");
-        
+
         // Run find_panic_xrefs.py
         let xref_script = self.zorya_dir.join("scripts/find_panic_xrefs.py");
         let mut cmd = Command::new("python3");
@@ -111,8 +118,8 @@ impl FuzzerRunner {
 
         println!();
         println!("Running reverse panic reachability precomputation...");
-        
-        // Run precompute_panic_reach.py  
+
+        // Run precompute_panic_reach.py
         let panic_reach_script = self.zorya_dir.join("scripts/precompute_panic_reach.py");
         let mut cmd = Command::new("python3");
         cmd.arg(&panic_reach_script)
@@ -132,12 +139,16 @@ impl FuzzerRunner {
     }
 
     /// Generate memory and CPU register dumps for a specific test
-    fn generate_dumps(&self, start_address: &str, args: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fn generate_dumps(
+        &self,
+        start_address: &str,
+        args: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let dump_script = self.zorya_dir.join("scripts/dump_memory.sh");
-        
+
         // Get entry point (we'll use readelf like the zorya script does)
         let entry_point = self.get_entry_point()?;
-        
+
         let mut cmd = Command::new(&dump_script);
         cmd.arg(&self.config.global.binary_path)
             .arg(start_address)
@@ -160,7 +171,7 @@ impl FuzzerRunner {
         // Use a dummy address for VDSO extraction (it doesn't depend on start address)
         let dummy_addr = "0x0";
         let dummy_args = "none";
-        
+
         // Run extract_vdso.sh
         let extract_script = self.zorya_dir.join("scripts/extract_vdso.sh");
         let mut cmd = Command::new(&extract_script);
@@ -173,7 +184,9 @@ impl FuzzerRunner {
 
         let status = cmd.status()?;
         if !status.success() {
-            eprintln!("Warning: VDSO extraction failed (non-critical), continuing without VDSO support");
+            eprintln!(
+                "Warning: VDSO extraction failed (non-critical), continuing without VDSO support"
+            );
             return Ok(());
         }
 
@@ -186,7 +199,7 @@ impl FuzzerRunner {
             // Generate VDSO p-code
             let vdso_base = fs::read_to_string(&vdso_base_file)?.trim().to_string();
             let generate_script = self.zorya_dir.join("scripts/generate_vdso_pcode.sh");
-            
+
             let mut cmd = Command::new(&generate_script);
             cmd.arg(&vdso_file)
                 .arg(&vdso_base)
@@ -198,7 +211,7 @@ impl FuzzerRunner {
             if !status.success() {
                 eprintln!("Warning: VDSO p-code generation failed (non-critical)");
             }
-            
+
             println!("VDSO p-code generated successfully");
         }
 
@@ -208,7 +221,7 @@ impl FuzzerRunner {
     /// Generate jump tables once (same for all tests)
     fn generate_jump_tables(&self) -> Result<(), Box<dyn std::error::Error>> {
         let jump_tables_script = self.zorya_dir.join("scripts/get_jump_tables.py");
-        
+
         let mut cmd = Command::new("python3");
         cmd.arg(&jump_tables_script)
             .arg(&self.config.global.binary_path)
@@ -309,7 +322,10 @@ impl FuzzerRunner {
             } else if result.timeout {
                 println!("[TIMEOUT] Test '{}' timed out", result.test_id);
             } else {
-                println!("[FAILED] Test '{}' failed: {:?}", result.test_id, result.error_message);
+                println!(
+                    "[FAILED] Test '{}' failed: {:?}",
+                    result.test_id, result.error_message
+                );
             }
 
             if result.found_sat_states {
@@ -340,15 +356,24 @@ impl FuzzerRunner {
         let mut env_vars = HashMap::new();
         env_vars.insert("MODE".to_string(), test.mode.clone());
         env_vars.insert("ARGS".to_string(), test.args.clone());
-        env_vars.insert("SOURCE_LANG".to_string(), self.config.global.language.clone());
+        env_vars.insert(
+            "SOURCE_LANG".to_string(),
+            self.config.global.language.clone(),
+        );
         env_vars.insert("COMPILER".to_string(), self.config.global.compiler.clone());
         env_vars.insert("LOG_MODE".to_string(), self.config.global.log_mode.clone());
         env_vars.insert(
             "NEGATE_PATH_FLAG".to_string(),
             self.config.global.negate_path_flag.to_string(),
         );
-        env_vars.insert("ZORYA_DIR".to_string(), self.zorya_dir.to_string_lossy().to_string());
-        env_vars.insert("BIN_PATH".to_string(), self.config.global.binary_path.clone());
+        env_vars.insert(
+            "ZORYA_DIR".to_string(),
+            self.zorya_dir.to_string_lossy().to_string(),
+        );
+        env_vars.insert(
+            "BIN_PATH".to_string(),
+            self.config.global.binary_path.clone(),
+        );
         env_vars.insert("START_POINT".to_string(), test.start_address.clone());
 
         // Add thread scheduling if specified
@@ -362,7 +387,10 @@ impl FuzzerRunner {
         }
 
         // Generate memory and CPU dumps for this specific test (address-specific)
-        println!("  Generating memory and CPU register dumps for address {}...", test.start_address);
+        println!(
+            "  Generating memory and CPU register dumps for address {}...",
+            test.start_address
+        );
         self.generate_dumps(&test.start_address, &test.args)?;
         println!();
 
@@ -442,7 +470,10 @@ impl FuzzerRunner {
                 success: false,
                 duration,
                 timeout: true,
-                error_message: Some(format!("Process timed out (exit code: {:?})", status.code())),
+                error_message: Some(format!(
+                    "Process timed out (exit code: {:?})",
+                    status.code()
+                )),
                 output_dir,
                 found_sat_states,
             },
@@ -520,7 +551,11 @@ impl FuzzerRunner {
                 "[FAILED] "
             };
 
-            let sat_marker = if result.found_sat_states { " [SAT]" } else { "" };
+            let sat_marker = if result.found_sat_states {
+                " [SAT]"
+            } else {
+                ""
+            };
 
             println!(
                 "  {} | {} | {:.2}s{}",
@@ -537,7 +572,10 @@ impl FuzzerRunner {
     }
 
     /// Generate a summary report file
-    pub fn write_summary_report(&self, results: &[TestResult]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn write_summary_report(
+        &self,
+        results: &[TestResult],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let report_path = self.results_base_dir.join("fuzzer_summary.txt");
         let mut report = fs::File::create(&report_path)?;
 
@@ -569,7 +607,17 @@ impl FuzzerRunner {
         writeln!(report, "------------------------")?;
         for result in results {
             writeln!(report, "Test ID: {}", result.test_id)?;
-            writeln!(report, "  Status: {}", if result.success { "SUCCESS" } else if result.timeout { "TIMEOUT" } else { "FAILED" })?;
+            writeln!(
+                report,
+                "  Status: {}",
+                if result.success {
+                    "SUCCESS"
+                } else if result.timeout {
+                    "TIMEOUT"
+                } else {
+                    "FAILED"
+                }
+            )?;
             writeln!(report, "  Duration: {:.2}s", result.duration.as_secs_f64())?;
             writeln!(report, "  Found SAT: {}", result.found_sat_states)?;
             writeln!(report, "  Output: {}", result.output_dir.display())?;
@@ -584,4 +632,3 @@ impl FuzzerRunner {
         Ok(())
     }
 }
-

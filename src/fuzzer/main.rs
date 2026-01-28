@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use std::env;
 use std::process;
 use zorya::fuzzer::{FuzzerConfig, FuzzerRunner};
@@ -105,4 +109,3 @@ fn main() {
         }
     }
 }
-
