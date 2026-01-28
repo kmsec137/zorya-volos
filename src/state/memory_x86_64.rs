@@ -483,7 +483,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
         address: u64,
         size: u32,
         logger: &mut Logger,
-		  volos: Volos
+		  volos: Volos,
+			internal: bool
     ) -> Result<ConcolicVar<'ctx>, MemoryError> {
         if size > 128 {
             // Handle large values (256-bit, 512-bit, etc.) by reading in 64-bit chunks
@@ -500,7 +501,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
             for i in 0..num_chunks {
                 let chunk_addr = address + (i as u64 * 8);
-                let (concrete_bytes, symbolic_bytes) = self.read_memory(chunk_addr, 8,volos.clone(), true)?;
+                let (concrete_bytes, symbolic_bytes) = self.read_memory(chunk_addr, 8,volos.clone(), internal)?;
 
                 let chunk_value = u64::from_le_bytes(concrete_bytes.as_slice().try_into().unwrap());
                 concrete_chunks.push(chunk_value);
@@ -728,7 +729,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
         address: u64,
         concrete: &[u8],
         symbolic: &[Option<Arc<BV<'ctx>>>],
-			volos: Volos
+			volos: Volos,
+			internal: bool
     ) -> Result<(), MemoryError> {
         if concrete.len() != symbolic.len() {
             return Err(MemoryError::IncorrectSliceLength);
@@ -743,7 +745,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 // Write concrete data
                 for (i, &byte) in concrete.iter().enumerate() {
                     region.concrete_data[offset + i] = byte;
-						  region.volos_region.borrow_mut().add_volos((offset+i).try_into().unwrap(),concrete.len().try_into().unwrap(),volos.clone())
+						  if internal == false {
+						  	region.volos_region.borrow_mut().add_volos((offset+i).try_into().unwrap(),concrete.len().try_into().unwrap(),volos.clone())
+						  }
                 }
 
                 // Write or remove symbolic data
@@ -764,14 +768,14 @@ impl<'ctx> MemoryX86_64<'ctx> {
     }
 
     /// Writes a sequence of bytes to memory. **volos we need thread_id meta_data here
-    pub fn write_bytes(&self, address: u64, bytes: &[u8], volos: Volos) -> Result<(), MemoryError> {
+    pub fn write_bytes(&self, address: u64, bytes: &[u8], volos: Volos, internal: bool) -> Result<(), MemoryError> {
         // Create a vector of `None` for symbolic values as we're only dealing with concrete data
         let symbolic: Vec<Option<Arc<BV<'ctx>>>> = vec![None; bytes.len()];
-        self.write_memory(address, bytes, &symbolic, volos)
+        self.write_memory(address, bytes, &symbolic, volos, internal)
     }
 
     /// Writes a MemoryValue (both concrete and symbolic) to memory.
-    pub fn write_value(&self, address: u64, value: &MemoryValue<'ctx>) -> Result<(), MemoryError> {
+    pub fn write_value(&self, address: u64, value: &MemoryValue<'ctx>, internal: bool) -> Result<(), MemoryError> {
         let byte_size = ((value.size + 7) / 8) as usize; // Calculate the byte size from the bit size
 
         // Prepare concrete bytes for storage, padded as needed
@@ -809,7 +813,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
             .collect();
 
         // Write to memory
-        self.write_memory(address, &concrete_bytes, &symbolic, value.volos.clone())
+        self.write_memory(address, &concrete_bytes, &symbolic, value.volos.clone(), internal)
     }
 
     // Additional methods for reading and writing standard data types
@@ -817,26 +821,28 @@ impl<'ctx> MemoryX86_64<'ctx> {
         &self,
         address: u64,
         logger: &mut Logger,
-		  volos: Volos
+		  volos: Volos,
+		  internal: bool
     ) -> Result<ConcolicVar<'ctx>, MemoryError> {
-        self.read_value(address, 64, logger, volos)
+        self.read_value(address, 64, logger, volos, internal)
     }
 
-    pub fn write_u64(&self, address: u64, value: &MemoryValue<'ctx>) -> Result<(), MemoryError> {
-        self.write_value(address, value)
+    pub fn write_u64(&self, address: u64, value: &MemoryValue<'ctx>, internal: bool) -> Result<(), MemoryError> {
+        self.write_value(address, value, internal)
     }
 
     pub fn read_u32(
         &self,
         address: u64,
         logger: &mut Logger,
-		  volos: Volos
+		  volos: Volos,
+		  internal: bool
     ) -> Result<ConcolicVar<'ctx>, MemoryError> {
-        self.read_value(address, 32, logger, volos)
+        self.read_value(address, 32, logger, volos, internal)
     }
 
-    pub fn write_u32(&self, address: u64, value: &MemoryValue<'ctx>) -> Result<(), MemoryError> {
-        self.write_value(address, value)
+    pub fn write_u32(&self, address: u64, value: &MemoryValue<'ctx>, internal: bool) -> Result<(), MemoryError> {
+        self.write_value(address, value, internal)
     }
 
     pub fn initialize_cpuid_memory_variables(&self) -> Result<(), MemoryError> {
@@ -874,7 +880,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 size: 32,
 					 volos: new_volos.clone()
             };
-            self.write_value(address, &mem_value)?; // Writing values to memory
+            self.write_value(address, &mem_value, true)?; // Writing values to memory
         }
         println!(
             "Initialized CPUID memory variables at address 0x{:x}",
@@ -892,10 +898,10 @@ impl<'ctx> MemoryX86_64<'ctx> {
     ) -> Result<Sigaction<'ctx>, MemoryError> {
 		 
         // Read the sigaction structure from memory
-        let handler = self.read_u64(address, logger, volos.clone())?.to_memory_value_u64();
-        let flags = self.read_u64(address + 8, logger, volos.clone())?.to_memory_value_u64();
-        let restorer = self.read_u64(address + 16, logger, volos.clone())?.to_memory_value_u64();
-        let mask = self.read_u64(address + 24, logger, volos.clone())?.to_memory_value_u64();
+        let handler = self.read_u64(address, logger, volos.clone(), false)?.to_memory_value_u64();
+        let flags = self.read_u64(address + 8, logger, volos.clone(), false)?.to_memory_value_u64();
+        let restorer = self.read_u64(address + 16, logger, volos.clone(), false)?.to_memory_value_u64();
+        let mask = self.read_u64(address + 24, logger, volos.clone(), false)?.to_memory_value_u64();
         Ok(Sigaction {
             handler,
             flags,
@@ -911,10 +917,10 @@ impl<'ctx> MemoryX86_64<'ctx> {
 		  volos: Volos
     ) -> Result<(), MemoryError> {
         // Write the sigaction structure to memory
-        self.write_u64(address, &sigaction.handler)?;
-        self.write_u64(address + 8, &sigaction.flags)?;
-        self.write_u64(address + 16, &sigaction.restorer)?;
-        self.write_u64(address + 24, &sigaction.mask)?;
+        self.write_u64(address, &sigaction.handler, false)?; //there is only one call to write_sigaction and its from the syscall stuff, so its not internal
+        self.write_u64(address + 8, &sigaction.flags, false)?;
+        self.write_u64(address + 16, &sigaction.restorer, false)?;
+        self.write_u64(address + 24, &sigaction.mask, false)?;
         Ok(())
     }
 

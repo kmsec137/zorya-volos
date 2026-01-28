@@ -362,7 +362,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
     executor
         .state
         .memory
-        .write_value(base_address, &eax_value)
+        .write_value(base_address, &eax_value, false)
         .map_err(|e| format!("Failed to write EAX to memory: {:?}", e))?;
 
     // Create MemoryValue for ebx
@@ -375,7 +375,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
     executor
         .state
         .memory
-        .write_value(base_address + 4, &ebx_value)
+        .write_value(base_address + 4, &ebx_value, false)
         .map_err(|e| format!("Failed to write EBX to memory: {:?}", e))?;
 
     // Create MemoryValue for ecx
@@ -388,7 +388,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
     executor
         .state
         .memory
-        .write_value(base_address + 8, &ecx_value)
+        .write_value(base_address + 8, &ecx_value, false)
         .map_err(|e| format!("Failed to write ECX to memory: {:?}", e))?;
 
     // Create MemoryValue for edx
@@ -401,7 +401,7 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
     executor
         .state
         .memory
-        .write_value(base_address + 12, &edx_value)
+        .write_value(base_address + 12, &edx_value, false)
         .map_err(|e| format!("Failed to write EDX to memory: {:?}", e))?;
 
     log!(executor.trace_logger, "Temporarily wrote into memory the values of EAX: 0x{:08x}, EBX: 0x{:08x}, ECX: 0x{:08x}, EDX: 0x{:08x}", eax, ebx, ecx, edx);

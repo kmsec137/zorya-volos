@@ -133,12 +133,12 @@ fn add_ascii_constraints_for_args<'ctx>(
         if let Ok(slice_ptr_bv) = executor
             .state
             .memory
-            .read_u64(os_args_addr, &mut executor.state.logger.clone(), executor.new_volos())
+            .read_u64(os_args_addr, &mut executor.state.logger.clone(), executor.new_volos(), true)
         {
             if let Ok(slice_len_bv) = executor
                 .state
                 .memory
-                .read_u64(os_args_addr + 8, &mut executor.state.logger.clone(), executor.new_volos())
+                .read_u64(os_args_addr + 8, &mut executor.state.logger.clone(), executor.new_volos(), true)
             {
                 let slice_ptr_val = slice_ptr_bv.concrete.to_u64();
                 let slice_len_val = slice_len_bv.concrete.to_u64();
@@ -151,12 +151,12 @@ fn add_ascii_constraints_for_args<'ctx>(
                     if let Ok(str_data_ptr_cv) = executor
                         .state
                         .memory
-                        .read_u64(string_struct_addr, &mut executor.state.logger.clone(), executor.new_volos())
+                        .read_u64(string_struct_addr, &mut executor.state.logger.clone(), executor.new_volos(), true)
                     {
                         if let Ok(str_data_len_cv) = executor
                             .state
                             .memory
-                            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone(), executor.new_volos())
+                            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone(), executor.new_volos(), true)
                         {
                             let str_data_ptr_val = str_data_ptr_cv.concrete.to_u64();
                             let str_data_len_val = str_data_len_cv.concrete.to_u64();

@@ -196,7 +196,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         let g_ptr = self
             .state
             .memory
-            .read_value(g_ptr_addr, 64, &mut self.state.logger.clone())
+            .read_value(g_ptr_addr, 64, &mut self.state.logger.clone(), true)
             .map(|v| v.concrete.to_u64())
             .unwrap_or(0);
 
@@ -211,7 +211,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         let goid = self
             .state
             .memory
-            .read_value(g_ptr + goid_offset, 64, &mut self.state.logger.clone())
+            .read_value(g_ptr + goid_offset, 64, &mut self.state.logger.clone(), true)
             .map(|v| v.concrete.to_u64())
             .unwrap_or(0);
 
@@ -1055,7 +1055,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 let mem_value = self
                     .state
                     .memory
-                    .read_value(*addr, bit_size, &mut self.state.logger.clone(), self.new_volos())
+                    .read_value(*addr, bit_size, &mut self.state.logger.clone(), self.new_volos(), true)
                     .map_err(|e| {
                         format!("Failed to read memory at address 0x{:x}: {:?}", addr, e)
                     })?;
@@ -1310,7 +1310,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     };
 
                     // Write the MemoryValue to memory
-                    match self.state.memory.write_value(*addr, &mem_value) {
+                    match self.state.memory.write_value(*addr, &mem_value, true) {
                         Ok(_) => {
                             log!(self.state.logger.clone(), "Wrote value 0x{:x} to memory at address 0x{:x}, with symbolic part : {:?} and symbolic size {:?} bits", concrete_value, addr, symbolic_bv.simplify(), symbolic_size);
                             Ok(())
@@ -1587,7 +1587,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         .read_value(
                             *addr,
                             varnode.size.to_bitvector_size(),
-                            &mut self.state.logger.clone(), init_volos
+                            &mut self.state.logger.clone(), init_volos, true
                         )
                         .map_err(|e| {
                             format!("Failed to read memory at address 0x{:x}: {:?}", addr, e)
@@ -2423,7 +2423,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             .read_value(
                 pointer_offset_concrete,
                 load_size_bits,
-                &mut self.state.logger.clone(), init_volos
+                &mut self.state.logger.clone(), init_volos, true
             )
             .map_err(|e| {
                 format!(
@@ -2900,7 +2900,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     );
 
                     // Write the chunk to memory
-                    match self.state.memory.write_value(chunk_addr, &chunk_mem_value) {
+                    match self.state.memory.write_value(chunk_addr, &chunk_mem_value, true) {
                         Ok(_) => {
                             log!(
                                 self.state.logger.clone(),
@@ -2964,7 +2964,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 match self
                     .state
                     .memory
-                    .write_value(pointer_offset_concrete, &mem_value)
+                    .write_value(pointer_offset_concrete, &mem_value, true)
                 {
                     Ok(_) => {
                         log!(
@@ -3000,7 +3000,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     match self.state.memory.read_value(
                         chunk_addr,
                         64,
-                        &mut self.state.logger.clone(), init_volos
+                        &mut self.state.logger.clone(), init_volos, true
                     ) {
                         Ok(stored_value) => {
                             // Convert ConcreteVar to u64 for comparison
@@ -3055,7 +3055,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 match self.state.memory.read_value(
                     pointer_offset_concrete,
                     data_size_bits,
-                    &mut self.state.logger.clone(), init_volos
+                    &mut self.state.logger.clone(), init_volos, true
                 ) {
                     Ok(stored_value) => {
                         // Convert ConcreteVar to u64 for comparison
@@ -3365,7 +3365,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 };
                 self.state
                     .memory
-                    .write_value(*addr, &mem_value)
+                    .write_value(*addr, &mem_value, true)
                     .map_err(|e| e.to_string())?;
             }
             _ => return Err("[ERROR] Unsupported output type in COPY".to_string()),

@@ -351,7 +351,7 @@ fn initialize_string_byte_memory<'a>(
             match executor
                 .state
                 .memory
-                .write_value(byte_addr, &symbolic_memory_value)
+                .write_value(byte_addr, &symbolic_memory_value, true)
             {
                 Ok(()) => {
                     log!(
@@ -546,7 +546,7 @@ pub fn initialize_stack_argument<'a>(
             match executor
                 .state
                 .memory
-                .read_u64(stack_address, &mut executor.state.logger, init_volos)
+                .read_u64(stack_address, &mut executor.state.logger, init_volos, true)
             {
                 Ok(current_stack_value) => {
                     concrete_values.push(current_stack_value.concrete.clone());
@@ -629,7 +629,7 @@ pub fn initialize_stack_argument<'a>(
                     match executor
                         .state
                         .memory
-                        .write_u64(stack_address, &stack_concolic_mem)
+                        .write_u64(stack_address, &stack_concolic_mem, true)
                     {
                         Ok(()) => log!(
                             executor.state.logger,
@@ -837,7 +837,7 @@ fn write_symbolic_to_location<'a>(
                 if let Ok(current_val) = executor
                     .state
                     .memory
-                    .read_u64(stack_address, &mut executor.state.logger, init_volos)
+                    .read_u64(stack_address, &mut executor.state.logger, init_volos, true)
                 {
                     conc.push(current_val.concrete.clone());
 
@@ -858,7 +858,7 @@ fn write_symbolic_to_location<'a>(
                     executor
                         .state
                         .memory
-                        .write_u64(stack_address, &stack_concolic_mem)
+                        .write_u64(stack_address, &stack_concolic_mem, true)
                         .ok();
                     log!(
                         executor.state.logger,
@@ -1171,7 +1171,7 @@ fn get_concrete_value_from_location<'a>(
                 if let Ok(stack_val) = executor
                     .state
                     .memory
-                    .read_u64(stack_address, &mut executor.state.logger.clone(), executor.new_volos())
+                    .read_u64(stack_address, &mut executor.state.logger.clone(), executor.new_volos(), true)
                 {
                     let concrete_val = stack_val.concrete.to_u64();
                     log!(
@@ -1329,7 +1329,7 @@ fn initialize_slice_element_memory<'a>(
         match executor.state.memory.read_value(
             element_addr,
             bit_size,
-            &mut executor.state.logger.clone(), init_volos
+            &mut executor.state.logger.clone(), init_volos, true
         ) {
             Ok(current_value) => {
                 log!(
@@ -1366,7 +1366,7 @@ fn initialize_slice_element_memory<'a>(
                 match executor
                     .state
                     .memory
-                    .write_value(element_addr, &symbolic_memory_value)
+                    .write_value(element_addr, &symbolic_memory_value, true)
                 {
                     Ok(()) => {
                         log!(
@@ -1453,7 +1453,8 @@ fn initialize_slice_element_memory<'a>(
                     element_addr,
                     &concrete_bytes,
                     &symbolic_bytes,
-		    				new_volos
+		    				new_volos,
+							true
                 ) {
                     Ok(()) => {
                         log!(

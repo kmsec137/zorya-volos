@@ -184,7 +184,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             executor
                 .state
                 .memory
-                .write_bytes(buf_ptr, &buffer[..bytes_read], new_volos.clone())
+                .write_bytes(buf_ptr, &buffer[..bytes_read], new_volos.clone(), false)
                 .map_err(|e| format!("Failed to write bytes to memory: {}", e))?;
 
             // Update RAX with the number of bytes read
@@ -612,7 +612,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
 		    			  volos: new_volos.clone()
                 };
 
-                match executor.state.memory.write_value(oldset_ptr, &mem_value) {
+                match executor.state.memory.write_value(oldset_ptr, &mem_value, false) {
                     Ok(_) => log!(
                         executor.state.logger.clone(),
                         "Saved old signal mask to 0x{:x}",
@@ -777,7 +777,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     executor
                         .state
                         .memory
-                        .write_bytes(rem_ptr, &zero_timespec, new_volos.clone())
+                        .write_bytes(rem_ptr, &zero_timespec, new_volos.clone(), false)
                         .map_err(|e| format!("Failed to write rem timespec: {}", e))?;
 
                     log!(
@@ -1204,7 +1204,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     executor
                         .state
                         .memory
-                        .write_u64(parent_ptr, &tid_value)
+                        .write_u64(parent_ptr, &tid_value, false)
                         .map_err(|e| format!("Failed to write parent TID: {:?}", e))?;
                     log!(
                         executor.state.logger.clone(),
@@ -1224,7 +1224,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     executor
                         .state
                         .memory
-                        .write_u64(child_ptr, &tid_value)
+                        .write_u64(child_ptr, &tid_value, false)
                         .map_err(|e| format!("Failed to write child TID: {:?}", e))?;
                     log!(
                         executor.state.logger.clone(),
@@ -1328,7 +1328,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             executor
                 .state
                 .memory
-                .write_bytes(rlim_ptr, &rlimit_bytes, new_volos.clone())
+                .write_bytes(rlim_ptr, &rlimit_bytes, new_volos.clone(), false)
                 .map_err(|e| format!("Failed to write rlimit to memory: {}", e))?;
 
             // Set return value to 0 (success)
@@ -1542,7 +1542,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 // Write the current alternate signal stack information to memory
                 if let Err(e) = executor.state.memory.write_u64(
                     oss_ptr,
-                    &MemoryValue::new(current_ss_sp, current_ss_sp_symbolic, 64),
+                    &MemoryValue::new(current_ss_sp, current_ss_sp_symbolic, 64), false
                 ) {
                     log!(
                         executor.state.logger.clone(),
@@ -1553,7 +1553,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 }
                 if let Err(e) = executor.state.memory.write_u32(
                     oss_ptr + 8,
-                    &MemoryValue::new(current_ss_flags, current_ss_flags_symbolic, 32),
+                    &MemoryValue::new(current_ss_flags, current_ss_flags_symbolic, 32), false
                 ) {
                     log!(
                         executor.state.logger.clone(),
@@ -1564,7 +1564,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 }
                 if let Err(e) = executor.state.memory.write_u64(
                     oss_ptr + 16,
-                    &MemoryValue::new(current_ss_size, current_ss_size_symbolic, 64),
+                    &MemoryValue::new(current_ss_size, current_ss_size_symbolic, 64), false
                 ) {
                     log!(
                         executor.state.logger.clone(),
@@ -1674,7 +1674,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     executor
                         .state
                         .memory
-                        .write_value(addr, &mem_value)
+                        .write_value(addr, &mem_value, false)
                         .map_err(|e| format!("Failed to write FS base to memory: {:?}", e))?;
                     // Return 0 in RAX for success
                     cpu_state_guard.set_register_value_by_offset(
@@ -1718,7 +1718,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                     executor
                         .state
                         .memory
-                        .write_value(addr, &mem_value)
+                        .write_value(addr, &mem_value, false)
                         .map_err(|e| format!("Failed to write GS base to memory: {:?}", e))?;
                     // Return 0 in RAX for success
                     cpu_state_guard.set_register_value_by_offset(
@@ -2003,7 +2003,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             executor
                 .state
                 .memory
-                .write_value(mask_ptr, &mask_memory_value)
+                .write_value(mask_ptr, &mask_memory_value, false)
                 .map_err(|e| format!("Failed to write CPU affinity mask to memory: {}", e))?;
 
             // 7. Set RAX to 0 to indicate success
@@ -2182,13 +2182,6 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 .map_err(|e| format!("Failed to write tv_nsec to buffer: {}", e))?;
 
             // Write the timespec data to memory at tp_ptr
-<<<<<<< HEAD
-            executor
-                .state
-                .memory
-                .write_bytes(tp_ptr, &timespec_bytes, new_volos.clone())
-                .map_err(|e| format!("Failed to write timespec to memory: {}", e))?;
-=======
             // Use overlay-aware memory write if in overlay mode
             if in_overlay_mode {
                 // Write to overlay memory
@@ -2200,10 +2193,9 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 executor
                     .state
                     .memory
-                    .write_bytes(tp_ptr, &timespec_bytes)
+                    .write_bytes(tp_ptr, &timespec_bytes, executor.new_volos(), false)
                     .map_err(|e| format!("Failed to write timespec to memory: {}", e))?;
             }
->>>>>>> upstream/main
 
             // Set return value to 0 (success) using overlay-aware register write
             let rax_value = ConcolicVar::new_concrete_and_symbolic_int(
