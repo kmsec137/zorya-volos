@@ -256,7 +256,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         }
 
         // Fall back to base state
-        self.state.memory.read_memory(address, size)
+        self.state.memory.read_memory(address, size, self.new_volos(), true)
     }
 
     /// Write memory with overlay support
@@ -304,7 +304,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 };
             self.state
                 .memory
-                .write_memory(address, concrete_data, &symbolic_vec, true)
+                .write_memory(address, concrete_data, &symbolic_vec, self.new_volos(), true)
                 .map_err(|e| format!("Failed to write memory: {:?}", e))
         }
     }
@@ -1041,6 +1041,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     concrete: concrete_val,
                     symbolic: parsed_value_symbolic,
                     size: bit_size,
+						  volos: self.new_volos()
                 };
 
                 log!(
@@ -1061,6 +1062,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     concrete: 0,
                     symbolic: BV::new_const(self.context, "MemoryRam", bit_size),
                     size: bit_size,
+						  volos: self.new_volos()
                 }))
             }
             Var::Memory(addr) => {
@@ -1418,10 +1420,11 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         concrete: concrete_value,
                         symbolic: symbolic_bv.clone(),
                         size: bit_size,
+								volos: self.new_volos()
                     };
 
                     // Write the MemoryValue to memory
-                    match self.state.memory.write_value(*addr, &mem_value) {
+                    match self.state.memory.write_value(*addr, &mem_value, true) {
                         Ok(_) => {
                             log!(self.state.logger.clone(), "Wrote value 0x{:x} to memory at address 0x{:x}, with symbolic part : {:?} and symbolic size {:?} bits", concrete_value, addr, symbolic_bv.simplify(), symbolic_size);
                             Ok(())
@@ -2916,6 +2919,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         concrete: chunk,
                         symbolic: chunk_symbolic.clone(),
                         size: 64, // Each chunk is 64 bits
+								volos: self.new_volos()
                     };
 
                     log!(
@@ -2930,7 +2934,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     let write_result = if self.is_overlay_mode() {
                         self.write_value_overlay_mode(chunk_addr, &chunk_mem_value)
                     } else {
-                        self.state.memory.write_value(chunk_addr, &chunk_mem_value)
+                        self.state.memory.write_value(chunk_addr, &chunk_mem_value, false)
                     };
                     match write_result {
                         Ok(_) => {
@@ -2981,6 +2985,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     concrete: truncated_value,
                     symbolic: data_to_store_symbolic.simplify().clone(),
                     size: data_size_bits,
+						  volos: self.new_volos()
                 };
 
                 log!(
@@ -2997,7 +3002,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 } else {
                     self.state
                         .memory
-                        .write_value(pointer_offset_concrete, &mem_value)
+                        .write_value(pointer_offset_concrete, &mem_value, true)
                 };
                 match write_result {
                     Ok(_) => {
@@ -3404,10 +3409,11 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     concrete: concrete_chunks[0],
                     symbolic: new_symbolic.to_bv(self.context),
                     size: output_size_bits,
+						  volos: self.new_volos()
                 };
                 self.state
                     .memory
-                    .write_value(*addr, &mem_value)
+                    .write_value(*addr, &mem_value, false)
                     .map_err(|e| e.to_string())?;
             }
             _ => return Err("[ERROR] Unsupported output type in COPY".to_string()),

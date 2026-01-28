@@ -818,7 +818,7 @@ fn execute_instructions_from(
                                             executor
                                                 .state
                                                 .memory
-                                                .read_u64(addr, &mut executor.state.logger.clone(), new_volos)
+                                                .read_u64(addr, &mut executor.state.logger.clone(), new_volos, true)
                                                 .ok()
                                                 .map(|cv| cv.concrete.to_u64())
                                         })
@@ -2056,15 +2056,15 @@ pub fn initialize_symbolic_part_args(
     let mem = &executor.state.memory;
 	 let volos = &executor.new_volos();
     let slice_ptr = mem
-        .read_u64(args_addr, &mut executor.state.logger.clone(), volos.clone())?
+        .read_u64(args_addr, &mut executor.state.logger.clone(), volos.clone(), true)?
         .concrete
         .to_u64(); // Pointer to backing array
     let slice_len = mem
-        .read_u64(args_addr + 8, &mut executor.state.logger.clone(), volos.clone())?
+        .read_u64(args_addr + 8, &mut executor.state.logger.clone(), volos.clone(), true)?
         .concrete
         .to_u64(); // Length (number of arguments)
     let _slice_cap = mem
-        .read_u64(args_addr + 16, &mut executor.state.logger.clone(), volos.clone())?
+        .read_u64(args_addr + 16, &mut executor.state.logger.clone(), volos.clone(), true)?
         .concrete
         .to_u64(); // Capacity (not used)
     log!(
@@ -2080,11 +2080,11 @@ pub fn initialize_symbolic_part_args(
 	 	  let new_volos = executor.new_volos();
         let string_struct_addr = slice_ptr + i * 16; // Each Go string struct is 16 bytes
         let str_data_ptr = mem
-            .read_u64(string_struct_addr, &mut executor.state.logger.clone(), new_volos.clone())?
+            .read_u64(string_struct_addr, &mut executor.state.logger.clone(), new_volos.clone(), true)?
             .concrete
             .to_u64(); // Pointer to actual string data
         let str_data_len = mem
-            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone(), new_volos.clone())?
+            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone(), new_volos.clone(), true)?
             .concrete
             .to_u64(); // Length of the string
 
@@ -2117,7 +2117,7 @@ pub fn initialize_symbolic_part_args(
         }
 
         // Write those symbolic values back into memory
-        mem.write_memory(str_data_ptr, &concrete_str_bytes, &fresh_symbolic, new_volos.clone())?;
+        mem.write_memory(str_data_ptr, &concrete_str_bytes, &fresh_symbolic, new_volos.clone(), true)?;
 
         log!(
             executor.state.logger,
@@ -2356,7 +2356,7 @@ fn update_argc_argv(
     // Write argc (concrete)
     executor.state.memory.write_value(
         rsp,
-        &MemoryValue::new(argc, BV::from_u64(&executor.context, argc, 64), 64),
+        &MemoryValue::new(argc, BV::from_u64(&executor.context, argc, 64), 64), true
     )?;
 
     let argv_ptr_base = rsp + 8;
@@ -2370,7 +2370,7 @@ fn update_argc_argv(
                 current_string_address,
                 BV::from_u64(&executor.context, current_string_address, 64),
                 64,
-            ),
+            ), true
         )?;
 
         log!(
@@ -2394,14 +2394,14 @@ fn update_argc_argv(
 
             executor.state.memory.write_value(
                 current_string_address + offset as u64,
-                &MemoryValue::new(0, sym_byte.clone(), 8),
+                &MemoryValue::new(0, sym_byte.clone(), 8), true
             )?;
         }
 
         // NULL terminator
         executor.state.memory.write_value(
             current_string_address + arg_bytes.len() as u64,
-            &MemoryValue::new(0, BV::from_u64(&executor.context, 0, 8), 8),
+            &MemoryValue::new(0, BV::from_u64(&executor.context, 0, 8), 8), true
         )?;
 
         current_string_address += ((arg_bytes.len() + 8) as u64) & !7; // align to 8 bytes
@@ -2410,7 +2410,7 @@ fn update_argc_argv(
     // Write argv NULL terminator pointer
     executor.state.memory.write_value(
         argv_ptr_base + argc * 8,
-        &MemoryValue::new(0, BV::from_u64(executor.context, 0, 64), 64),
+        &MemoryValue::new(0, BV::from_u64(executor.context, 0, 64), 64), true
     )?;
 
     Ok(())

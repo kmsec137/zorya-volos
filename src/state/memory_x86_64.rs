@@ -144,6 +144,7 @@ pub enum MemoryError {
     InvalidString,
     InvalidFileDescriptor,
     AddressOverflow,
+	 Other(String),
 }
 
 impl Error for MemoryError {}
@@ -165,6 +166,7 @@ impl fmt::Display for MemoryError {
             MemoryError::InvalidString => write!(f, "Invalid string"),
             MemoryError::InvalidFileDescriptor => write!(f, "Invalid file descriptor"),
             MemoryError::AddressOverflow => write!(f, "Address overflow"),
+            MemoryError::Other(msg) => write!(f, "{}", msg),
         }
     }
 }
