@@ -17,6 +17,12 @@ pub mod thread_loader;
 pub mod thread_manager;
 pub mod virtual_file_system;
 
+pub mod overlay_path_analysis;
+pub mod overlay_state;
+pub mod runtime_info;
+
+
+
 pub use cpu_state::CpuState;
 pub use evaluate_z3::evaluate_args_z3;
 pub use function_signatures::FunctionSignature;

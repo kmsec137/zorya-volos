@@ -436,6 +436,27 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
         Err(MemoryError::ReadOutOfBounds)
     }
+	// Finds the start address of the memory region containing the given address
+	/// Returns (start_address, end_address) of the containing region
+	/// This is useful for overlay operations that need to identify regions
+	pub fn find_region_bounds(&self, address: u64, size: usize) -> Option<(u64, u64)> {
+	    let regions = self.regions.read().unwrap();
+	    regions
+	        .iter()
+	        .find(|region| region.contains(address, size))
+	        .map(|region| (region.start_address, region.end_address))
+	}
+	
+	/// Gets a raw pointer to a memory region by start address (unsafe, used for overlay)
+	/// SAFETY: Caller must ensure the region pointer is not used after regions are modified
+	pub fn get_region_ptr(&self, start_address: u64) -> Option<*const MemoryRegion<'ctx>> {
+	    let regions = self.regions.read().unwrap();
+	    regions
+	        .iter()
+	        .find(|region| region.start_address == start_address)
+	        .map(|region| region as *const MemoryRegion<'ctx>)
+	}
+
 
     /// Reads a sequence of bytes from memory (concrete data only).
     pub fn read_bytes(&self, address: u64, size: usize, volos: Volos, internal: bool) -> Result<Vec<u8>, MemoryError> {

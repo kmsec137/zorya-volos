@@ -34,6 +34,9 @@ use z3::ast::Bool;
 use z3::ast::BV;
 use z3::{Context, Optimize};
 
+use crate::state::runtime_info::RuntimeGOffsets;
+use crate::state::overlay_state::OverlayState;
+
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
         writeln!($logger, $($arg)*).unwrap();
@@ -55,6 +58,8 @@ pub struct ConcolicExecutor<'ctx> {
     pub trace_logger: Logger,
     pub function_symbolic_arguments: BTreeMap<String, SymbolicVar<'ctx>>, // this is used to store the symbolic arguments of the binary (os.args) or the function (RSI, RDX, RCX, R8, R9 etc.)
     pub constraint_vector: Vec<Bool<'ctx>>, // Vector to collect constraints on tracked symbolic variables
+	 pub overlay_state: Option<OverlayState<'ctx>>, // Overlay state for exploring untaken paths without modifying base state
+
 }
 
 impl<'ctx> ConcolicExecutor<'ctx> {
@@ -79,6 +84,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             trace_logger,
             function_symbolic_arguments: BTreeMap::new(),
             constraint_vector: Vec::new(),
+				overlay_state: None
         })
     }
 
@@ -207,7 +213,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
 
         // Read goid field from g struct using dynamically loaded offset
         // The offset is extracted from DWARF at initialization time
-        let goid_offset = crate::state::RuntimeGOffsets::get_goid_offset();
+        let goid_offset = RuntimeGOffsets::get_goid_offset();
         let goid = self
             .state
             .memory
