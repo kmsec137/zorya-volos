@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
 #
 # SPDX-License-Identifier: Apache-2.0
-
+*.rs.swn
+*.rs.swo
 /target
 /src/state/working_files
 /.vscode
