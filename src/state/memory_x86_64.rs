@@ -413,7 +413,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
 		  volos: Volos,
 		  internal: bool
     ) -> Result<(Vec<u8>, Vec<Option<Arc<BV<'ctx>>>>), MemoryError> {
+		 
         let regions = self.regions.read().unwrap();
+			let new_volos = Volos::new(volos.thread_id,AccessType::Read,volos.locks_held);
 
         for region in regions.iter() {
             if region.contains(address, size) {
@@ -426,10 +428,11 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 let concrete = region.concrete_data[offset..offset + size].to_vec();
 					 if internal != true {
 					 	let v_region = &mut region.volos_region.borrow_mut();
-					 	v_region.add_volos((offset).try_into().unwrap(), size.try_into().unwrap(), volos.clone(), internal);
+					 	v_region.add_volos((offset).try_into().unwrap(), size.try_into().unwrap(), new_volos.clone(), internal);
 					 }
 
-					 println!("[VOLOS] reading memory with volos --> @[0x{:X}] {:?}", address, volos);
+					 println!("[VOLOS] reading memory with volos --> @[0x{:X}] {:?}", address, new_volos);
+				 	 
                 let symbolic = (offset..offset + size)
                     .map(|i| region.symbolic_data.get(&i).cloned())
                     .collect();
@@ -760,7 +763,12 @@ impl<'ctx> MemoryX86_64<'ctx> {
         if concrete.len() != symbolic.len() {
             return Err(MemoryError::IncorrectSliceLength);
         }
-			println!("[VOLOS] writing memory with volos --> @[0x{:X}] {:?}", address, volos);
+			let new_volos = Volos::new(volos.thread_id,
+												AccessType::Write,
+												volos.locks_held);
+
+			println!("[VOLOS] writing memory with volos --> @[0x{:X}] {:?}", address, new_volos);
+		  
         let mut regions = self.regions.write().unwrap();
         // Check if the address falls within an existing memory region
         for region in regions.iter_mut() {
@@ -771,7 +779,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 for (i, &byte) in concrete.iter().enumerate() {
                     region.concrete_data[offset + i] = byte;
 						  if internal == false {
-						  	region.volos_region.borrow_mut().add_volos((offset+i).try_into().unwrap(),concrete.len().try_into().unwrap(),volos.clone(),internal)
+						  	region.volos_region.borrow_mut().add_volos((offset+i).try_into().unwrap(),concrete.len().try_into().unwrap(),new_volos.clone(),internal)
 						  }
                 }
 
