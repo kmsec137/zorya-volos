@@ -767,7 +767,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 												AccessType::Write,
 												volos.locks_held);
 
-			println!("[VOLOS] writing memory --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{:#?} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held);
+			println!("[VOLOS] writing memory --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{:#?} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
 		  
         let mut regions = self.regions.write().unwrap();
         // Check if the address falls within an existing memory region
