@@ -12,6 +12,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
+use std::borrow::BorrowMut;
+use std::cell::RefMut;
+use zorya::state::OSThread;
+
 use parser::parser::{Inst, Opcode, Var};
 use z3::{
     ast::{Ast, BV},
@@ -754,11 +758,13 @@ fn execute_instructions_from(
 						            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
 											//println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
 											println!("[VOLOS::main.rs] got lock function call {:?} mutex=0x{:x}",symbol_name, value.concrete);
-											let thread_manager = executor.state.thread_manager.lock().unwrap();
-											let mut _locks = thread_manager.current_thread().unwrap().locks_held.clone();
-											_locks.push(value.concrete.to_u64());
-											let len = _locks.len();
-											println!("[VOLOS::main.rs] thread[{}].locks_held -> {:#?}",thread_manager.current_tid, _locks.get(len - 1));
+											let mut thread_manager = executor.state.thread_manager.lock().unwrap();
+										   let current_tid = thread_manager.current_tid;
+										   let mut current_thread: &mut OSThread<'_> = thread_manager.current_thread_mut().unwrap();
+											let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
+											locks.push(value.concrete.to_u64());
+											let len = locks.len();
+											println!("[VOLOS::main.rs] thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
 						            }
 						        }
 						    }
