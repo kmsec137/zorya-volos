@@ -431,7 +431,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 					 	v_region.add_volos((offset).try_into().unwrap(), size.try_into().unwrap(), new_volos.clone(), internal);
 					 }
 
-					 println!("[VOLOS] reading memory with volos --> @[0x{:X}] {:?}", address, new_volos);
+					 println!("[VOLOS] reading memory --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{:#?} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held);
 				 	 
                 let symbolic = (offset..offset + size)
                     .map(|i| region.symbolic_data.get(&i).cloned())
