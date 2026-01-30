@@ -317,7 +317,7 @@ fn initialize_string_byte_memory<'a>(
     }
 
     // Read current byte value from memory
-    match executor.state.memory.read_byte(byte_addr, init_volos) {
+    match executor.state.memory.read_byte(byte_addr, init_volos, true) {
         Ok(current_byte) => {
             log!(
                 executor.state.logger,

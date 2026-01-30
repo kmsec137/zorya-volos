@@ -175,7 +175,7 @@ fn add_ascii_constraints_for_args<'ctx>(
                                 let mut first_byte_bv_opt: Option<z3::ast::BV> = None;
                                 for j in 0..max_len {
                                     if let Ok(byte_read) =
-                                        executor.state.memory.read_byte(str_data_ptr_val + j, executor.new_volos())
+                                        executor.state.memory.read_byte(str_data_ptr_val + j, executor.new_volos(), true)
                                     {
                                         let byte_bv = byte_read.symbolic.to_bv(executor.context);
                                         if j == 0 {

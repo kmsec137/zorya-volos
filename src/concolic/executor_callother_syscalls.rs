@@ -306,7 +306,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             let filename = executor
                 .state
                 .memory
-                .read_string(filename_ptr, executor.new_volos())
+                .read_string(filename_ptr, executor.new_volos(), false)
                 .map_err(|e| format!("Failed to read filename from memory: {}", e))?;
 
             log!(executor.state.logger.clone(), "Filename: {}", filename);
@@ -1026,7 +1026,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
             let path = executor
                 .state
                 .memory
-                .read_string(path_ptr, executor.new_volos())
+                .read_string(path_ptr, executor.new_volos(), false)
                 .map_err(|e| format!("Failed to read execve path: {}", e))?;
             log!(
                 executor.state.logger.clone(),
@@ -1050,7 +1050,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let arg = executor
                     .state
                     .memory
-                    .read_string(arg_ptr.to_u64(), executor.new_volos())
+                    .read_string(arg_ptr.to_u64(), executor.new_volos(), false)
                     .map_err(|e| format!("Failed to read argv[{}]: {}", i, e))?;
                 argv.push(arg);
                 i += 1;
@@ -1073,7 +1073,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let env = executor
                     .state
                     .memory
-                    .read_string(env_ptr.to_u64(), executor.new_volos())
+                    .read_string(env_ptr.to_u64(), executor.new_volos(), false)
                     .map_err(|e| format!("Failed to read envp[{}]: {}", j, e))?;
                 envp.push(env);
                 j += 1;
@@ -2257,7 +2257,7 @@ pub fn handle_syscall(executor: &mut ConcolicExecutor) -> Result<(), String> {
                 let pathname = executor
                     .state
                     .memory
-                    .read_string(pathname_ptr, init_volos)
+                    .read_string(pathname_ptr, init_volos, false)
                     .map_err(|e| format!("Failed to read pathname string: {}", e))?;
 
                 // 5. Simulate opening the file via the virtual file system

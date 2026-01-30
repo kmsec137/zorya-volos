@@ -442,6 +442,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 }
 
                 let concrete = region.concrete_data[offset..offset + size].to_vec();
+
 					 if internal == false {
 					 	region.volos_region.borrow_mut().add_volos((offset).try_into().unwrap(), size.try_into().unwrap(), new_volos.clone(), internal);
 					 }
@@ -454,7 +455,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
 					for region in regions.iter(){
 					   if region.volos_region.borrow().memory.len() != 0{
-			   			println!("[VOLOS] VolosRegion @[{:X}] : {}", address, region.volos_region.borrow()); 
+			   			println!("[VOLOS] VolosRegion\n{}", region.volos_region.borrow()); 
 					   }
         			}
 
@@ -494,12 +495,12 @@ impl<'ctx> MemoryX86_64<'ctx> {
     }
 
     /// Reads a null-terminated string from memory (concrete data only).
-    pub fn read_string(&self, address: u64, volos: Volos) -> Result<String, MemoryError> {
+    pub fn read_string(&self, address: u64, volos: Volos, internal: bool) -> Result<String, MemoryError> {
         let mut result = Vec::new();
         let mut addr = address;
 
         loop {
-            let (concrete, _) = self.read_memory(addr, 1, volos.clone(), false)?;
+            let (concrete, _) = self.read_memory(addr, 1, volos.clone(), internal)?;
             let byte = concrete[0];
             if byte == 0 {
                 break;
@@ -512,8 +513,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
     }
 
     /// Reads exactly one byte from memory, returning a ConcolicVar (concrete and symbolic).
-    pub fn read_byte(&self, address: u64, volos: Volos) -> Result<ConcolicVar<'ctx>, MemoryError> {
-        let (concrete, symbolic) = self.read_memory(address, 1, volos, true)?;
+    pub fn read_byte(&self, address: u64, volos: Volos, internal: bool) -> Result<ConcolicVar<'ctx>, MemoryError> {
+        let (concrete, symbolic) = self.read_memory(address, 1, volos, internal)?;
         let cbyte = concrete[0] as u64;
 
         let sym_bv = symbolic[0]
@@ -816,7 +817,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
 					for region in regions.iter(){
 					   if region.volos_region.borrow().memory.len() != 0{
-			   			println!("[VOLOS] VolosRegion @[{:X}] : {}", address, region.volos_region.borrow()); 
+			   			println!("[VOLOS] VolosRegion {}", region.volos_region.borrow()); 
 					   }
         			}
 

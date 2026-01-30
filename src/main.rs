@@ -852,7 +852,7 @@ fn execute_instructions_from(
                             for j in 0..max_len {
 
 								    	  let new_volos = executor.new_volos();
-                                if let Ok(byte_read) = executor.state.memory.read_byte(ptr + j, new_volos) {
+                                if let Ok(byte_read) = executor.state.memory.read_byte(ptr + j, new_volos, true) {
                                     let byte_bv = byte_read.symbolic.to_bv(executor.context);
                                     if j == 0 {
                                         first_byte_bv = Some(byte_bv.clone());
