@@ -86,8 +86,77 @@ impl VolosRegion {
 		volos_region.add_volos(start_address, end_address - start_address, init_volos, true);
 		return volos_region	
 	}
- 
 
+   pub fn race_check(&mut self) {
+   	 for (address, volos_list) in self.memory.iter() {
+   	 	if volos_list.len() < 2 { continue; }
+
+   	 	for i in 0..volos_list.len() {
+   	 	    for j in (i + 1)..volos_list.len() {
+   	 	        let v1 = &volos_list[i];
+   	 	        let v2 = &volos_list[j];
+
+   	 	        // 1. Basic Filters
+   	 	        if v1.thread_id == v2.thread_id { continue; }
+   	 	        if v1.access_type == AccessType::New || v2.access_type == AccessType::New { continue; }
+   	 	        if v1.access_type == AccessType::Read && v2.access_type == AccessType::Read { continue; }
+
+   	 	        // 2. The "No Lock" Shortcut
+   	 	        // If either thread holds 0 locks, the intersection is guaranteed to be empty.
+   	 	        let v1_unlocked = v1.locks_held.is_empty();
+   	 	        let v2_unlocked = v2.locks_held.is_empty();
+
+   	 	        if v1_unlocked || v2_unlocked {
+   	 	            println!("[VOLOS] *** Race Detected (Unprotected Access) ***");
+   	 	            self.print_race_report(address, v1, v2);
+   	 	            continue; // Race found, move to next pair
+   	 	        }
+
+   	 	        // 3. The Intersection Check (Both have locks, but are they the SAME locks?)
+   	 	        let common_lock = v1.locks_held.iter()
+   	 	            .any(|lock_id| v2.locks_held.contains(lock_id));
+
+   	 	        if !common_lock {
+   	 	            println!("[VOLOS] *** Race Detected (Inconsistent Locking) ***");
+   	 	            self.print_race_report(address, v1, v2);
+   	 	        }
+   	 	    }
+   	 	}
+   	 }
+	} 
+   fn print_race_report(&self, address: &u64, v1: &Volos, v2: &Volos) {
+        println!("================================================================");
+        println!("[VOLOS DETECTOR] DATA RACE FOUND AT 0x{:x}", address);
+        println!("----------------------------------------------------------------");
+        
+        // Report for the first access
+        self.print_access_details("Access 1", v1);
+        
+        println!("--- VS ---");
+        
+        // Report for the second access
+        self.print_access_details("Access 2", v2);
+        
+        println!("----------------------------------------------------------------");
+        println!("REASON: One or more threads accessed this memory without a shared lock.");
+        println!("================================================================\n");
+    }
+
+    fn print_access_details(&self, label: &str, v: &Volos) {
+        let lock_str = if v.locks_held.is_empty() {
+            "NONE (UNPROTECTED)".to_string()
+        } else {
+            format!("{:?}", v.locks_held)
+        };
+
+        println!("{}:", label);
+        println!("  Goroutine ID: {}", v.thread_id);
+        println!("  Op Type:      {:?}", v.access_type);
+        println!("  Locks Held:   {}", lock_str);
+        
+        // If you've hooked the PC (Program Counter), print it here:
+        // println!("  Location:     0x{:x}", v.pc); 
+    }
 	pub fn add_volos(&mut self, address:u64, size:u64, volos:Volos, init: bool) {
 		
 		if init != true {	
@@ -458,6 +527,12 @@ impl<'ctx> MemoryX86_64<'ctx> {
                     .collect();
 
 					//for region in regions.iter(){
+					//   if region.volos_region.borrow().memory.len() != 0{
+			   	//		println!("[VOLOS] VolosRegion {}", region.volos_region.borrow()); 
+					//   }
+        			//}
+
+					//for region in regions.iter(){
 					//  if region.volos_region.borrow().memory.len() != 0{
 			   	//		println!("[VOLOS] VolosRegion\n{}", region.volos_region.borrow()); 
 					//   }
@@ -806,7 +881,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
                 for (i, &byte) in concrete.iter().enumerate() {
                     region.concrete_data[offset + i] = byte;
 						  if internal == false {
-						  	region.volos_region.borrow_mut().add_volos((offset+i).try_into().unwrap(),concrete.len().try_into().unwrap(),new_volos.clone(),internal)
+						  	region.volos_region.borrow_mut().add_volos((offset+i).try_into().unwrap(),concrete.len().try_into().unwrap(),new_volos.clone(),internal);
+							region.volos_region.borrow_mut().race_check();
 						  }
                 }
 
@@ -819,11 +895,11 @@ impl<'ctx> MemoryX86_64<'ctx> {
                     }
                 }
 
-					for region in regions.iter(){
-					   if region.volos_region.borrow().memory.len() != 0{
-			   			println!("[VOLOS] VolosRegion {}", region.volos_region.borrow()); 
-					   }
-        			}
+					//for region in regions.iter(){
+					//   if region.volos_region.borrow().memory.len() != 0{
+			   	//		println!("[VOLOS] VolosRegion {}", region.volos_region.borrow()); 
+					//   }
+        			//}
 
                 return Ok(());
             }
