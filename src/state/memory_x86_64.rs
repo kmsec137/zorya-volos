@@ -72,12 +72,12 @@ pub struct Volos {
 pub struct VolosRegion {
 	pub start_address: u64, //optional we can operate with these being 0 as well
 	pub end_address: u64,
-	pub memory: HashMap<u64,Volos>
+	pub memory: HashMap<u64,Vec<Volos>>
 }
 
 impl VolosRegion {
 	pub fn new(start_address: u64, end_address: u64, init_volos: Volos) -> Self{
-		let mut memory = HashMap::<u64,Volos>::new();
+		let mut memory = HashMap::<u64,Vec<Volos>>::new();
 		let mut volos_region = VolosRegion {
 			start_address,
 			end_address,
@@ -93,7 +93,8 @@ impl VolosRegion {
 		if init != true {	
 			for index in 0..size{
 				let new_volos = volos.clone();
-				self.memory.insert(address +index, new_volos);
+				//self.memory.insert(address +index, new_volos);
+				self.memory.entry(address+index).or_default().push(new_volos);
 			}
 		}
 	}
@@ -106,7 +107,10 @@ impl fmt::Display for VolosRegion {
 
    	 	for addr in addresses {
    	   	if let Some(value) = self.memory.get(addr) {
-   	      	write!(f,"@{:#x}:[{}] \n", addr, value);
+   	      	write!(f,"@{:#x}:\n", addr);
+				   for volos in value.iter(){
+   	      		write!(f,"\t [{}] \n", volos);
+					}
    	     }
    		}	  
 		 Ok(())
@@ -432,7 +436,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
         let mut regions = self.regions.write().unwrap(); //KEITH changed this to get around RwLock stuff
 		  let new_volos = Volos::new(volos.thread_id,AccessType::Read,volos.locks_held);
 
-		  println!("[VOLOS] reading memory --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{:#?} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
+		  println!("[VOLOS] READ MEM --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{:#?} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
         for region in regions.iter_mut() {
             if region.contains(address, size) {
                 let offset = region.offset(address);
@@ -453,11 +457,11 @@ impl<'ctx> MemoryX86_64<'ctx> {
                     .map(|i| region.symbolic_data.get(&i).cloned())
                     .collect();
 
-					for region in regions.iter(){
-					   if region.volos_region.borrow().memory.len() != 0{
-			   			println!("[VOLOS] VolosRegion\n{}", region.volos_region.borrow()); 
-					   }
-        			}
+					//for region in regions.iter(){
+					//  if region.volos_region.borrow().memory.len() != 0{
+			   	//		println!("[VOLOS] VolosRegion\n{}", region.volos_region.borrow()); 
+					//   }
+        			//}
 
                 return Ok((concrete, symbolic));
             }
@@ -790,7 +794,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 												AccessType::Write,
 												volos.locks_held);
 
-			println!("[VOLOS] writing memory --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
+			println!("[VOLOS] WRITE MEM --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
 		  
         let mut regions = self.regions.write().unwrap();
         // Check if the address falls within an existing memory region

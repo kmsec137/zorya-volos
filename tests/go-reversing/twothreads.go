@@ -33,6 +33,16 @@ func main() {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}()
+	//ThreadC
+	go func() {
+		for i := 0; i < 5; i++ {
+			// No lock taken
+			mutex.Lock()
+			mutex.Unlock()
+			fmt.Println("[ThreadB] Unsafe Read:", sharedData)
+			time.Sleep(100 * time.Millisecond)
+		}
+	}()
 
 	// Instead of a WaitGroup, we just block the main thread manually
 	// If we don't do this, the program ends immediately.
