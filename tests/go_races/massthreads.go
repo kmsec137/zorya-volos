@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"os"     // Required for Args
+	"strconv" // Required to convert strings to ints
 	"sync"
 )
 
@@ -11,39 +14,59 @@ type Database struct {
 }
 
 func main() {
+	// os.Args provides: [path/to/bin, arg1, arg2, arg3]
+	if len(os.Args) < 4 {
+		fmt.Println("Usage: go run main.go <safeCount> <lazyCount> <rogueCount>")
+		return
+	}
+
+	// Convert string arguments to integers
+	safeCount, _ := strconv.Atoi(os.Args[1])
+	lazyCount, _ := strconv.Atoi(os.Args[2])
+	rogueCount, _ := strconv.Atoi(os.Args[3])
+
+	fmt.Printf("Starting: %d Safe, %d Lazy, %d Rogue\n", safeCount, lazyCount, rogueCount)
+
 	db := &Database{
 		records: make(map[int]string),
 	}
 	var wg sync.WaitGroup
-	wg.Add(20)
+	wg.Add(safeCount + lazyCount + rogueCount)
 
-	// --- 10 Goroutines using Locks correctly ---
-	go func() { defer wg.Done(); db.mu.Lock(); db.records[1] = "A"; db.mu.Unlock() }()
-	go func() { defer wg.Done(); db.mu.Lock(); db.records[2] = "B"; db.mu.Unlock() }()
-	go func() { defer wg.Done(); db.mu.Lock(); db.records[3] = "C"; db.mu.Unlock() }()
-	go func() { defer wg.Done(); db.mu.Lock(); db.records[4] = "D"; db.mu.Unlock() }()
-	go func() { defer wg.Done(); db.mu.Lock(); db.records[5] = "E"; db.mu.Unlock() }()
-	go func() { defer wg.Done(); db.mu.Lock(); db.queries++; db.mu.Unlock() }()
-	go func() { defer wg.Done(); db.mu.Lock(); db.queries++; db.mu.Unlock() }()
-	go func() { defer wg.Done(); db.mu.Lock(); db.queries++; db.mu.Unlock() }()
-	go func() { defer wg.Done(); db.mu.Lock(); db.queries++; db.mu.Unlock() }()
-	go func() { defer wg.Done(); db.mu.Lock(); db.queries++; db.mu.Unlock() }()
+	// --- Safe Goroutines ---
+	for i := 0; i < safeCount; i++ {
+		id := i
+		go func() {
+			defer wg.Done()
+			db.mu.Lock()
+			db.records[id] = "Safe"
+			db.queries++
+			db.mu.Unlock()
+		}()
+	}
 
-	// --- 5 Goroutines with "Lazy" Locking (Read-Write Race) ---
-	// These lock for the write, but read the 'queries' count outside the lock
-	go func() { defer wg.Done(); _ = db.queries; db.mu.Lock(); db.records[6] = "F"; db.mu.Unlock() }()
-	go func() { defer wg.Done(); _ = db.queries; db.mu.Lock(); db.records[7] = "G"; db.mu.Unlock() }()
-	go func() { defer wg.Done(); _ = db.queries; db.mu.Lock(); db.records[8] = "H"; db.mu.Unlock() }()
-	go func() { defer wg.Done(); _ = db.queries; db.mu.Lock(); db.records[9] = "I"; db.mu.Unlock() }()
-	go func() { defer wg.Done(); _ = db.queries; db.mu.Lock(); db.records[10] = "J"; db.mu.Unlock() }()
+	// --- Lazy Goroutines ---
+	for i := 0; i < lazyCount; i++ {
+		id := i + 1000
+		go func() {
+			defer wg.Done()
+			_ = db.queries // Unsafe read
+			db.mu.Lock()
+			db.records[id] = "Lazy"
+			db.mu.Unlock()
+		}()
+	}
 
-	// --- 5 Goroutines that are totally "Rogue" (Direct Race) ---
-	// These will likely cause a "fatal error: concurrent map iteration and map write"
-	go func() { defer wg.Done(); db.records[99] = "Rogue1" }()
-	go func() { defer wg.Done(); db.queries = 100 }()
-	go func() { defer wg.Done(); _ = db.records[1] }()
-	go func() { defer wg.Done(); db.records[1] = "Overwrite" }()
-	go func() { defer wg.Done(); db.queries-- }()
+	// --- Rogue Goroutines ---
+	for i := 0; i < rogueCount; i++ {
+		id := i + 2000
+		go func() {
+			defer wg.Done()
+			db.records[id] = "Rogue" // Total chaos
+			db.queries--
+		}()
+	}
 
 	wg.Wait()
+	fmt.Println("Done.")
 }

@@ -205,9 +205,12 @@ impl Volos {
 impl fmt::Display for Volos {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f,
-            "[TID: {}] | Access: {:?} | Locks: {:#?}",
-            self.thread_id, self.access_type, self.locks_held.len()
-        )
+            "[TID: {}] | Access: {:?} | Locks: (",
+            self.thread_id, self.access_type);
+		 for lock in self.locks_held.iter(){
+				write!(f, "0x{:X} ",lock);
+		}
+		write!(f,")")
     }
 }
 
@@ -505,7 +508,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
         let mut regions = self.regions.write().unwrap(); //KEITH changed this to get around RwLock stuff
 		  let new_volos = Volos::new(volos.thread_id,AccessType::Read,volos.locks_held);
 
-		  println!("[VOLOS] READ MEM --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{:#?} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
+		  //println!("[VOLOS] READ MEM @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{:#?} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
+		  println!("[VOLOS] READ MEM @[0x{:X}] <= {:?} #{:?}", address, size, new_volos);
         for region in regions.iter_mut() {
             if region.contains(address, size) {
                 let offset = region.offset(address);
@@ -869,8 +873,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
 												AccessType::Write,
 												volos.locks_held);
 
-			println!("[VOLOS] WRITE MEM --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
+			//println!("[VOLOS] WRITE MEM --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
 		  
+		  println!("[VOLOS] WRITE MEM @[0x{:X}] <= {:?} {:?}", address, symbolic,  new_volos);
         let mut regions = self.regions.write().unwrap();
         // Check if the address falls within an existing memory region
         for region in regions.iter_mut() {

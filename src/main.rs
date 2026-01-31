@@ -748,6 +748,34 @@ fn execute_instructions_from(
 				// looks like the right symbol names are sym.runtime.lock this apparently gets called internally
 				// another symbol name for the common "mutex" package is sym.internal_sync._Mutex_.lockSlow, which has a fallback to lock() call i think
 				//
+				if symbol_name == "runtime.execute" {
+              println!("[VOLOS] encountered {} call",symbol_name); 
+              if let Some((_, args)) = function_args_map.get(&current_rip) {
+						let cpu = executor.state.cpu_state.lock().unwrap();
+						for (arg_name, reg_names, _arg_type) in args {
+							  println!("[VOLOS] arg -- {} {}",arg_name,_arg_type);	 
+						    //for reg_name in reg_names {
+						    //    if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
+						    //        if let Some(value) = cpu.get_register_by_offset(offset, 64) {
+							 //  			//println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
+							 //  			println!("[VOLOS::main.rs] got lock function call {:?} mutex=0x{:x}",symbol_name, value.concrete);
+							 //  			let mut thread_manager = executor.state.thread_manager.lock().unwrap();
+							 //  		   let current_tid = thread_manager.current_tid;
+							 //  		   let mut current_thread: &mut OSThread<'_> = thread_manager.current_thread_mut().unwrap();
+							 //  			let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
+							 //  			locks.push(value.concrete.to_u64());
+							 //  			let len = locks.len();
+							 //  			println!("[VOLOS::main.rs] thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
+						    //        }
+						    //    }
+						    //}
+						}
+				
+
+					}
+
+
+            }
 				if symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2" {
               println!("[VOLOS] encountered {} operation",symbol_name); 
               if let Some((_, args)) = function_args_map.get(&current_rip) {
