@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::BTreeMap;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -53,7 +54,7 @@ impl Default for AccessType {
 /// Named after Veles, the Slavic god associated with hidden knowledge, the
 /// underworld, and the history of the ancestors, this struct captures the
 /// essential "history" of a thread's interaction with shared memory.
-#[derive(Debug,  Clone, PartialEq)]
+#[derive(Debug,  Clone)]
 pub struct Volos {
     /// The unique identifier of the thread performing the access.
     pub thread_id: u64,
@@ -68,6 +69,42 @@ pub struct Volos {
 
     //TODO: pub path_cnd: Vec<??> we need to add a vector of path conditions that summerise how we reach these reads/writes - implement later
 }
+
+// 1. Logic for Equality
+impl PartialEq for Volos {
+    fn eq(&self, other: &Self) -> bool {
+        // (i) share a thread id
+        self.thread_id == other.thread_id &&
+        // (iii) have the same access type
+        self.access_type == other.access_type &&
+        // (ii) hold the same locks
+        // Note: This assumes order doesn't matter or is consistent. 
+        // If order varies, you'd need to sort them or use a HashSet.
+        self.locks_held == other.locks_held
+    }
+}
+
+// 2. Mark as full equivalence (reflexive)
+impl Eq for Volos {}
+
+// 1. We must implement Ord to define the "Hazard" priority
+impl Ord for Volos {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // We REVERSE the comparison of the lengths.
+        // Usually, 5 > 2. With .reverse(), 2 > 5.
+        // This turns our Max-Heap into a Min-Heap for lock counts.
+        other.locks_held.len().cmp(&self.locks_held.len())
+		  //need to implement (i) thread affinity compare, (ii) uniqueness 
+    }
+}
+
+// 2. PartialOrd must match Ord
+impl PartialOrd for Volos {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[derive(Debug)]
 pub struct VolosRegion {
 	pub start_address: u64, //optional we can operate with these being 0 as well
@@ -509,7 +546,6 @@ impl<'ctx> MemoryX86_64<'ctx> {
 		  let new_volos = Volos::new(volos.thread_id,AccessType::Read,volos.locks_held);
 
 		  //println!("[VOLOS] READ MEM @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{:#?} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
-		  println!("[VOLOS] READ MEM @[0x{:X}] <= {:?} #{:?}", address, size, new_volos);
         for region in regions.iter_mut() {
             if region.contains(address, size) {
                 let offset = region.offset(address);
@@ -542,6 +578,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 					//   }
         			//}
 
+		  			 println!("[VOLOS] READ MEM @[0x{:X}] <= {:?} #{:?}", address, concrete, new_volos);
                 return Ok((concrete, symbolic));
             }
 
@@ -875,7 +912,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
 			//println!("[VOLOS] WRITE MEM --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
 		  
-		  println!("[VOLOS] WRITE MEM @[0x{:X}] <= {:?} {:?}", address, symbolic,  new_volos);
+		  println!("[VOLOS] WRITE MEM @[0x{:X}] <= ['{:?}'] {:?}", address, concrete,  new_volos);
         let mut regions = self.regions.write().unwrap();
         // Check if the address falls within an existing memory region
         for region in regions.iter_mut() {

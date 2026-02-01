@@ -22,6 +22,41 @@ ZORYA VOLOS IS A FORK OF ZORYA OWNED AND MAINTAINED BY KEITH MAKAN SECURITY CONS
 What KMSEC has added:
 - volos memory interaction tracking system
 
+```
+[VOLOS DETECTOR] DATA RACE FOUND AT 0x1f948
+----------------------------------------------------------------
+Access 1:
+  Goroutine ID: 371053
+  Op Type:      Write
+  Locks Held:   [5843280]
+--- VS ---
+Access 2:
+  Goroutine ID: 371056
+  Op Type:      Write
+  Locks Held:   NONE (UNPROTECTED)
+----------------------------------------------------------------
+REASON: One or more threads accessed this memory without a shared lock.
+================================================================
+
+[VOLOS] READ MEM @[0x572E50] <= [32, 59, 87, 0, 0, 0, 0, 0] #Volos { thread_id: 371056, access_type: Read, locks_held: [] }
+[VOLOS] READ MEM @[0x573C2F] <= [2] #Volos { thread_id: 371056, access_type: Read, locks_held: [] }
+[VOLOS] WRITE MEM @[0x573C2F] <= ['[1]'] Volos { thread_id: 371056, access_type: Write, locks_held: [] }
+[VOLOS] READ MEM @[0x573C2F] <= [1] #Volos { thread_id: 371056, access_type: Read, locks_held: [] }
+[VOLOS] READ MEM @[0x7FFFFFFFD7E0] <= [24, 216, 255, 255, 255, 127, 0, 0] #Volos { thread_id: 371056, access_type: Read, locks_held: [] }
+[VOLOS] READ MEM @[0x7FFFFFFFD7E8] <= [120, 215, 67, 0, 0, 0, 0, 0] #Volos { thread_id: 371056, access_type: Read, locks_held: [] }
+[VOLOS] READ MEM @[0x572F00] <= [0, 0, 0, 0, 0, 0, 0, 0] #Volos { thread_id: 371056, access_type: Read, locks_held: [] }
+[VOLOS] READ MEM @[0x7FFFFFFFD828] <= [70, 234, 75, 0, 0, 0, 0, 0] #Volos { thread_id: 371056, access_type: Read, locks_held: [] }
+[VOLOS] READ MEM @[0x7FFFFFFFD830] <= [1, 0, 0, 0, 0, 0, 0, 0] #Volos { thread_id: 371056, access_type: Read, locks_held: [] }
+[VOLOS] WRITE MEM @[0x7FFFFFFFD7E8] <= ['[42, 216, 67, 0, 0, 0, 0, 0]'] Volos { thread_id: 371056, access_type: Write, locks_held: [] }
+[VOLOS] READ MEM @[0x7FFFFFFFD7E8] <= [42, 216, 67, 0, 0, 0, 0, 0] #Volos { thread_id: 371056, access_type: Read, locks_held: [] }
+arg_values.joinAddress: 44f1c0, Symbol: runtime.writeErrData -> data=0x4bea46 (reg=RAX @0x0), n=0x1 (reg=RBX @0x18)
+[VOLOS] WRITE MEM @[0x7FFFFFFFD7E0] <= ['[24, 216, 255, 255, 255, 127, 0, 0]'] Volos { thread_id: 371056, access_type: Write, locks_held: [] }
+[VOLOS] READ MEM @[0x7FFFFFFFD7E0] <= [24, 216, 255, 255, 255, 127, 0, 0] #Volos { thread_id: 371056, access_type: Read, locks_held: [] }
+[VOLOS] WRITE MEM @[0x7FFFFFFFD7F0] <= ['[70, 234, 75, 0, 0, 0, 0, 0]'] Volos { thread_id: 371056, access_type: Write, locks_held: [] }
+[VOLOS] READ MEM @[0x7FFFFFFFD7F0] <= [70, 234, 75, 0, 0, 0, 0, 0] #Volos { thread_id: 371056, access_type: Read, locks_held: [] }
+[VOLOS] WRITE MEM @[0x7FFFFFFFD7F8] <= ['[1, 0, 0, 0]'] Volos { thread_id: 371056, access_type: Write, locks_held: [] }
+
+```
 Zorya is a **concolic execution framework** designed to detect **logic-related bugs, language-specific vulnerabilities, and identify new patterns of security issues mainly in Go binaries**. The analysis begins by generating CPU register and memory dumps using ```gdb```. Zorya loads these dumps to initialize execution from a specified starting address, ensuring a realistic and accurate representation of the program state.
 
 The core methodology involves **translating binary code into Ghidra's raw P-Code**, a low-level intermediate representation, which is subsequently parsed for precise execution path analysis. Other programs like C programs can also be translated to P-Code.
