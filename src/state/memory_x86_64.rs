@@ -62,11 +62,23 @@ pub struct Volos {
     /// The type of operation performed (Read or Write).
     pub access_type: AccessType,
 
+
     /// A vector of identifiers for the locks currently held by the thread
     /// at the moment of access. This is crucial for analyzing potential
     /// deadlock or data race conditions.
     pub locks_held: Vec<u64>,
 
+	/// Address that this volos corresponds to i.e. where the read / write appened
+	pub addr: Option<u64>,
+	
+	/// the amount of bytes written/read in this memory access
+	pub size: Option<u64>,
+	
+	/// the go routine id of being executed by the thread when this access happened
+	pub go_id: Option<u64>,
+
+	/// unix epoch timestamp of when this volos was created, potenitally indicated when the addr access was detected
+	pub timestamp: Option<u64>
     //TODO: pub path_cnd: Vec<??> we need to add a vector of path conditions that summerise how we reach these reads/writes - implement later
 }
 
@@ -105,60 +117,154 @@ impl PartialOrd for Volos {
     }
 }
 
+
+
+
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VolosState {
+    #[default]
+    Virgin,
+    Exclusive,
+    Shared,
+    SharedModified,
+    Reported, // New terminal state for flagged races
+}
+
+impl VolosState {
+
+    pub fn transition(current: Self, access_tid: u64, last_tid: u64, is_write: bool) -> Self {
+        match current {
+            VolosState::Virgin => VolosState::Exclusive,
+
+            VolosState::Exclusive => {
+                if access_tid != last_tid {
+                    if is_write { VolosState::SharedModified } else { VolosState::Shared }
+                } else {
+                    VolosState::Exclusive
+                }
+            }
+
+            VolosState::Shared => {
+                if is_write {
+                    VolosState::SharedModified
+                } else {
+                    VolosState::Shared
+                }
+            }
+
+            // If we were in the "Danger Zone" and another access happens, 
+            // we move to Reported to signal the UI/Logger.
+            VolosState::SharedModified => VolosState::Reported,
+
+            // Terminal state: once reported, stay reported.
+            VolosState::Reported => VolosState::Reported,
+        }
+    }
+
+    /// Manually force the state to Reported, regardless of current status.
+    pub fn force_reported(&mut self) {
+        *self = VolosState::Reported;
+    }
+
+    /// Redone: Check if the state is Reported
+    pub fn is_reported(&self) -> bool {
+        matches!(self, VolosState::Reported)
+    }
+
+    /// Convenience method to mark this specific access record as part of a reported race.
+    pub fn mark_as_reported(&mut self) {
+        self.force_reported();
+    }
+}
+
+impl fmt::Display for VolosState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            VolosState::Virgin         => "VIRGIN [INIT]",
+            VolosState::Exclusive      => "EXCLUSIVE [OWNED]",
+            VolosState::Shared         => "SHARED [READ-ONLY]",
+            VolosState::SharedModified => "SHARED-MODIFIED [DANGER]",
+            VolosState::Reported       => "REPORTED [RACE DETECTED]",
+        };
+        write!(f, "{}", label)
+    }
+}
+
 #[derive(Debug)]
 pub struct VolosRegion {
-	pub start_address: u64, //optional we can operate with these being 0 as well
-	pub end_address: u64,
-	pub memory: HashMap<u64,Vec<Volos>>
+	 ///start address of the memory region associated to tis volos region
+    pub start_address: u64,
+
+	 ///end address of the memory region associated to tis volos region
+    pub end_address: u64,
+
+    /// The "Live" state of this entire memory region
+    pub state: VolosState,
+
+    /// Tracking the last thread to touch any address in this region
+    pub last_thread_id: u64,
+
+    /// Map of specific addresses to their access history
+    //pub memory: HashMap<u64, Vec<Volos>>,
+	 pub memory: HashMap<u64,(VolosState,Vec<Volos>)>
 }
 
 impl VolosRegion {
 	pub fn new(start_address: u64, end_address: u64, init_volos: Volos) -> Self{
 		let mut memory = HashMap::<u64,Vec<Volos>>::new();
 		let mut volos_region = VolosRegion {
-			start_address,
-			end_address,
-			memory
+				start_address: start_address,
+            end_address: end_address,
+            state: VolosState::Virgin,
+            last_thread_id: 0,
+            memory: HashMap::new(),
+
 		};
 		volos_region.add_volos(start_address, end_address - start_address, init_volos, true);
 		return volos_region	
 	}
 
    pub fn race_check(&mut self) {
-   	 for (address, volos_list) in self.memory.iter() {
-   	 	if volos_list.len() < 2 { continue; }
+   	 for (address, volos_tuple) in self.memory.iter() {
+			if let Some((volos_state, volos_list)) = self.memory.get(&address) {
+   	 		if volos_list.len() < 2 { continue; }
 
-   	 	for i in 0..volos_list.len() {
-   	 	    for j in (i + 1)..volos_list.len() {
-   	 	        let v1 = &volos_list[i];
-   	 	        let v2 = &volos_list[j];
+   	 		for i in 0..volos_list.len() {
+   	 		    for j in (i + 1)..volos_list.len() {
+   	 		        let v1 = &volos_list[i];
+   	 		        let v2 = &volos_list[j];
 
-   	 	        // 1. Basic Filters
-   	 	        if v1.thread_id == v2.thread_id { continue; }
-   	 	        if v1.access_type == AccessType::New || v2.access_type == AccessType::New { continue; }
-   	 	        if v1.access_type == AccessType::Read && v2.access_type == AccessType::Read { continue; }
+   	 		        // 1. Basic Filters
+   	 		        if v1.thread_id == v2.thread_id { continue; }
+   	 		        if v1.access_type == AccessType::New || v2.access_type == AccessType::New { continue; }
+   	 		        if v1.access_type == AccessType::Read && v2.access_type == AccessType::Read { continue; }
 
-   	 	        // 2. The "No Lock" Shortcut
-   	 	        // If either thread holds 0 locks, the intersection is guaranteed to be empty.
-   	 	        let v1_unlocked = v1.locks_held.is_empty();
-   	 	        let v2_unlocked = v2.locks_held.is_empty();
+   	 		        // 2. The "No Lock" Shortcut
+   	 		        // If either thread holds 0 locks, the intersection is guaranteed to be empty.
+   	 		        let v1_unlocked = v1.locks_held.is_empty();
+   	 		        let v2_unlocked = v2.locks_held.is_empty();
 
-   	 	        if v1_unlocked || v2_unlocked {
-   	 	            println!("[VOLOS] *** Race Detected (Unprotected Access) ***");
-   	 	            self.print_race_report(address, v1, v2);
-   	 	            continue; // Race found, move to next pair
-   	 	        }
+   	 		        if v1_unlocked || v2_unlocked {
+   	 		            println!("[VOLOS] *** Race Detected (Unprotected Access) ***");
+   	 		            self.print_race_report(address, v1, v2);
+								
+   	 		            continue; // Race found, move to next pair
+   	 		        }
 
-   	 	        // 3. The Intersection Check (Both have locks, but are they the SAME locks?)
-   	 	        let common_lock = v1.locks_held.iter()
-   	 	            .any(|lock_id| v2.locks_held.contains(lock_id));
+   	 		        // 3. The Intersection Check (Both have locks, but are they the SAME locks?)
+   	 		        let common_lock = v1.locks_held.iter()
+   	 		            .any(|lock_id| v2.locks_held.contains(lock_id));
 
-   	 	        if !common_lock {
-   	 	            println!("[VOLOS] *** Race Detected (Inconsistent Locking) ***");
-   	 	            self.print_race_report(address, v1, v2);
-   	 	        }
-   	 	    }
-   	 	}
+   	 		        if !common_lock {
+   	 		            println!("[VOLOS] *** Race Detected (Inconsistent Locking) ***");
+   	 		            self.print_race_report(address, v1, v2);
+								
+   	 		        }
+   	 		    }
+   	 		}
+			}
    	 }
 	} 
    fn print_race_report(&self, address: &u64, v1: &Volos, v2: &Volos) {
@@ -200,7 +306,7 @@ impl VolosRegion {
 			for index in 0..size{
 				let new_volos = volos.clone();
 				//self.memory.insert(address +index, new_volos);
-				self.memory.entry(address+index).or_default().push(new_volos);
+				self.memory.entry(address+index).or_default().1.push(new_volos);
 			}
 		}
 	}
@@ -212,9 +318,9 @@ impl fmt::Display for VolosRegion {
    	 	addresses.sort();
 
    	 	for addr in addresses {
-   	   	if let Some(value) = self.memory.get(addr) {
-   	      	write!(f,"@{:#x}:\n", addr);
-				   for volos in value.iter(){
+   	   	if let Some((volos_state, volos_memory)) = self.memory.get(addr) {
+   	      	write!(f,"@{:#x} <{}>:\n",  addr, volos_state);
+				   for volos in volos_memory.iter(){
    	      		write!(f,"\t [{}] \n", volos);
 					}
    	     }
@@ -231,11 +337,16 @@ impl Volos {
     /// * `access_type` - The type of access (Read or Write).
     /// * `locks_held` - A list of IDs representing the locks held.
     pub fn new(thread_id: u64, access_type: AccessType, locks_held: Vec<u64>) -> Self {
-        Volos {
-            thread_id,
-            access_type,
-            locks_held,
+			Volos {
+            thread_id: thread_id,
+            access_type: access_type,
+            locks_held: locks_held,
+				timestamp: Some(0),
+				addr: Some(0),
+				size: Some(0),
+				go_id: Some(0)
         }
+
     }
 
 }
@@ -257,6 +368,10 @@ impl Default for Volos {
             thread_id: 0,
             access_type: AccessType::default(),
             locks_held: Vec::new(),
+				timestamp: Some(0),
+				addr: Some(0),
+				size: Some(0),
+				go_id: Some(0)
         }
     }
 }
@@ -937,11 +1052,11 @@ impl<'ctx> MemoryX86_64<'ctx> {
                     }
                 }
 
-					//for region in regions.iter(){
-					//   if region.volos_region.borrow().memory.len() != 0{
-			   	//		println!("[VOLOS] VolosRegion {}", region.volos_region.borrow()); 
-					//   }
-        			//}
+					for region in regions.iter(){
+					   if region.volos_region.borrow().memory.len() != 0{
+			   			println!("[VOLOS] VolosRegion {}", region.volos_region.borrow()); 
+					   }
+        			}
 
                 return Ok(());
             }

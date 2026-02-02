@@ -814,9 +814,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
 	     let cur_tid = &tm.current_tid; 
 	     let cur_locks_held = &tm.threads.get(cur_tid).unwrap().locks_held;
 	     let new_access_type = AccessType::default(); //default
-	     let new_volos = Volos{thread_id: *cur_tid, 
-	                                 access_type: new_access_type,
-	                                 locks_held: cur_locks_held.clone()};
+	     let new_volos = Volos::new(*cur_tid, 
+	                                 new_access_type,
+	                                 cur_locks_held.clone());
 	 
 	      return new_volos;
 	 }
