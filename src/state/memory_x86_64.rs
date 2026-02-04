@@ -129,7 +129,8 @@ pub enum VolosState {
     Exclusive,
     Shared,
     SharedModified,
-    Reported, // New terminal state for flagged races
+	 Raceable,
+    Reported // New terminal state for flagged races
 }
 
 impl VolosState {
@@ -156,12 +157,73 @@ impl VolosState {
 
             // If we were in the "Danger Zone" and another access happens, 
             // we move to Reported to signal the UI/Logger.
-            VolosState::SharedModified => VolosState::Reported,
+            VolosState::SharedModified => VolosState::Raceable,
 
             // Terminal state: once reported, stay reported.
-            VolosState::Reported => VolosState::Reported,
+            VolosState::Raceable => VolosState::Reported,
+            VolosState::Reported => VolosState::Reported
         }
     }
+	pub fn check_state(history: &[Volos]) -> Self {
+   	 if history.is_empty() {
+   	     return VolosState::Virgin;
+   	 }
+
+   	 // Gather unique thread IDs and check for any writes
+   	 let unique_threads: std::collections::HashSet<u64> = 
+   	     history.iter().map(|v| v.thread_id).collect();
+   	 let has_write = history.iter().any(|v| v.access_type == AccessType::Write);
+   	 let num_threads = unique_threads.len();
+
+   	 // (iv) Logic: Check for Raceable (No locks or Empty Intersection)
+   	 // We check this first because it's the highest "priority" state
+   	 if has_write {
+   	     let mut running_intersection: Option<std::collections::HashSet<u64>> = None;
+   	     let mut race_condition = false;
+
+   	     for access in history {
+   	         let current_locks: std::collections::HashSet<u64> = 
+   	             access.locks_held.iter().cloned().collect();
+
+   	         // If a write happens with zero locks, it's immediately Raceable
+   	         if access.access_type == AccessType::Write && current_locks.is_empty() {
+   	             race_condition = true;
+   	             break;
+   	         }
+
+   	         // Intersection logic: compare locks across different threads
+   	         match running_intersection {
+   	             None => {
+   	                 running_intersection = Some(current_locks);
+   	             }
+   	             Some(ref mut intersection) => {
+   	                 intersection.retain(|lock| current_locks.contains(lock));
+   	                 if intersection.is_empty() {
+   	                     race_condition = true;
+   	                     break;
+   	                 }
+   	             }
+   	         }
+   	     }
+
+   	     if race_condition {
+   	         return VolosState::Raceable;
+   	     }
+   	 }
+
+   	 // (iii) SharedModified: Multiple threads, at least one write
+   	 if num_threads > 1 && has_write {
+   	     return VolosState::SharedModified;
+   	 }
+
+   	 // (ii) Shared: More than 1 thread, but only reads (since (iii) didn't trigger)
+   	 if num_threads > 1 {
+   	     return VolosState::Shared;
+   	 }
+
+   	 // (i) Exclusive: Only 1 thread (and it has entries)
+   	 VolosState::Exclusive
+   }
 
     /// Manually force the state to Reported, regardless of current status.
     pub fn force_reported(&mut self) {
@@ -186,7 +248,8 @@ impl fmt::Display for VolosState {
             VolosState::Exclusive      => "EXCLUSIVE [OWNED]",
             VolosState::Shared         => "SHARED [READ-ONLY]",
             VolosState::SharedModified => "SHARED-MODIFIED [DANGER]",
-            VolosState::Reported       => "REPORTED [RACE DETECTED]",
+            VolosState::Raceable => "SHARED-MODIFIED [RACE DETECTED]",
+            VolosState::Reported       => "REPORTED [RACE REPORTED]",
         };
         write!(f, "{}", label)
     }
@@ -225,6 +288,21 @@ impl VolosRegion {
 		volos_region.add_volos(start_address, end_address - start_address, init_volos, true);
 		return volos_region	
 	}
+
+	pub fn contains_volos(&self, record: &Volos) -> bool {
+        // 1. Get the address from the record (defaulting to 0 if None)
+        let addr = record.addr.unwrap_or(0) as u64;
+
+        // 2. Look up the tuple in the HashMap
+        if let Some((_state, history)) = self.memory.get(&addr) {
+            // 3. Search the Vec for the matching record
+            // This works because we implemented Eq for Volos earlier!
+            history.contains(record)
+        } else {
+            false
+        }
+}
+
 
    pub fn race_check(&mut self) {
    	 for (address, volos_tuple) in self.memory.iter() {
@@ -294,19 +372,25 @@ impl VolosRegion {
 
         println!("{}:", label);
         println!("  Goroutine ID: {}", v.thread_id);
+        println!("  Thread ID: {}", v.thread_id);
         println!("  Op Type:      {:?}", v.access_type);
         println!("  Locks Held:   {}", lock_str);
         
         // If you've hooked the PC (Program Counter), print it here:
         // println!("  Location:     0x{:x}", v.pc); 
     }
-	pub fn add_volos(&mut self, address:u64, size:u64, volos:Volos, init: bool) {
+   	pub fn add_volos(&mut self, address:u64, size:u64, volos:Volos, init: bool) {
 		
 		if init != true {	
 			for index in 0..size{
 				let new_volos = volos.clone();
 				//self.memory.insert(address +index, new_volos);
-				self.memory.entry(address+index).or_default().1.push(new_volos);
+				if !self.contains_volos(&new_volos){
+					self.memory.entry(address+index).or_default().1.push(new_volos);
+					let region_entry = self.memory.entry(address+index).or_default();
+					region_entry.0 = VolosState::check_state(&region_entry.1);
+				}
+				//TODO: Implement the volos state transition here, we need to trigger state transition based on what the memory's volos entrys look like after the addition
 			}
 		}
 	}
