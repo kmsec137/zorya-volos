@@ -8,12 +8,63 @@ import sys
 import os
 import time
 import pyhidra
+from pathlib import Path
 
 try:
     from pyhidra import open_program
 except ImportError:
     print("ERROR: Pyhidra not installed. Run: pip install pyhidra")
     sys.exit(1)
+
+
+class BlockSet:
+    """Drop-in replacement for set() of Java CodeBlock objects.
+
+    Stores Python ``int`` offsets (block start addresses) as set keys so
+    that membership tests (``blk in s``, ``s.add(blk)``) use Python-native
+    O(1) int hashing instead of crossing jpype → JNI → Java for every
+    ``hashCode()`` / ``equals()`` call.  For 100 k+ blocks this eliminates
+    the dominant cost of the reverse BFS.
+    """
+
+    __slots__ = ("_keys", "_blocks")
+
+    def __init__(self):
+        self._keys: set[int] = set()      # block-start offsets
+        self._blocks: dict[int, object] = {}  # offset → CodeBlock
+
+    def _key(self, blk) -> int:
+        return blk.getFirstStartAddress().getOffset()
+
+    def add(self, blk):
+        k = self._key(blk)
+        self._keys.add(k)
+        self._blocks[k] = blk
+
+    def __contains__(self, blk) -> bool:
+        try:
+            return self._key(blk) in self._keys
+        except Exception:
+            return False
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+    def __iter__(self):
+        return iter(self._blocks.values())
+
+    def __bool__(self) -> bool:
+        return bool(self._keys)
+
+
+def _project_is_fresh(gpr_path: Path, bin_path: Path) -> bool:
+    """True when the Ghidra project exists and is newer than the binary."""
+    if not gpr_path.exists():
+        return False
+    try:
+        return gpr_path.stat().st_mtime >= bin_path.stat().st_mtime
+    except OSError:
+        return False
 
 
 def main():
@@ -32,6 +83,17 @@ def main():
             # Normalize to plain hex without 0x prefix for Ghidra
             panic_hex = [h[2:] if h.lower().startswith("0x") else h for h in raw]
 
+    # ── Project reuse: share the .gpr created by get_jump_tables.py ──
+    bin_path = Path(os.path.abspath(binary_path))
+    bin_parent = bin_path.parent
+    project_name = f"{bin_path.name}_ghidra"
+    parent_gpr = bin_parent / f"{project_name}.gpr"
+    reuse_project = _project_is_fresh(parent_gpr, bin_path)
+    if reuse_project:
+        print(f"[GHIDRA] Reusing existing project {parent_gpr}")
+    else:
+        print(f"[GHIDRA] Project not found or stale — will analyze from scratch")
+
     pyhidra.start()
 
     from ghidra.program.model.block import BasicBlockModel
@@ -39,13 +101,21 @@ def main():
     from ghidra.program.model.listing import Function
     from ghidra.program.model.address import AddressSet
 
-    with open_program(binary_path, analyze=True) as flat_api:
+    with open_program(
+        str(bin_path),
+        project_location=str(bin_parent),
+        project_name=project_name,
+        analyze=not reuse_project,
+    ) as flat_api:
         program = flat_api.getCurrentProgram()
         addr_factory = program.getAddressFactory()
         monitor = ConsoleTaskMonitor()
         model = BasicBlockModel(program)
         listing = program.getListing()
+        refman = program.getReferenceManager()   # cache — avoid JNI per loop iter
+        fm = program.getFunctionManager()        # cache
 
+        t_phase = time.time()
         # Optional: load jump table info to improve predecessors of computed jumps
         dest_to_pred_blocks = {}
         try:
@@ -54,7 +124,6 @@ def main():
                 import json
                 with open(jt_path, "r") as jf:
                     jt = json.load(jf)
-                refman = program.getReferenceManager()
                 for tbl in jt:
                     table_base_hex = tbl.get("table_address")
                     table_base_addr = None
@@ -125,8 +194,11 @@ def main():
         except Exception:
             dest_to_pred_blocks = {}
 
+        print(f"[GHIDRA] Jump table loading took {time.time() - t_phase:.1f}s")
+
         # Convert panic addresses (call sites) to blocks and seed reverse frontier (use containing blocks)
-        panic_blocks = set()
+        t_phase = time.time()
+        panic_blocks = BlockSet()
         for h in panic_hex:
             try:
                 a = addr_factory.getAddress(h)
@@ -144,7 +216,6 @@ def main():
                 continue
 
         # Also seed from panic functions discovered by name (case-insensitive contains "panic")
-        fm = program.getFunctionManager()
         it = fm.getFunctions(True)
         while it.hasNext():
             fn = it.next()
@@ -169,9 +240,11 @@ def main():
                 else:
                     panic_blocks.add(blk)
 
+        print(f"[GHIDRA] Panic seed collection took {time.time() - t_phase:.1f}s ({len(panic_blocks)} seeds)")
+
         # Reverse BFS: predecessors via getSources; also include interprocedural step:
         # for each visited block, jump to all callers of its containing function
-        reachable = set()
+        reachable = BlockSet()
         work = list(panic_blocks)
         processed_funcs = set()  # function entry addresses we've already expanded callers for
         
@@ -265,7 +338,6 @@ def main():
 
                 # 1b) Additional fallback: use reference manager on block start and max address
                 try:
-                    refman = program.getReferenceManager()
                     start_addr = blk.getFirstStartAddress()
                     max_addr = blk.getMaxAddress()
                     for q_addr in [start_addr, max_addr]:
@@ -297,7 +369,6 @@ def main():
                     aset = AddressSet()
                     aset.addRange(start_addr, max_addr)
                     ins_iter = listing.getInstructions(aset, True)
-                    refman = program.getReferenceManager()
                     added_local = 0
                     while ins_iter.hasNext():
                         ins = ins_iter.next()
@@ -354,7 +425,6 @@ def main():
                         processed_funcs.add(entry_key)
                         
                         try:
-                            refman = program.getReferenceManager()
                             entries_to_expand = [entry]
                             try:
                                 thunk = func.getThunkedFunction()
@@ -371,7 +441,7 @@ def main():
                                 body_budget = 0
                                 body_stride = 1
                                 try:
-                                    body_budget = int(os.environ.get("PANIC_REACH_BODY_XREF_BUDGET", "5000"))
+                                    body_budget = int(os.environ.get("PANIC_REACH_BODY_XREF_BUDGET", "500"))
                                 except Exception:
                                     body_budget = 5000
                                 try:
@@ -474,7 +544,6 @@ def main():
                 
                 # Secondary sanity: xrefs into reachable blocks' start/max
                 try:
-                    refman = program.getReferenceManager()
                     added2 = 0
                     for rb in list(reachable):
                         try:
@@ -508,19 +577,28 @@ def main():
         end_time = time.time()
         total_time = end_time - start_time
         
-        # Calculate coverage metrics
+        # Calculate coverage metrics — only count total blocks if requested
+        # (iterating ALL blocks in a large binary is expensive)
+        run_unreachable = os.environ.get(
+            "PANIC_REACH_UNREACHABLE_ANALYSIS", "0"
+        ).lower() in ("1", "true")
+        
         total_program_blocks = 0
-        try:
-            all_blocks = model.getCodeBlocks(monitor)
-            while all_blocks.hasNext():
-                all_blocks.next()
-                total_program_blocks += 1
-        except Exception:
-            total_program_blocks = -1  # Could not determine
+        if run_unreachable:
+            print("[GHIDRA] Counting total program blocks (set PANIC_REACH_UNREACHABLE_ANALYSIS=0 to skip)...")
+            t_count = time.time()
+            try:
+                all_blocks = model.getCodeBlocks(monitor)
+                while all_blocks.hasNext():
+                    all_blocks.next()
+                    total_program_blocks += 1
+            except Exception:
+                total_program_blocks = -1
+            print(f"[GHIDRA] Block counting took {time.time() - t_count:.1f}s ({total_program_blocks} blocks)")
         
         coverage_percentage = (len(reachable) / total_program_blocks * 100) if total_program_blocks > 0 else -1
         
-        # Analyze unreachable blocks and categorize
+        # Analyze unreachable blocks and categorize (expensive — opt-in via env var)
         unreachable_summary = {
             'totals': {
                 'program_blocks': total_program_blocks,
@@ -529,6 +607,11 @@ def main():
             },
             'categories': {}
         }
+        
+        if run_unreachable:
+            print("[GHIDRA] Running unreachable block categorization...")
+            t_unreach = time.time()
+            
         def add_cat(cat, addr_str, func_name):
             c = unreachable_summary['categories'].setdefault(cat, {'count': 0, 'samples': [], 'functions': {}})
             c['count'] += 1
@@ -538,7 +621,6 @@ def main():
                 func_name = 'NO_FUNCTION'
             c['functions'][func_name] = c['functions'].get(func_name, 0) + 1
         try:
-            refman = program.getReferenceManager()
             all_blocks = model.getCodeBlocks(monitor)
             unreachable_count = 0
             while all_blocks.hasNext():
@@ -646,6 +728,7 @@ def main():
             unreachable_summary['totals']['unreachable_blocks'] = unreachable_count
         except Exception:
             pass
+            print(f"[GHIDRA] Unreachable categorization took {time.time() - t_unreach:.1f}s")
         
         # Print comprehensive statistics
         print("\nREVERSE BFS PANIC REACHABILITY ANALYSIS COMPLETE:")

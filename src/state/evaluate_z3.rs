@@ -9,10 +9,14 @@ use std::{error::Error, process::Command};
 
 // use super::explore_ast::explore_ast_for_panic;  // Removed to avoid duplication
 use crate::concolic::{ConcolicExecutor, ConcolicVar, SymbolicVar};
+/// Write SAT state details to file and log to terminal
+use crate::state::gating_stats::{get_allowed_by_xref_fallback, get_gated_by_reach};
 use crate::state::simplify_z3::add_constraints_from_vector;
 use crate::target_info::GLOBAL_TARGET_INFO;
+use crate::tprintln;
+
 use chrono::{DateTime, Utc};
-use parser::parser::Inst;
+use parser::parser::{Inst, Opcode};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::OpenOptions;
 use std::path::Path;
@@ -21,7 +25,9 @@ use z3::SatResult;
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
+        if ($logger).is_enabled() {
         writeln!($logger, $($arg)*).unwrap();
+        }
     }};
 }
 
@@ -32,6 +38,146 @@ static INVOCATION_CMDLINE: OnceLock<String> = OnceLock::new();
 /// Initialize the global SAT timer start. Safe to call multiple times; only first wins.
 pub fn init_sat_timer_start() {
     let _ = START_INSTANT.set(Instant::now());
+}
+
+/// Get elapsed time since Zorya started (for consistent vulnerability reporting)
+pub fn get_elapsed_since_start() -> Duration {
+    START_INSTANT
+        .get()
+        .map(|s| s.elapsed())
+        .unwrap_or_else(|| Duration::from_secs(0))
+}
+
+/// Unified vulnerability reporting — writes the same formatted block to both
+/// the log file and to stdout so that every vulnerability looks identical
+/// regardless of where it was detected (concrete path, overlay execution, CBRANCH, etc.).
+pub fn report_vulnerability(
+    logger: &mut crate::state::state_manager::Logger,
+    vuln_type: &str,
+    address: u64,
+    details: &[&str],
+) {
+    let bar = "========================================================================";
+    let elapsed = get_elapsed_since_start();
+    let elapsed_str = format!("{:.3}s", elapsed.as_secs_f64());
+
+    // -- log file --
+    log!(logger, "{}", bar);
+    log!(logger, "VULNERABILITY: {}", vuln_type);
+    log!(logger, "  Address: 0x{:x}", address);
+    log!(logger, "  Elapsed: {}", elapsed_str);
+    for line in details {
+        log!(logger, "  {}", line);
+    }
+    log!(logger, "{}\n", bar);
+
+    // -- terminal (stdout) --
+    tprintln!();
+    tprintln!("{}", bar);
+    tprintln!("VULNERABILITY: {}", vuln_type);
+    tprintln!("  Address: 0x{:x}", address);
+    tprintln!("  Elapsed: {}", elapsed_str);
+    for line in details {
+        tprintln!("  {}", line);
+    }
+    tprintln!("{}", bar);
+    tprintln!();
+}
+
+/// Log a concrete vulnerability (no Z3 evaluation needed) to both FOUND_SAT_STATE.txt and terminal.
+/// Used when the pointer is concretely NULL during overlay execution — Z3 is not required
+/// because the NULL dereference is certain on this path.
+pub fn log_vuln_to_file_and_terminal(
+    logger: &mut crate::state::state_manager::Logger,
+    vuln_type: &str,
+    address: u64,
+    opcode_str: &str,
+    detection_method: &str,
+    description: &str,
+    pointer_name: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let elapsed = get_elapsed_since_start();
+    let mode = std::env::var("MODE").unwrap_or_else(|_| "unknown".to_string());
+
+    // --- Terminal report (same format as report_vulnerability) ---
+    let bar = "========================================================================";
+    let elapsed_str = format!("{:.3}s", elapsed.as_secs_f64());
+
+    log!(logger, "{}", bar);
+    log!(logger, "VULNERABILITY: {}", vuln_type);
+    log!(logger, "  Address: 0x{:x}", address);
+    log!(logger, "  Elapsed: {}", elapsed_str);
+    log!(logger, "  Opcode: {}", opcode_str);
+    log!(logger, "  Detection method: {}", detection_method);
+    log!(logger, "  {}", description);
+    log!(logger, "  More details in: results/FOUND_SAT_STATE.txt");
+    log!(logger, "{}\n", bar);
+
+    tprintln!();
+    tprintln!("{}", bar);
+    tprintln!("VULNERABILITY: {}", vuln_type);
+    tprintln!("  Address: 0x{:x}", address);
+    tprintln!("  Elapsed: {}", elapsed_str);
+    tprintln!("  Opcode: {}", opcode_str);
+    tprintln!("  Detection method: {}", detection_method);
+    tprintln!("  {}", description);
+    tprintln!("  More details in: results/FOUND_SAT_STATE.txt");
+    tprintln!("{}", bar);
+    tprintln!();
+
+    // --- File report (FOUND_SAT_STATE.txt) ---
+    std::fs::create_dir_all("results")?;
+
+    let file_path = "results/FOUND_SAT_STATE.txt";
+    let file_exists = Path::new(file_path).exists();
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file_path)?;
+
+    let timestamp: DateTime<Utc> = Utc::now();
+    let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+
+    if file_exists {
+        writeln!(file, "\n{}", "=".repeat(80))?;
+    }
+
+    if let Some(inv) = INVOCATION_CMDLINE.get() {
+        writeln!(file, "Running command: {}", inv)?;
+    }
+    writeln!(
+        file,
+        "[*] CONCRETE VULNERABILITY FOUND (no Z3 evaluation needed)"
+    )?;
+    writeln!(file, "Timestamp: {}", timestamp_str)?;
+    writeln!(file, "Mode: {}", mode)?;
+    writeln!(
+        file,
+        "Elapsed since start: {}.{:03}s",
+        elapsed.as_secs(),
+        elapsed.subsec_millis()
+    )?;
+    writeln!(file, "Instruction Address: 0x{:x}", address)?;
+    writeln!(file, "{}", "-".repeat(60))?;
+    writeln!(file, "Vulnerability: {}", vuln_type)?;
+    writeln!(file, "Opcode: {}", opcode_str)?;
+    writeln!(file, "Detection method: {}", detection_method)?;
+    writeln!(file, "{}", description)?;
+    writeln!(file, "")?;
+    if let Some(ptr_name) = pointer_name {
+        writeln!(file, "Pointer: {}", ptr_name)?;
+    }
+    writeln!(
+        file,
+        "The pointer at this address is concretely NULL on the overlay (not-taken) path."
+    )?;
+    writeln!(file, "No symbolic variable needs a specific value — any input reaching this path will dereference NULL.")?;
+    writeln!(file, "{}", "=".repeat(80))?;
+
+    file.flush()?;
+
+    Ok(())
 }
 
 /// Initialize the recorded command line invocation including key environment variables.
@@ -256,15 +402,14 @@ fn add_ascii_constraints_for_args<'ctx>(
     Ok(())
 }
 
-/// Write SAT state details to file and log to terminal
-use crate::state::gating_stats::{get_allowed_by_xref_fallback, get_gated_by_reach};
-
-fn write_sat_state_to_file(
+pub fn log_sat_state_to_file_and_terminal(
     evaluation_content: &str,
     mode: &str,
     panic_addr: Option<u64>,
     elapsed_since_start: Option<Duration>,
     instruction_addr: Option<u64>,
+    opcode_str: Option<&str>,
+    detection_method: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create results directory if it doesn't exist
     std::fs::create_dir_all("results")?;
@@ -305,6 +450,12 @@ fn write_sat_state_to_file(
     if let Some(addr) = panic_addr {
         writeln!(file, "Panic Address: 0x{:x}", addr)?;
     }
+    if let Some(opcode) = opcode_str {
+        writeln!(file, "Opcode: {}", opcode)?;
+    }
+    if let Some(method) = detection_method {
+        writeln!(file, "Detection method: {}", method)?;
+    }
 
     writeln!(file, "{}", "-".repeat(60))?;
     // Gating stats summary
@@ -322,17 +473,6 @@ fn write_sat_state_to_file(
     writeln!(file, "{}", "=".repeat(80))?;
 
     file.flush()?;
-
-    println!("\n~~~~~~~~~~~");
-    println!(
-        "[*] SATISFIABLE STATE AND POTENTIAL BUG FOUND! You can find the details in: {}",
-        file_path
-    );
-    if let Some(dur) = elapsed_since_start {
-        let secs = dur.as_secs_f64();
-        println!("[*] Elapsed since start: {:.3}s", secs);
-    }
-    println!("~~~~~~~~~~~\n");
 
     Ok(())
 }
@@ -441,7 +581,7 @@ fn capture_constrained_values_section(
     for label in label_set {
         // Try to evaluate by pattern-matching against the arguments
         let rendered = if let Some(dot) = label.rfind('.') {
-            // Possibly slice comp: arg.len/cap/ptr
+            // Possibly slice comp: arg.len/cap/ptr OR struct field like b.header
             let (arg, field) = label.split_at(dot);
             let field = &field[1..];
             if let Some(SymbolicVar::Slice(slice)) = symbolic_arguments.get(arg) {
@@ -473,6 +613,35 @@ fn capture_constrained_values_section(
                         None => format!("  - The pointer '{}' has unknown value\n", label),
                     },
                     _ => String::new(),
+                }
+            } else if let Some(sym) = symbolic_arguments.get(&label) {
+                // Fallback: Try looking up the full dotted name (for struct fields like b.header)
+                match sym {
+                    SymbolicVar::Int(bv) => match model.eval(bv, true).and_then(|v| v.as_u64()) {
+                        Some(v) => {
+                            let signed = v as i64;
+                            let ascii = ascii_desc(v);
+                            // Special formatting for pointers (likely nil if 0)
+                            if v == 0 {
+                                format!("  - The pointer '{}' must be NULL (nil)\n", label)
+                            } else {
+                                format!(
+                                    "  - The input '{}' must be 0x{:x} (unsigned: {}; signed: {}; ASCII: {})\n",
+                                    label, v, v, signed, ascii
+                                )
+                            }
+                        }
+                        None => format!("  - The input '{}' has unknown value\n", label),
+                    },
+                    SymbolicVar::Bool(b) => match model.eval(b, true).and_then(|v| v.as_bool()) {
+                        Some(v) => format!("  - The input '{}' must be {}\n", label, v),
+                        None => format!("  - The input '{}' has unknown value\n", label),
+                    },
+                    SymbolicVar::Float(f) => match model.eval(f, true).map(|v| v.to_string()) {
+                        Some(s) => format!("  - The input '{}' must be {}\n", label, s),
+                        None => format!("  - The input '{}' has unknown value\n", label),
+                    },
+                    _ => format!("  - The input '{}' = <complex>\n", label),
                 }
             } else {
                 String::new()
@@ -660,15 +829,28 @@ fn capture_symbolic_arguments_evaluation(
                 if let Some(val) = model.eval(bv, true) {
                     output.push_str(&format!("Argument '{}':\n", arg_name));
 
+                    // Check if this is a string component (ptr or len)
+                    let is_string_ptr = arg_name.ends_with("__ptr");
+                    let is_string_len = arg_name.ends_with("__len");
+
                     if bv.get_size() <= 64 {
                         if let Some(val_u64) = val.as_u64() {
                             output.push_str(&format!("  {} = #x{:016x}\n", bv, val_u64));
-                            let signed_val = val_u64 as i64;
-                            output.push_str(&format!("    (unsigned: {})\n", val_u64));
-                            output.push_str(&format!("    (signed: {})\n", signed_val));
 
-                            // Add ASCII interpretation when value fits in a byte
-                            if val_u64 <= 255 {
+                            // Special display for string components
+                            if is_string_ptr {
+                                output
+                                    .push_str(&format!("    (string pointer: 0x{:x})\n", val_u64));
+                            } else if is_string_len {
+                                output.push_str(&format!("    (string length: {})\n", val_u64));
+                            } else {
+                                let signed_val = val_u64 as i64;
+                                output.push_str(&format!("    (unsigned: {})\n", val_u64));
+                                output.push_str(&format!("    (signed: {})\n", signed_val));
+                            }
+
+                            // Add ASCII interpretation when value fits in a byte (skip for string components)
+                            if !is_string_ptr && !is_string_len && val_u64 <= 255 {
                                 let byte_val = val_u64 as u8;
                                 if byte_val >= 32 && byte_val <= 126 {
                                     // Printable ASCII
@@ -692,8 +874,8 @@ fn capture_symbolic_arguments_evaluation(
                                         byte_val
                                     ));
                                 }
-                            } else {
-                                // Always provide LSB ASCII hint for larger integers
+                            } else if !is_string_ptr && !is_string_len {
+                                // Provide LSB ASCII hint for larger integers (skip for string components)
                                 let b0 = (val_u64 & 0xff) as u8;
                                 let ascii = if (32..=126).contains(&b0) {
                                     format!("'{}'", b0 as char)
@@ -721,6 +903,46 @@ fn capture_symbolic_arguments_evaluation(
                     output.push_str("\n");
                 }
             }
+            SymbolicVar::LargeInt(bvs) => {
+                // Handle LargeInt, which we use for Go strings (ptr + len)
+                output.push_str(&format!("Argument '{}':\n", arg_name));
+
+                // Check if this looks like a Go string (2 x 64-bit values)
+                if bvs.len() == 2 && bvs[0].get_size() == 64 && bvs[1].get_size() == 64 {
+                    output.push_str("  Go string components:\n");
+
+                    // First BV is ptr
+                    if let Some(ptr_val) = model.eval(&bvs[0], true) {
+                        if let Some(ptr_u64) = ptr_val.as_u64() {
+                            output
+                                .push_str(&format!("    ptr ({}) = #x{:016x}\n", bvs[0], ptr_u64));
+                            output.push_str(&format!("      (hex: 0x{:x})\n", ptr_u64));
+                        } else {
+                            output.push_str(&format!("    ptr = {}\n", ptr_val));
+                        }
+                    }
+
+                    // Second BV is len
+                    if let Some(len_val) = model.eval(&bvs[1], true) {
+                        if let Some(len_u64) = len_val.as_u64() {
+                            output
+                                .push_str(&format!("    len ({}) = #x{:016x}\n", bvs[1], len_u64));
+                            output.push_str(&format!("      (decimal: {})\n", len_u64));
+                        } else {
+                            output.push_str(&format!("    len = {}\n", len_val));
+                        }
+                    }
+                } else {
+                    // Generic LargeInt display
+                    output.push_str(&format!("  LargeInt with {} components:\n", bvs.len()));
+                    for (i, bv) in bvs.iter().enumerate() {
+                        if let Some(val) = model.eval(bv, true) {
+                            output.push_str(&format!("    [{}] {} = {}\n", i, bv, val));
+                        }
+                    }
+                }
+                output.push_str("\n");
+            }
             _ => {
                 output.push_str(&format!(
                     "Argument '{}': (unsupported type for evaluation)\n\n",
@@ -735,10 +957,11 @@ fn capture_symbolic_arguments_evaluation(
 }
 
 /// Build a unified evaluation content string used for both file output and terminal logs
-fn build_unified_evaluation_content(
+pub fn build_unified_evaluation_content<'ctx>(
     model: &z3::Model,
     executor: &ConcolicExecutor,
     conditional_flag: Option<&ConcolicVar>,
+    null_check_pointer: Option<&z3::ast::BV<'ctx>>,
 ) -> String {
     let mut content = String::new();
 
@@ -750,6 +973,11 @@ fn build_unified_evaluation_content(
             SymbolicVar::Int(bv) => extra_exprs.push(format!("{:?}", bv.simplify())),
             _ => {}
         }
+    }
+
+    // Include NULL pointer expression if checking for NULL dereference
+    if let Some(pointer_bv) = null_check_pointer {
+        extra_exprs.push(format!("{:?}", pointer_bv.simplify()));
     }
 
     // Constrained values first
@@ -777,7 +1005,9 @@ pub fn evaluate_args_z3<'ctx>(
     instruction_addr: Option<u64>,
     branch_target_addr: Option<u64>,
     panic_addr: Option<u64>, // Add panic address parameter to avoid re-exploration
-) -> Result<(), Box<dyn std::error::Error>> {
+    null_check_pointer: Option<&z3::ast::BV<'ctx>>, // for NULL pointer dereference checks (LOAD/STORE)
+) -> Result<bool, Box<dyn std::error::Error>> {
+    // return bool indicating SAT
     use std::env;
     let mode = env::var("MODE").expect("MODE environment variable is not set");
 
@@ -792,73 +1022,230 @@ pub fn evaluate_args_z3<'ctx>(
 
             executor.solver.push();
 
-            // When evaluating arguments during a CBRANCH leading to a panic, assert the simple boolean condition that leads to the panic.
-            if let Some(ref conditional_flag) = conditional_flag {
-                let panic_causing_flag_u64 = conditional_flag.concrete.to_u64().clone();
-                // Handle both Bool and BV types
-                let condition = match &conditional_flag.symbolic {
-                    SymbolicVar::Bool(bool_expr) => {
-                        log!(
-                            executor.state.logger,
-                            "Conditional flag Bool simplified: {:?}",
-                            bool_expr.simplify()
-                        );
-                        // Flip the observed condition to explore the negated branch
-                        let condition = if panic_causing_flag_u64 == 0 {
-                            // Observed false; require true
-                            bool_expr.not().not() // i.e., bool_expr == true
-                        } else {
-                            // Observed true; require false
-                            bool_expr.not()
-                        };
-                        condition
-                    }
-                    SymbolicVar::Int(bv) => {
-                        log!(
-                            executor.state.logger,
-                            "Conditional flag BV simplified: {:?}",
-                            bv.simplify()
-                        );
-                        // Extract underlying Bool from BV and assert the negation of observed path
-                        let bool_cond = crate::state::simplify_z3::bv_to_bool_smart(bv);
-                        if panic_causing_flag_u64 == 0 {
-                            bool_cond
-                        } else {
-                            bool_cond.not()
+            // The evaluation can be done for CBranch instructions, and also for Load and Store instructions
+            if inst.opcode == Opcode::CBranch {
+                // When evaluating arguments during a CBRANCH leading to a panic, assert the simple boolean condition that leads to the panic.
+                if let Some(ref conditional_flag) = conditional_flag {
+                    let panic_causing_flag_u64 = conditional_flag.concrete.to_u64().clone();
+                    // Handle both Bool and BV types
+                    let condition = match &conditional_flag.symbolic {
+                        SymbolicVar::Bool(bool_expr) => {
+                            log!(
+                                executor.state.logger,
+                                "Conditional flag Bool simplified: {:?}",
+                                bool_expr.simplify()
+                            );
+                            // Flip the observed condition to explore the negated branch
+                            let condition = if panic_causing_flag_u64 == 0 {
+                                // Observed false; require true
+                                bool_expr.not().not() // i.e., bool_expr == true
+                            } else {
+                                // Observed true; require false
+                                bool_expr.not()
+                            };
+                            condition
                         }
-                    }
-                    _ => {
-                        return Err("Unsupported symbolic variable type for conditional flag"
-                            .to_string()
-                            .into());
-                    }
-                };
-                // Assert the new condition
-                let simplified = condition.simplify();
+                        SymbolicVar::Int(bv) => {
+                            log!(
+                                executor.state.logger,
+                                "Conditional flag BV simplified: {:?}",
+                                bv.simplify()
+                            );
+                            // Extract underlying Bool from BV and assert the negation of observed path
+                            let bool_cond = crate::state::simplify_z3::bv_to_bool_smart(bv);
+                            if panic_causing_flag_u64 == 0 {
+                                bool_cond
+                            } else {
+                                bool_cond.not()
+                            }
+                        }
+                        _ => {
+                            return Err("Unsupported symbolic variable type for conditional flag"
+                                .to_string()
+                                .into());
+                        }
+                    };
+                    // Assert the new condition
+                    let simplified = condition.simplify();
+                    log!(
+                        executor.state.logger,
+                        "Asserting branch condition to the solver: {:?}",
+                        simplified
+                    );
+                    executor.solver.assert(&simplified);
+                } else {
+                    log!(
+                        executor.state.logger,
+                        "No conditional flag provided, continuing."
+                    );
+                }
+            } else if let Some(pointer_bv) = null_check_pointer {
+                // ── Fast path: NULL pointer dereference check ──────────────
+                // Use a fresh z3::Solver (NOT Optimize) for NULL checks.
+                // Rationale: Optimize adds multi-objective minimization (x²
+                // per tracked variable) which is 10-100× slower than a plain
+                // SAT check.  NULL checks only need a yes/no answer + a
+                // witness model; minimized values are irrelevant.
+                let null_solver = z3::Solver::new(executor.context);
+
+                // Assert: pointer == 0
+                let null_bv = z3::ast::BV::from_u64(executor.context, 0, pointer_bv.get_size());
+                let null_condition = pointer_bv._eq(&null_bv);
+
                 log!(
                     executor.state.logger,
-                    "Asserting branch condition to the solver: {:?}",
-                    simplified
+                    "Asserting NULL pointer condition to the solver: pointer == 0"
                 );
-                executor.solver.assert(&simplified);
-            } else {
                 log!(
                     executor.state.logger,
-                    "No conditional flag provided, continuing."
+                    "Pointer expression: {:?}",
+                    pointer_bv.simplify()
                 );
+
+                null_solver.assert(&null_condition);
+
+                // Assert accumulated path constraints (raw — no custom
+                // simplification overhead; the plain solver handles them fine)
+                for constraint in &executor.constraint_vector {
+                    null_solver.assert(constraint);
+                }
+
+                // Check SAT/UNSAT — no minimization objectives
+                let solve_start = Instant::now();
+                let solve_result = null_solver.check();
+                let solve_elapsed = solve_start.elapsed();
+
+                // Always log to file so execution_log records every check
+                log!(
+                    executor.state.logger,
+                    "[Z3-SOLVER] NULL pointer check took {:.3}s (result: {:?})",
+                    solve_elapsed.as_secs_f64(),
+                    solve_result
+                );
+
+                match solve_result {
+                    SatResult::Sat => {
+                        // Print to terminal only when SAT (vulnerability found)
+                        crate::teprintln!(
+                            "[Z3-SOLVER] NULL pointer check took {:.3}s",
+                            solve_elapsed.as_secs_f64()
+                        );
+
+                        log!(executor.state.logger, "~~~~~~~~~~~");
+                        log!(
+                            executor.state.logger,
+                            "SATISFIABLE: Symbolic execution can lead to a panic function."
+                        );
+                        log!(executor.state.logger, "~~~~~~~~~~~");
+
+                        let model = null_solver.get_model().unwrap();
+
+                        log!(
+                            executor.state.logger,
+                            "To enter a panic function, the following conditions must be satisfied:"
+                        );
+
+                        // Build unified evaluation content (same model type as Optimize)
+                        let evaluation_content = build_unified_evaluation_content(
+                            &model,
+                            executor,
+                            conditional_flag.as_ref(),
+                            null_check_pointer,
+                        );
+
+                        // Log to terminal using the same structure
+                        for line in evaluation_content.lines() {
+                            log!(executor.state.logger, "{}", line);
+                        }
+
+                        // Write to file
+                        let elapsed = START_INSTANT.get().map(|s| s.elapsed());
+                        let opcode_str = match inst.opcode {
+                            Opcode::Load => "LOAD",
+                            Opcode::Store => "STORE",
+                            _ => "UNKNOWN",
+                        };
+                        let detection_method = if executor.overlay_state.is_some() {
+                            "Exploring the not taken path with Overlay Execution"
+                        } else {
+                            "Exploring the current path with a symbolic check on the pointer"
+                        };
+
+                        if let Err(e) = log_sat_state_to_file_and_terminal(
+                            &evaluation_content,
+                            &mode,
+                            panic_addr,
+                            elapsed,
+                            instruction_addr,
+                            Some(opcode_str),
+                            Some(detection_method),
+                        ) {
+                            log!(
+                                executor.state.logger,
+                                "WARNING: Failed to write SAT state to file: {}",
+                                e
+                            );
+                        }
+
+                        // Report NULL pointer dereference vulnerability
+                        let addr = instruction_addr.or(panic_addr).unwrap_or(0);
+                        let det = if executor.overlay_state.is_some() {
+                            "Detection method: Exploring the not taken path with Overlay Execution"
+                        } else {
+                            "Detection method: Exploring the current path with a symbolic check on the pointer"
+                        };
+                        report_vulnerability(
+                            &mut executor.state.logger.clone(),
+                            "Symbolic NULL pointer dereference",
+                            addr,
+                            &[
+                                &format!("Opcode: {}", opcode_str),
+                                det,
+                                "More details in: results/FOUND_SAT_STATE.txt",
+                            ],
+                        );
+
+                        log!(executor.state.logger, "~~~~~~~~~~~");
+
+                        executor.solver.pop();
+                        return Ok(true); // SAT - vulnerability found
+                    }
+                    SatResult::Unsat => {
+                        log!(executor.state.logger, "~~~~~~~~~~~");
+                        log!(
+                            executor.state.logger,
+                            "NULL pointer check is UNSAT => pointer cannot be NULL"
+                        );
+                        log!(executor.state.logger, "~~~~~~~~~~~");
+
+                        executor.solver.pop();
+                        return Ok(false);
+                    }
+                    SatResult::Unknown => {
+                        log!(
+                            executor.state.logger,
+                            "NULL pointer solver => Unknown (timeout?)"
+                        );
+                        executor.solver.pop();
+                        return Ok(false);
+                    }
+                }
+                // ── End fast NULL check path ───────────────────────────────
             }
 
+            // ── CBranch path: use Optimize with minimization ───────────
             // List constraints and assert them to solver
             add_constraints_from_vector(&executor);
 
-            // Minimize symbolic variables; for integer values prefer smallest signed magnitude
+            // Minimize symbolic variables to produce readable witnesses.
+            // We minimize the UNSIGNED BV value directly instead of converting
+            // to Int and squaring (which mixes BV + integer theories and is
+            // extremely expensive for 64-bit variables).
             for symbolic_var in executor.function_symbolic_arguments.values() {
                 match symbolic_var {
                     SymbolicVar::Int(bv_var) => {
-                        let signed_int = Int::from_bv(bv_var, true);
-                        // approximate |x| by minimizing x^2 to avoid missing abs()
-                        let squared = &signed_int * &signed_int;
-                        executor.solver.minimize(&squared);
+                        // Direct BV minimization — stays in bitvector theory
+                        executor.solver.minimize(bv_var);
                     }
                     SymbolicVar::Slice(slice) => {
                         // Prefer smallest slice length first (lexicographic objective)
@@ -866,7 +1253,6 @@ pub fn evaluate_args_z3<'ctx>(
 
                         // Heuristic domain constraints for slice length
                         let len_int = Int::from_bv(&slice.length, false);
-                        executor.solver.minimize(&len_int);
 
                         let zero = Int::from_i64(executor.context, 0);
                         executor.solver.assert(&len_int.ge(&zero));
@@ -877,39 +1263,43 @@ pub fn evaluate_args_z3<'ctx>(
                             executor.solver.assert(&len_int.le(&max_len));
                         }
 
-                        // Then minimize each element magnitude
+                        // Then minimize each element
                         for elem in &slice.elements {
                             match elem {
                                 SymbolicVar::Int(bv_elem) => {
-                                    let signed_int = Int::from_bv(bv_elem, true);
-                                    // approximate |x| by minimizing x^2 to avoid missing abs()
-                                    let squared = &signed_int * &signed_int;
-                                    executor.solver.minimize(&squared);
+                                    executor.solver.minimize(bv_elem);
                                 }
                                 SymbolicVar::Slice(slice_elem) => {
-                                    let len_int = Int::from_bv(&slice_elem.length, false);
-                                    executor.solver.minimize(&len_int);
+                                    executor.solver.minimize(&slice_elem.length);
                                 }
-                                _ => {
-                                    log!(
-                                        executor.state.logger,
-                                        "Skipping non-Int/non-Slice element during minimize"
-                                    );
-                                }
+                                _ => {}
                             }
                         }
                     }
-                    _ => {
-                        log!(
-                            executor.state.logger,
-                            "Skipping non-minimizable symbolic var"
-                        );
-                    }
+                    _ => {}
                 }
             }
 
-            match executor.solver.check(&[]) {
+            let solve_start = Instant::now();
+            let solve_result = executor.solver.check(&[]);
+            let solve_elapsed = solve_start.elapsed();
+
+            // Always log to file so execution_log records every check
+            log!(
+                executor.state.logger,
+                "[Z3-OPTIMIZE] CBranch evaluation took {:.3}s (result: {:?})",
+                solve_elapsed.as_secs_f64(),
+                solve_result
+            );
+
+            match solve_result {
                 SatResult::Sat => {
+                    // Print to terminal only when SAT (vulnerability found)
+                    crate::teprintln!(
+                        "[Z3-OPTIMIZE] CBranch evaluation took {:.3}s",
+                        solve_elapsed.as_secs_f64()
+                    );
+
                     log!(executor.state.logger, "~~~~~~~~~~~");
                     log!(
                         executor.state.logger,
@@ -929,6 +1319,7 @@ pub fn evaluate_args_z3<'ctx>(
                         &model,
                         executor,
                         conditional_flag.as_ref(),
+                        null_check_pointer,
                     );
 
                     // Log to terminal using the same structure
@@ -936,14 +1327,26 @@ pub fn evaluate_args_z3<'ctx>(
                         log!(executor.state.logger, "{}", line);
                     }
 
-                    // Write to file
+                    // Write to file (for both CBRANCH and NULL checks)
                     let elapsed = START_INSTANT.get().map(|s| s.elapsed());
-                    if let Err(e) = write_sat_state_to_file(
+
+                    // Determine opcode and detection method strings for file logging
+                    let opcode_str = "CBRANCH";
+
+                    let detection_method = if executor.overlay_state.is_some() {
+                        "Exploring the not taken path with Overlay Execution"
+                    } else {
+                        "Exploring the current path with a symbolic check on the pointer"
+                    };
+
+                    if let Err(e) = log_sat_state_to_file_and_terminal(
                         &evaluation_content,
                         &mode,
                         panic_addr,
                         elapsed,
                         instruction_addr,
+                        Some(opcode_str),
+                        Some(detection_method),
                     ) {
                         log!(
                             executor.state.logger,
@@ -952,7 +1355,23 @@ pub fn evaluate_args_z3<'ctx>(
                         );
                     }
 
+                    // Report CBRANCH vulnerability to terminal
+                    let addr = instruction_addr.or(panic_addr).unwrap_or(0);
+                    report_vulnerability(
+                        &mut executor.state.logger.clone(),
+                        "Satisfiable path to panic/vulnerability",
+                        addr,
+                        &[
+                            "Opcode: CBRANCH",
+                            "Detection method: Exploring the not taken path with Overlay Execution",
+                            "More details in: results/FOUND_SAT_STATE.txt",
+                        ],
+                    );
+
                     log!(executor.state.logger, "~~~~~~~~~~~");
+
+                    executor.solver.pop();
+                    return Ok(true); // SAT - vulnerability found
                 }
                 SatResult::Unsat => {
                     log!(executor.state.logger, "~~~~~~~~~~~");
@@ -961,16 +1380,21 @@ pub fn evaluate_args_z3<'ctx>(
                         "Branch to panic is UNSAT => no input can make that branch lead to panic"
                     );
                     log!(executor.state.logger, "~~~~~~~~~~~");
+
+                    executor.solver.pop();
+                    return Ok(false); // UNSAT - no vulnerability
                 }
                 SatResult::Unknown => {
                     log!(executor.state.logger, "Solver => Unknown feasibility");
+                    executor.solver.pop();
+                    return Ok(false); // Unknown treated as no vulnerability
                 }
             }
-
-            executor.solver.pop();
         } else {
             log!(executor.state.logger, ">>> No panic function found in the AST exploration with the current max depth exploration");
+            return Ok(false); // No panic found
         }
+    // TODO: Add detection method for NULL pointer dereference checks (LOAD/STORE) like in function mode
     } else if mode == "start" || mode == "main" {
         let binary_path = {
             let target_info = GLOBAL_TARGET_INFO.lock().unwrap();
@@ -996,8 +1420,7 @@ pub fn evaluate_args_z3<'ctx>(
         // Minimize only slice lengths to prefer smaller witnesses (no other variable objectives)
         for symbolic_var in executor.function_symbolic_arguments.values() {
             if let SymbolicVar::Slice(slice) = symbolic_var {
-                let len_int = Int::from_bv(&slice.length, false);
-                executor.solver.minimize(&len_int);
+                executor.solver.minimize(&slice.length);
             }
         }
 
@@ -1032,8 +1455,26 @@ pub fn evaluate_args_z3<'ctx>(
         executor.solver.assert(&simplified);
 
         // 4) check feasibility
-        match executor.solver.check(&[]) {
+        let solve_start = Instant::now();
+        let solve_result = executor.solver.check(&[]);
+        let solve_elapsed = solve_start.elapsed();
+
+        // Always log to file so execution_log records every check
+        log!(
+            executor.state.logger,
+            "[Z3-OPTIMIZE] CBranch evaluation took {:.3}s (result: {:?})",
+            solve_elapsed.as_secs_f64(),
+            solve_result
+        );
+
+        match solve_result {
             z3::SatResult::Sat => {
+                // Print to terminal only when SAT (vulnerability found)
+                crate::teprintln!(
+                    "[Z3-OPTIMIZE] CBranch evaluation took {:.3}s",
+                    solve_elapsed.as_secs_f64()
+                );
+
                 log!(executor.state.logger, "~~~~~~~~~~~");
                 log!(
                     executor.state.logger,
@@ -1044,22 +1485,28 @@ pub fn evaluate_args_z3<'ctx>(
                 let model = executor.solver.get_model().unwrap();
 
                 // Build unified evaluation content
-                let evaluation_content =
-                    build_unified_evaluation_content(&model, executor, conditional_flag.as_ref());
+                let evaluation_content = build_unified_evaluation_content(
+                    &model,
+                    executor,
+                    conditional_flag.as_ref(),
+                    null_check_pointer,
+                );
 
                 // Log to terminal using the same structure
                 for line in evaluation_content.lines() {
                     log!(executor.state.logger, "{}", line);
                 }
 
-                // Write to file
+                // Write to file and report to terminal
                 let elapsed = START_INSTANT.get().map(|s| s.elapsed());
-                if let Err(e) = write_sat_state_to_file(
+                if let Err(e) = log_sat_state_to_file_and_terminal(
                     &evaluation_content,
                     &mode,
                     branch_target_addr,
                     elapsed,
                     instruction_addr,
+                    Some("CBRANCH"),
+                    Some("Exploring the not taken path with Overlay Execution"),
                 ) {
                     log!(
                         executor.state.logger,
@@ -1068,7 +1515,24 @@ pub fn evaluate_args_z3<'ctx>(
                     );
                 }
 
+                // Report CBRANCH vulnerability to terminal
+                let addr = instruction_addr.or(branch_target_addr).unwrap_or(0);
+                report_vulnerability(
+                    &mut executor.state.logger.clone(),
+                    "Satisfiable path to panic/vulnerability",
+                    addr,
+                    &[
+                        "Opcode: CBRANCH",
+                        "Detection method: Exploring the not taken path with Overlay Execution",
+                        "More details in: results/FOUND_SAT_STATE.txt",
+                    ],
+                );
+
                 log!(executor.state.logger, "~~~~~~~~~~~");
+
+                // 6) pop the solver context
+                executor.solver.pop();
+                return Ok(true); // SAT - vulnerability found
             }
 
             z3::SatResult::Unsat => {
@@ -1078,21 +1542,26 @@ pub fn evaluate_args_z3<'ctx>(
                     "Branch to panic is UNSAT => no input can make that branch lead to panic"
                 );
                 log!(executor.state.logger, "~~~~~~~~~~~");
+
+                // 6) pop the solver context
+                executor.solver.pop();
+                return Ok(false); // UNSAT - no vulnerability
             }
             z3::SatResult::Unknown => {
                 log!(executor.state.logger, "Solver => Unknown feasibility");
+                // 6) pop the solver context
+                executor.solver.pop();
+                return Ok(false); // Unknown treated as no vulnerability
             }
         }
-        // 6) pop the solver context
-        executor.solver.pop();
     } else {
         log!(
             executor.state.logger,
             "Unsupported mode for evaluating arguments: {}",
             mode
         );
+        return Ok(false);
     }
-    Ok(())
 }
 
 // Function to get the address of the os.Args slice in the target binary

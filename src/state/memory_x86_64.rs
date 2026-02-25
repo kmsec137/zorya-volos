@@ -23,7 +23,9 @@ use std::cell::RefCell;
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
+        if ($logger).is_enabled() {
         writeln!($logger, $($arg)*).unwrap();
+        }
     }};
 }
 
@@ -632,7 +634,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() && path.extension().map_or(false, |e| e == "bin") {
-                println!("Initializing memory section from file: {:?}", path);
+                crate::tprintln!("Initializing memory section from file: {:?}", path);
                 self.load_memory_dump_with_dynamic_chunk_size(&path)?;
             }
         }
@@ -1019,8 +1021,24 @@ impl<'ctx> MemoryX86_64<'ctx> {
         logger: &mut Logger,
         address: u64,
     ) -> BV<'ctx> {
-        // log!(logger, "=== SYMBOLIC CONCATENATION DEBUG ===");
-        // log!(logger, "Building symbolic value from {} bytes", symbolic_bytes.len());
+        // Fast path: if no byte has symbolic data, build the BV directly from the concrete
+        // value.  This avoids 7 `BV::from_u64` + 7 `concat` Z3 node allocations for the
+        // common case of fully-concrete memory (e.g. code/rodata regions, freshly-written
+        // stack slots).
+        if symbolic_bytes.iter().all(|s| s.is_none()) {
+            let size_bits = (symbolic_bytes.len() * 8) as u32;
+            // Assemble the concrete value from the bytes (little-endian)
+            let mut padded = [0u8; 8];
+            let copy_len = concrete_bytes.len().min(8);
+            padded[..copy_len].copy_from_slice(&concrete_bytes[..copy_len]);
+            let value = u64::from_le_bytes(padded);
+            let mask = if size_bits < 64 {
+                (1u64 << size_bits) - 1
+            } else {
+                u64::MAX
+            };
+            return BV::from_u64(ctx, value & mask, size_bits);
+        }
 
         let mut result: Option<BV<'ctx>> = None;
 
@@ -1266,7 +1284,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
             };
             self.write_value(address, &mem_value, true)?; // Writing values to memory
         }
-        println!(
+        crate::tprintln!(
             "Initialized CPUID memory variables at address 0x{:x}",
             start_address
         );

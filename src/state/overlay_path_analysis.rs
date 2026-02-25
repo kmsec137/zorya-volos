@@ -14,7 +14,9 @@ const MAX_OVERLAY_DEPTH: usize = 15; // Maximum instructions to analyze in overl
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
+        if ($logger).is_enabled() {
         writeln!($logger, $($arg)*).unwrap();
+        }
     }};
 }
 
@@ -137,6 +139,18 @@ pub fn analyze_untaken_path_with_overlay<'ctx>(
     // Set overlay state in executor
     executor.overlay_state = Some(overlay_state);
 
+    // Save the NULL check cache so we can restore it after overlay exploration.
+    // The overlay runs on a speculative path — its SAT/UNSAT results must not
+    // pollute the real execution's cache, and the real execution's cached
+    // results must survive overlay round-trips.
+    let saved_null_check_cache = executor.null_check_cache.clone();
+
+    // Keep SAT entries (permanently confirmed nullable — vulnerability already
+    // reported, never re-report) but clear UNSAT entries (they were established
+    // under the real path's constraints; the overlay negates a branch, so an
+    // UNSAT variable might become SAT and must be re-checked).
+    executor.null_check_cache.retain(|_, &mut (sat, _)| sat);
+
     // Execute instructions using the existing executor infrastructure
     let result = execute_with_overlay(
         executor,
@@ -167,10 +181,11 @@ pub fn analyze_untaken_path_with_overlay<'ctx>(
         executor.state.freed_stack_frames.len()
     );
 
-    // Restore unique variables and current address after overlay exploration
+    // Restore unique variables, current address, and NULL check cache after overlay exploration
     // This prevents overlay execution from polluting the real execution state
     executor.unique_variables = saved_unique_variables;
     executor.current_address = saved_current_address;
+    executor.null_check_cache = saved_null_check_cache;
     log!(
         executor.state.logger,
         "[OVERLAY] Restored {} unique variables after overlay exploration",
@@ -338,14 +353,14 @@ fn execute_with_overlay<'ctx>(
                             }
                             log!(
                                 executor.state.logger,
-                                "[OVERLAY] Cannot determine branch target, stopping speculative execution"
+                                "[OVERLAY] Cannot determine branch target, stopping the overlay execution"
                             );
                             return OverlayPathAnalysisResult::DepthLimitReached;
                         }
                         Opcode::Return => {
                             log!(
                                 executor.state.logger,
-                                "[OVERLAY] ✓ Reached return at 0x{:x}, ending speculative execution",
+                                "[OVERLAY] Reached return at 0x{:x}, ending the overlay execution",
                                 current_addr
                             );
                             return OverlayPathAnalysisResult::Safe;
@@ -364,24 +379,10 @@ fn execute_with_overlay<'ctx>(
                     }
                 }
                 Err(e) => {
-                    // Check if error indicates a vulnerability
-                    if e.contains("null pointer") || e.contains("NULL") {
-                        let vuln_desc = format!(
-                            "Null pointer dereference at 0x{:x} (instruction {}): {}",
-                            current_addr, idx, e
-                        );
-                        log!(
-                            executor.state.logger,
-                            "[OVERLAY] VULNERABILITY DETECTED: {}",
-                            vuln_desc
-                        );
-                        return OverlayPathAnalysisResult::VulnerabilityFound(
-                            "NULL_DEREF".to_string(),
-                            current_addr,
-                            vuln_desc,
-                        );
-                    }
-
+                    // Execution error during overlay analysis.
+                    // Specific vulnerability checks (NULL ptr, div-by-zero) happen before
+                    // execution in check_vulnerabilities_before_execution, so errors here
+                    // are typically non-vulnerability issues (unimplemented opcodes, etc.)
                     log!(
                         executor.state.logger,
                         "[OVERLAY] Execution error at 0x{:x}: {}",
@@ -422,23 +423,49 @@ fn check_instruction_for_vulnerabilities_before_execution<'ctx>(
     // Check for LOAD with potentially null pointer
     if inst.opcode == Opcode::Load {
         if let Some(pointer_varnode) = inst.inputs.get(1) {
-            // Try to get the concrete value of the pointer
             if let Ok(pointer_concolic) = executor.varnode_to_concolic(pointer_varnode) {
                 let pointer_value = pointer_concolic.get_concrete_value();
                 if pointer_value == 0 {
-                    let vuln_desc = format!(
-                        "Null pointer dereference (LOAD) at 0x{:x} (instruction {})",
-                        current_addr, inst_idx
+                    // Concrete NULL detected during overlay execution.
+                    // No Z3 evaluation needed — the pointer is concretely NULL on this path.
+
+                    // Try to identify the pointer name by checking if it's symbolic
+                    let ptr_bv = pointer_concolic.to_bv(executor.context);
+                    let mut pointer_name = None;
+
+                    // Try to match it against tracked symbolic variables
+                    for (arg_name, sym_var) in &executor.function_symbolic_arguments {
+                        if let crate::concolic::SymbolicVar::Int(bv) = sym_var {
+                            if ptr_bv.to_string() == bv.to_string() {
+                                pointer_name = Some(arg_name.clone());
+                                break;
+                            }
+                        }
+                    }
+
+                    let desc = format!(
+                        "Null pointer dereference (LOAD) at instruction {}",
+                        inst_idx
                     );
-                    log!(
-                        executor.state.logger,
-                        ">>> VULNERABILITY DETECTED in overlay: {}",
-                        vuln_desc
-                    );
+                    if let Err(e) = crate::state::evaluate_z3::log_vuln_to_file_and_terminal(
+                        &mut executor.state.logger.clone(),
+                        "Concrete NULL pointer dereference",
+                        current_addr,
+                        "LOAD",
+                        "Exploring the not taken path with Overlay Execution",
+                        &desc,
+                        pointer_name.as_deref(),
+                    ) {
+                        log!(
+                            executor.state.logger,
+                            "[OVERLAY] Error logging vulnerability: {}",
+                            e
+                        );
+                    }
                     return Some(OverlayPathAnalysisResult::VulnerabilityFound(
                         "NULL_DEREF_LOAD".to_string(),
                         current_addr,
-                        vuln_desc,
+                        desc,
                     ));
                 }
             }
@@ -451,19 +478,43 @@ fn check_instruction_for_vulnerabilities_before_execution<'ctx>(
             if let Ok(pointer_concolic) = executor.varnode_to_concolic(pointer_varnode) {
                 let pointer_value = pointer_concolic.get_concrete_value();
                 if pointer_value == 0 {
-                    let vuln_desc = format!(
-                        "Null pointer write (STORE) at 0x{:x} (instruction {})",
-                        current_addr, inst_idx
-                    );
-                    log!(
-                        executor.state.logger,
-                        ">>> VULNERABILITY DETECTED in overlay: {}",
-                        vuln_desc
-                    );
+                    // Concrete NULL detected during overlay execution.
+                    // No Z3 evaluation needed — the pointer is concretely NULL on this path.
+
+                    // Try to identify the pointer name by checking if it's symbolic
+                    let ptr_bv = pointer_concolic.to_bv(executor.context);
+                    let mut pointer_name = None;
+
+                    // Try to match it against tracked symbolic variables
+                    for (arg_name, sym_var) in &executor.function_symbolic_arguments {
+                        if let crate::concolic::SymbolicVar::Int(bv) = sym_var {
+                            if ptr_bv.to_string() == bv.to_string() {
+                                pointer_name = Some(arg_name.clone());
+                                break;
+                            }
+                        }
+                    }
+
+                    let desc = format!("Null pointer write (STORE) at instruction {}", inst_idx);
+                    if let Err(e) = crate::state::evaluate_z3::log_vuln_to_file_and_terminal(
+                        &mut executor.state.logger.clone(),
+                        "Concrete NULL pointer dereference",
+                        current_addr,
+                        "STORE",
+                        "Exploring the not taken path with Overlay Execution",
+                        &desc,
+                        pointer_name.as_deref(),
+                    ) {
+                        log!(
+                            executor.state.logger,
+                            "[OVERLAY] Error logging vulnerability: {}",
+                            e
+                        );
+                    }
                     return Some(OverlayPathAnalysisResult::VulnerabilityFound(
                         "NULL_DEREF_STORE".to_string(),
                         current_addr,
-                        vuln_desc,
+                        desc,
                     ));
                 }
             }
@@ -479,14 +530,16 @@ fn check_instruction_for_vulnerabilities_before_execution<'ctx>(
             if let Ok(divisor_concolic) = executor.varnode_to_concolic(divisor_varnode) {
                 let divisor_value = divisor_concolic.get_concrete_value();
                 if divisor_value == 0 {
-                    let vuln_desc = format!(
-                        "Division by zero at 0x{:x} (instruction {})",
-                        current_addr, inst_idx
-                    );
-                    log!(
-                        executor.state.logger,
-                        ">>> VULNERABILITY DETECTED in overlay: {}",
-                        vuln_desc
+                    let vuln_desc = format!("Division by zero at instruction {}", inst_idx);
+                    crate::state::evaluate_z3::report_vulnerability(
+                        &mut executor.state.logger.clone(),
+                        "Division by zero (overlay execution)",
+                        current_addr,
+                        &[
+                            "Opcode: INT_DIV / INT_REM",
+                            "Detection method: Exploring the not taken path with Overlay Execution",
+                            &vuln_desc,
+                        ],
                     );
                     return Some(OverlayPathAnalysisResult::VulnerabilityFound(
                         "DIV_BY_ZERO".to_string(),

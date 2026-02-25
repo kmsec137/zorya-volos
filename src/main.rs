@@ -22,9 +22,11 @@ use z3::{
     Config, Context,
 };
 use zorya::concolic::symbolic_initialization::{
-    initialize_single_register_argument, initialize_single_register_slice,
-    initialize_slice_argument, initialize_slice_memory_contents, initialize_string_argument,
-    initialize_string_memory_contents, is_stack_location, parse_stack_offset,
+    clear_go_stack_preempt, init_struct_types_cache, initialize_single_register_argument,
+    initialize_single_register_slice, initialize_slice_argument, initialize_slice_memory_contents,
+    initialize_string_argument, initialize_string_memory_contents,
+    initialize_struct_pointer_fields, is_stack_location, is_struct_pointer_type,
+    parse_stack_offset,
 };
 use zorya::concolic::{ConcolicVar, Logger};
 use zorya::executor::{ConcolicExecutor, SymbolicVar};
@@ -50,10 +52,13 @@ use zorya::state::panic_reach::{
 use zorya::state::simplify_z3::extract_underlying_condition_from_flag_ast;
 use zorya::state::thread_manager::{CheckpointType, ThreadStatus};
 use zorya::target_info::GLOBAL_TARGET_INFO;
+use zorya::{teprintln, tprintln};
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
+        if ($logger).is_enabled() {
         writeln!($logger, $($arg)*).unwrap();
+        }
     }};
 }
 
@@ -153,7 +158,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             match sched_choice.as_str() {
                 "all-threads" | "all_threads" | "roundrobin" | "round_robin" | "rr" => {
                     env::set_var("THREAD_SCHEDULING", "round_robin");
-                    println!(
+                    tprintln!(
                         "[THREAD-CONFIG] Enabled multi-thread scheduling (cooperative at function calls)"
                     );
 
@@ -162,7 +167,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     // Default: 100 switches
                     if env::var("THREAD_SWITCH_DEPTH").is_err() {
                         env::set_var("THREAD_SWITCH_DEPTH", "100");
-                        println!("[THREAD-CONFIG] Set thread switch depth to 100");
+                        tprintln!("[THREAD-CONFIG] Set thread switch depth to 100");
                     }
 
                     // THREAD_TIME_SLICE: Number of P-code instructions to execute before considering a thread switch
@@ -170,14 +175,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                     // Default: 10000 instructions
                     if env::var("THREAD_TIME_SLICE").is_err() {
                         env::set_var("THREAD_TIME_SLICE", "10000");
-                        println!(
+                        tprintln!(
                             "[THREAD-CONFIG] Set time slice to 10000 instructions (optimized for symbolic execution)"
                         );
                     }
                 }
                 "main-only" | "main_only" | "mainonly" | "none" => {
                     env::set_var("THREAD_SCHEDULING", "main_only");
-                    println!(
+                    tprintln!(
                         "[THREAD-CONFIG] Using main-only thread policy (single goroutine execution)"
                     );
                 }
@@ -192,14 +197,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     if Path::new(sat_state_file).exists() {
         match fs::remove_file(sat_state_file) {
             Ok(()) => {
-                println!("Cleaned up previous SAT state file: {}", sat_state_file);
+                tprintln!("Cleaned up previous SAT state file: {}", sat_state_file);
             }
             Err(e) => {
-                eprintln!(
+                teprintln!(
                     "Warning: Failed to remove previous SAT state file {}: {}",
-                    sat_state_file, e
+                    sat_state_file,
+                    e
                 );
-                eprintln!("Continuing with execution, new results will be appended...");
+                teprintln!("Continuing with execution, new results will be appended...");
             }
         }
     }
@@ -218,6 +224,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let logger = Logger::new(logger_path, false).expect("Failed to create logger"); // detailed log (file only when not trace_only)
     let trace_logger =
         Logger::new("results/execution_trace.txt", true).expect("Failed to create trace logger"); // get the trace of the executed symbols names, log to the file and stdout
+                                                                                                  // Initialise the global trace file so that ttprintln!/tteprintln! also
+                                                                                                  // append to execution_trace.txt (the trace_logger above already
+                                                                                                  // truncated/created the file, so we open in append mode).
+    zorya::init_trace_file("results/execution_trace.txt");
+
+    // Mirror the "Running command:" line (printed by the zorya shell script)
+    // into execution_trace.txt so the trace file is self-contained.
+    if let Ok(cmd) = std::env::var("ZORYA_CMD") {
+        tprintln!("Running command: {}", cmd);
+        tprintln!();
+    }
     let mut executor: ConcolicExecutor<'_> =
         ConcolicExecutor::new(&context, logger.clone(), trace_logger.clone())
             .map_err(|e| e.to_string())?;
@@ -264,10 +281,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut instructions_map = preprocess_pcode_file(pcode_file_path_str, &mut executor)
         .expect("Failed to preprocess the p-code file.");
 
+    tprintln!("Building the P-Code for the VDSO section (this may take a moment)...");
     // Merge VDSO p-code if available
     merge_vdso_pcode(&mut instructions_map, &mut executor);
 
-    // Get the tables of cross references of potential panics in the programs (for bug detetcion)
+    tprintln!("Precomputing the tables of cross references of potential panics in the programs (for bug detection)...");
+    // Get the tables of cross references of potential panics in the programs (for bug detection)
     get_cross_references(&binary_path)?;
 
     let start_address = u64::from_str_radix(&main_program_addr.trim_start_matches("0x"), 16)
@@ -394,6 +413,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                     functions.len()
                 );
 
+                // Load struct type definitions for struct pointer field symbolization
+                let struct_types_path = "results/function_signatures_go_structs.json";
+                init_struct_types_cache(struct_types_path);
+
                 // Build the final HashMap directly
                 let mut go_signatures = HashMap::new();
                 for func in functions {
@@ -431,7 +454,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
 
         // In function mode: initialize symbolic arguments
-        if let Some((_, args)) = function_args_map.get(&start_address) {
+        if let Some((func_name, args)) = function_args_map.get(&start_address) {
+            tprintln!(
+                "Function mode: initializing {} symbolic argument(s) for function '{}' at 0x{:x}...",
+                args.len(),
+                func_name,
+                start_address
+            );
             log!(
                 executor.state.logger,
                 "Found {} arguments for function at 0x{:x}",
@@ -522,6 +551,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                         &mut concrete_values_of_args,
                         &mut executor,
                     );
+
+                    // Check if this is a pointer to a struct and symbolize its fields
+                    if let Some(struct_name) = is_struct_pointer_type(arg_type) {
+                        log!(
+                            executor.state.logger,
+                            "Detected struct pointer '{}' -> '{}', symbolizing struct fields...",
+                            arg_name,
+                            struct_name
+                        );
+                        initialize_struct_pointer_fields(
+                            &mut executor,
+                            arg_name,
+                            regs[0],
+                            &struct_name,
+                        );
+                    }
                 } else if regs.is_empty() {
                     log!(
                         executor.state.logger,
@@ -542,6 +587,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                         &mut concrete_values_of_args,
                         &mut executor,
                     );
+
+                    // Check if this is a pointer to a struct and symbolize its fields
+                    if let Some(struct_name) = is_struct_pointer_type(arg_type) {
+                        log!(
+                            executor.state.logger,
+                            "Detected struct pointer '{}' -> '{}', symbolizing struct fields...",
+                            arg_name,
+                            struct_name
+                        );
+                        initialize_struct_pointer_fields(
+                            &mut executor,
+                            arg_name,
+                            regs[0],
+                            &struct_name,
+                        );
+                    }
                 }
             }
 
@@ -603,11 +664,24 @@ fn main() -> Result<(), Box<dyn Error>> {
             "os.Args slice address: 0x{:x}",
             os_args_addr
         );
+        tprintln!("**************************************************************************");
+        tprintln!("Initializing symbolic variables for the program arguments (os.Args)...");
         initialize_symbolic_part_args(&mut executor, os_args_addr)?;
         log!(executor.state.logger, "Updating argc and argv on the stack");
         update_argc_argv(&mut executor, &arguments)?;
     } else {
         log!(executor.state.logger, "[WARNING] Custom mode used : Be aware that the arguments of the binary are not 'fresh symbolic' in that mode, the concolic exploration might not work correctly.");
+    }
+
+    // For Go binaries: clear the goroutine stackPreempt flag if set.
+    // When stackguard0 == runtime.stackPreempt, every Go function prologue
+    // triggers goroutine preemption, preventing execution of the function body.
+    if source_lang.to_lowercase() == "go" {
+        log!(
+            executor.state.logger,
+            "[GO-INIT] Checking for goroutine stackPreempt flag..."
+        );
+        clear_go_stack_preempt(&mut executor);
     }
 
     // Precompute reverse panic reachability set (O(V+E)), then O(1) queries
@@ -616,14 +690,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // *****************************
     // CORE COMMAND
-    println!("**************************************************************************");
-    println!("THE CONCOLIC EXECUTION OF THE BINARY HAS STARTED!");
+    tprintln!("**************************************************************************");
+    tprintln!("THE CONCOLIC EXECUTION OF THE BINARY HAS STARTED!");
     if log_mode == "trace_only" {
-        println!("Trace-only logging enabled (LOG_MODE=trace_only). Writing results/execution_trace.txt only.");
+        tprintln!("Trace-only logging enabled (LOG_MODE=trace_only). Writing results/execution_trace.txt only.");
     } else {
-        println!("Find the logs in results/execution_log.txt and results/execution_trace.txt");
+        tprintln!("Find the logs in results/execution_log.txt and results/execution_trace.txt");
     }
-    println!("**************************************************************************");
+    tprintln!("**************************************************************************");
 
     execute_instructions_from(
         &mut executor,
@@ -712,6 +786,21 @@ fn execute_instructions_from(
         let function_args_map = load_function_args_map();
 		  function_args_map
     };
+
+    // Check up-front that p-code exists for the start address so the user
+    // gets an actionable error instead of a silent no-op.
+    if !instructions_map.contains_key(&current_rip) {
+        let msg = format!(
+            "ERROR: No P-Code found for start address 0x{:x}. \
+             Pcode-generator tool may have failed to decode this function \
+             (e.g. it is an autogenerated stub or a LowlevelError was emitted). \
+             Please check the pcode file and verify the target address is correct.",
+            current_rip
+        );
+        teprintln!("{}", msg);
+        log!(executor.state.logger, "{}", msg);
+        return;
+    }
 
     while let Some(instructions) = instructions_map.get(&current_rip) {
         if current_rip == end_address {
@@ -1208,40 +1297,32 @@ fn execute_instructions_from(
                                     50, // max depth
                                 );
 
-                                match analysis_result {
-                                    LightweightAnalysisResult::VulnerabilityFound(
-                                        vuln_type,
-                                        vuln_addr,
-                                        desc,
-                                    ) => {
-                                        log!(
-                                            executor.state.logger,
-                                            "╔═══════════════════════════════════════════════════════════════════"
-                                        );
-                                        log!(
-                                            executor.state.logger,
-                                            "║ 🚨 VULNERABILITY DETECTED VIA LIGHTWEIGHT PATH ANALYSIS"
-                                        );
-                                        log!(executor.state.logger, "║ Type: {}", vuln_type);
-                                        log!(
-                                            executor.state.logger,
-                                            "║ Location: 0x{:x}",
-                                            vuln_addr
-                                        );
-                                        log!(executor.state.logger, "║ Description: {}", desc);
-                                        log!(
-                                            executor.state.logger,
-                                            "╚═══════════════════════════════════════════════════════════════════"
+
+                            match analysis_result {
+                                OverlayPathAnalysisResult::VulnerabilityFound(
+                                    _vuln_type,
+                                    vuln_addr,
+                                    _desc,
+                                ) => {
+                                    // Derive the path condition
+                                    let cond_bv = conditional_flag.symbolic.to_bv(executor.context);
+                                    let branch_taken_to_explore = conditional_flag_u64 == 0;
+                                    let _explored_condition =
+                                        extract_underlying_condition_from_flag_ast(
+                                            &cond_bv,
+                                            branch_taken_to_explore,
+                                            &mut executor.state.logger.clone(),
                                         );
 
-                                        // Try to find a satisfying input
-                                        evaluate_args_z3(
+                                    // Try to find a satisfying input
+                                    let _ = evaluate_args_z3(
                                             executor,
                                             inst,
                                             Some(conditional_flag.clone()),
                                             Some(current_rip),
                                             Some(branch_target_address),
                                             Some(vuln_addr),
+                                            None, // no NULL check for overlay vulnerabilities
                                         )
                                         .unwrap_or_else(|e| {
                                             log!(
@@ -1250,6 +1331,7 @@ fn execute_instructions_from(
                                                 vuln_addr,
                                                 e
                                             );
+                                            false
                                         });
                                     }
                                     LightweightAnalysisResult::Safe => {
@@ -1281,74 +1363,24 @@ fn execute_instructions_from(
                                     _ => false,        // C/C++ don't have panic infrastructure
                                 };
 
-                            let ast_panic_result = if use_ast_exploration {
+                            // Run only a single evaluation once panic address is known
+                            let _ = evaluate_args_z3(
+                                executor,
+                                inst,
+                                Some(conditional_flag.clone()),
+                                Some(current_rip),
+                                Some(branch_target_address),
+                                panic_addr,
+                                None, // no NULL check for CBranch panics
+                            )
+                            .unwrap_or_else(|e| {
                                 log!(
                                     executor.state.logger,
                                     ">>> Performing AST-based panic exploration..."
                                 );
-                                explore_ast_for_panic(
-                                    executor,
-                                    address_of_negated_path_exploration,
-                                    &binary_path,
-                                )
-                            } else {
-                                log!(
-                                    executor.state.logger,
-                                    ">>> Skipping AST exploration (not applicable for this language/compiler)"
-                            );
-                                "NO_PANIC_XREF_FOUND".to_string()
-                            };
 
-                            if ast_panic_result.starts_with("FOUND_PANIC_XREF_AT 0x") {
-                                if let Some(panic_addr_str) =
-                                    ast_panic_result.trim().split_whitespace().last()
-                                {
-                                    if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
-                                        if let Ok(parsed_addr) = u64::from_str_radix(stripped, 16) {
-                                            log!(executor.state.logger, ">>> The AST exploration found a potential call to a panic address at 0x{:x}", parsed_addr);
-                                        } else {
-                                            log!(
-                                                executor.state.logger,
-                                                "Could not parse panic address from AST result: '{}'",
-                                                panic_addr_str
-                                            );
-                                        }
-                                    }
-                                }
-
-                                // Extract panic address from AST result
-                                let panic_addr = if let Some(panic_addr_str) =
-                                    ast_panic_result.trim().split_whitespace().last()
-                                {
-                                    if let Some(stripped) = panic_addr_str.strip_prefix("0x") {
-                                        u64::from_str_radix(stripped, 16).ok()
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                };
-
-                                // Run only a single evaluation once panic address is known
-                                evaluate_args_z3(
-                                    executor,
-                                    inst,
-                                    Some(conditional_flag.clone()),
-                                    Some(current_rip),
-                                    Some(branch_target_address),
-                                    panic_addr,
-                                )
-                                .unwrap_or_else(|e| {
-                                    log!(
-                                        executor.state.logger,
-                                        "Error evaluating arguments for branch at 0x{:x}: {}",
-                                        branch_target_address,
-                                        e
-                                    );
-                                });
-                            } else {
-                                log!(executor.state.logger, ">>> No panic function found in the AST exploration with the current max depth exploration");
-                            }
+                                false
+                            });
                         } else {
                             log!(executor.state.logger, "NEGATE_PATH_FLAG is set to false, so the execution doesn't explore the negated path.");
                         }
@@ -2181,6 +2213,8 @@ fn get_cross_references(binary_path: &str) -> Result<(), Box<dyn Error>> {
         panic!("Python script not found at {:?}", python_script_path);
     }
 
+    tprintln!("[GHIDRA] Launching Ghidra + Pyhidra to collect panic cross-references (this may take a bit)...");
+
     let output = Command::new("python3")
         .arg(python_script_path)
         .arg(binary_path)
@@ -2189,14 +2223,13 @@ fn get_cross_references(binary_path: &str) -> Result<(), Box<dyn Error>> {
 
     // Check if the script ran successfully
     if !output.status.success() {
-        eprintln!(
-            "Python script error: {}",
+        teprintln!(
+            "[WARNING]: Python script error: {}\n",
             String::from_utf8_lossy(&output.stderr)
         );
         return Err(Box::from("Python script failed"));
     } else {
-        println!("The cross references of panic functions have been executed collected!");
-        println!("{}", String::from_utf8_lossy(&output.stdout));
+        tprintln!("[GHIDRA] Panic cross-reference analysis completed. Results written to results/xref_addresses.txt.\n");
     }
 
     // Ensure the file was created
@@ -2309,14 +2342,19 @@ fn merge_vdso_pcode(
                 "Successfully merged {} VDSO instruction blocks",
                 vdso_instr_count
             );
-            println!(
-                "✓ Merged {} VDSO instruction blocks into execution map",
+            tprintln!(
+                "Merged {} VDSO instruction blocks into execution map\n",
                 vdso_instr_count
             );
         }
         Err(e) => {
-            log!(executor.state.logger, "Failed to parse VDSO p-code: {}", e);
-            eprintln!("⚠ Warning: Failed to merge VDSO p-code: {}", e);
+
+            log!(
+                executor.state.logger,
+                "Failed to parse VDSO p-code: {}\n",
+                e
+            );
+            teprintln!("[WARNING]: Failed to merge VDSO p-code: {}\n", e);
         }
     }
 }

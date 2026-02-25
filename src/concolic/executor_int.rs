@@ -13,7 +13,9 @@ use super::ConcolicVar;
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
-        writeln!($logger, $($arg)*).unwrap();
+        if ($logger).is_enabled() {
+            writeln!($logger, $($arg)*).unwrap();
+        }
     }};
 }
 
@@ -238,6 +240,172 @@ pub fn handle_int_add(executor: &mut ConcolicExecutor, instruction: Inst) -> Res
         "*** The result of INT_ADD is: {:x}\n",
         result_concrete.clone()
     );
+
+    // ── Integer overflow check ──────────────────────────────────────────
+    // For additions involving tracked symbolic variables, check whether
+    // the result overflows as a SIGNED integer.
+    //
+    // We use SIGNED overflow (not unsigned carry) to avoid false positives
+    // from pointer arithmetic.  Heap pointers in user-space (e.g. Go's
+    // 0xc000… range) are well below INT64_MAX, so ptr + small_offset stays
+    // positive and never triggers a signed overflow.
+    //
+    // Two additional guards further reduce false positives:
+    //   1. Skip when either concrete operand is zero (x + 0 cannot overflow).
+    //   2. Only trigger when a slice_elem symbol is involved — not ptr/len/cap.
+    //      The CVE-class overflow flows through slice element data, not metadata.
+    //
+    // Signed overflow conditions:
+    //   • positive + positive = negative  (classic overflow)
+    //   • negative + negative = positive  (underflow)
+    let concrete0 = input0_var.get_concrete_value();
+    let concrete1 = input1_var.get_concrete_value();
+    // Guard 1: adding zero is always safe — skip immediately
+    if concrete0 != 0
+        && concrete1 != 0
+        && !executor.function_symbolic_arguments.is_empty()
+        && output_size_bits >= 32
+    {
+        let input0_bv = input0_var.get_symbolic_value_bv(executor.context);
+        let input1_bv = input1_var.get_symbolic_value_bv(executor.context);
+
+        // Fast path: skip if both operands are Z3 numeral constants
+        // (no symbolic component → overflow is a fixed property, not input-dependent)
+        if input0_bv.as_u64().is_none() || input1_bv.as_u64().is_none() {
+            // Guard 2: only fire on additions that involve a slice_elem symbol.
+            // This avoids false positives from b_ptr/b_len/b_cap arithmetic — those
+            // variables represent slice metadata, not the integer accumulator that
+            // is the target of CVE-class overflow bugs (e.g. parseUintBuf).
+            let expr0 = format!("{:?}", input0_bv);
+            let expr1 = format!("{:?}", input1_bv);
+            let involves_tracked =
+                executor
+                    .function_symbolic_arguments
+                    .iter()
+                    .any(|(name, sym_var)| {
+                        if let SymbolicVar::Int(bv) = sym_var {
+                            let z3_name = format!("{:?}", bv);
+                            name.contains("slice_elem")
+                                && (expr0.contains(&z3_name) || expr1.contains(&z3_name))
+                        } else {
+                            false
+                        }
+                    });
+
+            if involves_tracked {
+                log!(
+                    executor.state.logger.clone(),
+                    "[OVERFLOW-CHECK] Checking for signed integer overflow in INT_ADD at 0x{:x} (operand width: {} bits)",
+                    executor.current_address.unwrap_or(0),
+                    output_size_bits
+                );
+
+                let bits = output_size_bits as u32;
+                let zero_bv = BV::from_u64(executor.context, 0, bits);
+                // Recompute the symbolic sum (same as result_symbolic above)
+                let result_bv = input0_bv.bvadd(&input1_bv);
+
+                // Condition 1: positive + positive = negative  (signed overflow)
+                let a_pos = input0_bv.bvsgt(&zero_bv);
+                let b_pos = input1_bv.bvsgt(&zero_bv);
+                let result_neg = result_bv.bvslt(&zero_bv);
+                let signed_overflow =
+                    z3::ast::Bool::and(executor.context, &[&a_pos, &b_pos, &result_neg]);
+
+                // Condition 2: negative + negative = non-negative  (signed underflow)
+                let a_neg = input0_bv.bvslt(&zero_bv);
+                let b_neg = input1_bv.bvslt(&zero_bv);
+                let result_nonneg = result_bv.bvsge(&zero_bv);
+                let signed_underflow =
+                    z3::ast::Bool::and(executor.context, &[&a_neg, &b_neg, &result_nonneg]);
+
+                // Either condition is a signed overflow
+                let overflow_condition =
+                    z3::ast::Bool::or(executor.context, &[&signed_overflow, &signed_underflow]);
+
+                // Use a fresh Solver (not Optimize) — we only need SAT/UNSAT + witness
+                let overflow_solver = z3::Solver::new(executor.context);
+                overflow_solver.assert(&overflow_condition);
+
+                // Assert accumulated path constraints so the solution is reachable
+                for constraint in &executor.constraint_vector {
+                    overflow_solver.assert(constraint);
+                }
+
+                let solve_start = std::time::Instant::now();
+                let solve_result = overflow_solver.check();
+                let solve_elapsed = solve_start.elapsed();
+
+                log!(
+                    executor.state.logger.clone(),
+                    "[Z3-SOLVER] Signed integer overflow check at INT_ADD took {:.3}s (result: {:?})",
+                    solve_elapsed.as_secs_f64(),
+                    solve_result
+                );
+
+                if solve_result == z3::SatResult::Sat {
+                    eprintln!(
+                        "[Z3-SOLVER] Integer overflow check took {:.3}s",
+                        solve_elapsed.as_secs_f64()
+                    );
+
+                    log!(executor.state.logger.clone(), "~~~~~~~~~~~");
+                    log!(
+                        executor.state.logger.clone(),
+                        "SATISFIABLE: Signed integer overflow detected in INT_ADD — \
+                         the {}-bit signed sum overflows (pos+pos=neg or neg+neg=pos)",
+                        output_size_bits
+                    );
+                    log!(executor.state.logger.clone(), "~~~~~~~~~~~");
+
+                    let model = overflow_solver.get_model().unwrap();
+                    let addr = executor.current_address.unwrap_or(0);
+
+                    let evaluation_content =
+                        crate::state::evaluate_z3::build_unified_evaluation_content(
+                            &model, executor, None, // no conditional flag
+                            None, // no null-check pointer
+                        );
+
+                    for line in evaluation_content.lines() {
+                        log!(executor.state.logger.clone(), "{}", line);
+                    }
+
+                    let elapsed = Some(crate::state::evaluate_z3::get_elapsed_since_start());
+                    if let Err(e) = crate::state::evaluate_z3::log_sat_state_to_file_and_terminal(
+                        &evaluation_content,
+                        &std::env::var("MODE").unwrap_or_else(|_| "unknown".to_string()),
+                        Some(addr),
+                        elapsed,
+                        Some(addr),
+                        Some("INT_ADD"),
+                        Some("Integer overflow: signed addition overflows (positive+positive=negative)"),
+                    ) {
+                        log!(
+                            executor.state.logger.clone(),
+                            "WARNING: Failed to write overflow SAT state to file: {}",
+                            e
+                        );
+                    }
+
+                    crate::state::evaluate_z3::report_vulnerability(
+                        &mut executor.state.logger.clone(),
+                        "Integer overflow in addition",
+                        addr,
+                        &[
+                            "Opcode: INT_ADD",
+                            &format!(
+                                "The {}-bit signed sum overflows (positive+positive=negative)",
+                                output_size_bits
+                            ),
+                            "More details in: results/FOUND_SAT_STATE.txt",
+                        ],
+                    );
+                }
+            }
+        }
+    }
+    // ── End integer overflow check ──────────────────────────────────────
 
     // Handle the result based on the output varnode
     executor.handle_output(instruction.output.as_ref(), result_value.clone())?;
@@ -2218,6 +2386,151 @@ pub fn handle_int_mult(executor: &mut ConcolicExecutor, instruction: Inst) -> Re
         "*** The result of INT_MULT is: {:?}\n",
         result_concrete
     );
+
+    // ── Integer overflow check ──────────────────────────────────────────
+    // For multiplications involving tracked symbolic variables, check
+    // whether the full double-width product can differ from the truncated
+    // result.  This detects silent unsigned overflow in languages like Go
+    // where wrapping is the default and no runtime panic occurs.
+    //
+    // Strategy: zero-extend both operands to 2×N bits, multiply at full
+    // width, and ask Z3: "can the upper N bits be non-zero?"
+    // A SAT answer means there exists an input that causes overflow.
+    if !executor.function_symbolic_arguments.is_empty() && output_size_bits >= 32 {
+        let input0_bv = input0_var.get_symbolic_value_bv(executor.context);
+        let input1_bv = input1_var.get_symbolic_value_bv(executor.context);
+
+        // Fast path: skip if both operands are Z3 numeral constants
+        // (no symbolic component → overflow is a fixed property, not input-dependent)
+        if input0_bv.as_u64().is_none() || input1_bv.as_u64().is_none() {
+            // Check whether any tracked symbolic variable appears in either operand
+            let expr0 = format!("{:?}", input0_bv);
+            let expr1 = format!("{:?}", input1_bv);
+            let involves_tracked =
+                executor
+                    .function_symbolic_arguments
+                    .iter()
+                    .any(|(_, sym_var)| {
+                        if let SymbolicVar::Int(bv) = sym_var {
+                            let z3_name = format!("{:?}", bv);
+                            expr0.contains(&z3_name) || expr1.contains(&z3_name)
+                        } else {
+                            false
+                        }
+                    });
+
+            if involves_tracked {
+                log!(
+                    executor.state.logger.clone(),
+                    "[OVERFLOW-CHECK] Checking for integer overflow in INT_MULT at 0x{:x} (operand width: {} bits)",
+                    executor.current_address.unwrap_or(0),
+                    output_size_bits
+                );
+
+                // Zero-extend both operands to double width
+                let double_width = output_size_bits * 2;
+                let wide_input0 = input0_bv.zero_ext(output_size_bits);
+                let wide_input1 = input1_bv.zero_ext(output_size_bits);
+                let wide_product = wide_input0.bvmul(&wide_input1);
+
+                // Extract the upper half — if it can be non-zero, the N-bit
+                // multiplication overflows (the result wraps).
+                let upper_half = wide_product.extract(double_width - 1, output_size_bits);
+                let zero_upper = BV::from_u64(executor.context, 0, output_size_bits);
+                let overflow_condition = upper_half._eq(&zero_upper).not();
+
+                // Use a fresh Solver (not Optimize) — we only need SAT/UNSAT + witness
+                let overflow_solver = z3::Solver::new(executor.context);
+                overflow_solver.assert(&overflow_condition);
+
+                // Assert accumulated path constraints so the solution is reachable
+                for constraint in &executor.constraint_vector {
+                    overflow_solver.assert(constraint);
+                }
+
+                let solve_start = std::time::Instant::now();
+                let solve_result = overflow_solver.check();
+                let solve_elapsed = solve_start.elapsed();
+
+                log!(
+                    executor.state.logger.clone(),
+                    "[Z3-SOLVER] Integer overflow check at INT_MULT took {:.3}s (result: {:?})",
+                    solve_elapsed.as_secs_f64(),
+                    solve_result
+                );
+
+                if solve_result == z3::SatResult::Sat {
+                    eprintln!(
+                        "[Z3-SOLVER] Integer overflow check took {:.3}s",
+                        solve_elapsed.as_secs_f64()
+                    );
+
+                    log!(executor.state.logger.clone(), "~~~~~~~~~~~");
+                    log!(
+                        executor.state.logger.clone(),
+                        "SATISFIABLE: Integer overflow detected in INT_MULT — \
+                         the {}-bit product differs from the {}-bit product",
+                        double_width,
+                        output_size_bits
+                    );
+                    log!(executor.state.logger.clone(), "~~~~~~~~~~~");
+
+                    let model = overflow_solver.get_model().unwrap();
+                    let addr = executor.current_address.unwrap_or(0);
+
+                    // Build evaluation content (re-uses the same Z3 model format
+                    // as NULL-check and CBranch reports)
+                    let evaluation_content =
+                        crate::state::evaluate_z3::build_unified_evaluation_content(
+                            &model, executor, None, // no conditional flag
+                            None, // no null-check pointer
+                        );
+
+                    // Log to execution_log
+                    for line in evaluation_content.lines() {
+                        log!(executor.state.logger.clone(), "{}", line);
+                    }
+
+                    // Write to FOUND_SAT_STATE.txt
+                    let elapsed = Some(crate::state::evaluate_z3::get_elapsed_since_start());
+                    if let Err(e) = crate::state::evaluate_z3::log_sat_state_to_file_and_terminal(
+                        &evaluation_content,
+                        &std::env::var("MODE").unwrap_or_else(|_| "unknown".to_string()),
+                        Some(addr), // panic address
+                        elapsed,
+                        Some(addr), // instruction address
+                        Some("INT_MULT"),
+                        Some(
+                            "Integer overflow: the full-width product \
+                                 differs from the truncated product",
+                        ),
+                    ) {
+                        log!(
+                            executor.state.logger.clone(),
+                            "WARNING: Failed to write overflow SAT state to file: {}",
+                            e
+                        );
+                    }
+
+                    // Report to terminal and execution log
+                    crate::state::evaluate_z3::report_vulnerability(
+                        &mut executor.state.logger.clone(),
+                        "Integer overflow in multiplication",
+                        addr,
+                        &[
+                            "Opcode: INT_MULT",
+                            &format!(
+                                "The {}-bit product differs from the {}-bit product",
+                                double_width, output_size_bits
+                            ),
+                            "More details in: results/FOUND_SAT_STATE.txt",
+                        ],
+                    );
+                }
+            }
+        }
+    }
+    // ── End integer overflow check ──────────────────────────────────────
 
     // Handle the result based on the output varnode
     executor.handle_output(instruction.output.as_ref(), result_value.clone())?;

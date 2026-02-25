@@ -27,7 +27,9 @@ use serde::{Deserialize, Serialize};
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
+        if ($logger).is_enabled() {
         writeln!($logger, $($arg)*).unwrap();
+        }
     }};
 }
 

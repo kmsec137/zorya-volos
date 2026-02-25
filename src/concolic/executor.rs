@@ -10,6 +10,7 @@ use std::fmt;
 use std::io::Write;
 use std::process;
 use std::sync::MutexGuard;
+use std::time::Instant;
 
 use super::executor_bool;
 use super::executor_callother;
@@ -39,7 +40,9 @@ use crate::state::runtime_info::RuntimeGOffsets;
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
-        writeln!($logger, $($arg)*).unwrap();
+        if ($logger).is_enabled() {
+            writeln!($logger, $($arg)*).unwrap();
+        }
     }};
 }
 
@@ -53,12 +56,14 @@ pub struct ConcolicExecutor<'ctx> {
     pub instruction_counter: usize,
     pub unique_variables: BTreeMap<String, ConcolicVar<'ctx>>, // Stores unique variables and their values
     pub pcode_internal_lines_to_be_jumped: i64, // known line number of the current instruction in the pcode file, usefull for branch instructions
-    pub initialiazed_var: BTreeMap<String, u64>, // check if the variable has been initialized before using it
+    pub initialiazed_var: BTreeMap<u64, u64>, // check if the variable has been initialized before using it
     pub inside_jump_table: bool, // check if the current instruction is handling a jump table
     pub trace_logger: Logger,
     pub function_symbolic_arguments: BTreeMap<String, SymbolicVar<'ctx>>, // this is used to store the symbolic arguments of the binary (os.args) or the function (RSI, RDX, RCX, R8, R9 etc.)
     pub constraint_vector: Vec<Bool<'ctx>>, // Vector to collect constraints on tracked symbolic variables
-    pub overlay_state: Option<OverlayState<'ctx>>, // Overlay state for exploring untaken paths without modifying base state
+    pub overlay_state: Option<crate::state::OverlayState<'ctx>>, // Overlay state for exploring untaken paths without modifying base state
+    pub null_check_cache: std::collections::HashMap<String, (bool, usize)>, // Per-variable cache: maps symbolic variable name → (was_sat, constraint_len). If was_sat=true the variable is permanently skipped (vulnerability already reported). If was_sat=false it is re-checked only when constraint_len changes. For Go struct pointers this is pre-seeded with (false, 0) at initialization so the solver is never invoked.
+    pub start_time: Instant, // Execution start time for elapsed time tracking
 }
 
 impl<'ctx> ConcolicExecutor<'ctx> {
@@ -84,6 +89,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             function_symbolic_arguments: BTreeMap::new(),
             constraint_vector: Vec::new(),
             overlay_state: None, // No overlay by default
+            null_check_cache: std::collections::HashMap::new(),
+            start_time: Instant::now(),
         })
     }
 
@@ -224,7 +231,9 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     }
 
     /// Read memory with overlay support
-    /// If overlay mode is active, reads from overlay first, then falls back to base
+    /// If overlay mode is active, reads from overlay first, then falls back to base.
+    /// The symbolic component is a per-byte `Vec<Option<Arc<BV>>>` (one 8-bit BV per byte),
+    /// matching the storage convention of `MemoryX86_64::read_memory`.
     pub fn read_memory_overlay_aware(
         &mut self,
         address: u64,
@@ -240,16 +249,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     // SAFETY: Region exists and won't be modified during overlay operation
                     let region = unsafe { &*region_ptr };
 
-                    if let Some((concrete, symbolic_opt)) =
+                    // read_memory now returns per-byte symbolic data directly — no conversion
+                    // or replication needed.  Previously the single word-level BV returned here
+                    // was replicated with `vec![Some(sym); size]`, which caused all byte
+                    // positions to carry the byte-0 symbolic and produced the
+                    // #x0808080808080808 fill-pattern on reads of base-inherited addresses.
+                    if let Some((concrete, symbolic_per_byte)) =
                         overlay.read_memory(address, size, region)
                     {
-                        // Convert Option<Arc<BV>> to Vec<Option<Arc<BV>>>
-                        let symbolic_vec = if let Some(sym) = symbolic_opt {
-                            vec![Some(sym); size]
-                        } else {
-                            vec![None; size]
-                        };
-                        return Ok((concrete, symbolic_vec));
+                        return Ok((concrete, symbolic_per_byte));
                     }
                 }
             }
@@ -541,19 +549,18 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         Some(current_addr),
                         None,
                         None, // No panic addr for non-CBranch instructions
+                        None, // No NULL check for panic functions
                     )
                     .map_err(|e| e.to_string())?;
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-                    log!(
-                        self.state.logger.clone(),
-                        "Attempt to execute 'runtime.nilPanic' detected at address 0x{}.",
-                        current_addr_hex
+                    crate::state::evaluate_z3::report_vulnerability(
+                        &mut self.state.logger.clone(),
+                        "Go runtime.nilPanic — nil pointer dereference",
+                        current_addr,
+                        &[
+                            "Detection method: Exploring the not taken path and Reaching a Panic/Abort/Fatal call site",
+                            "You are trying to dereference a nil pointer.",
+                        ],
                     );
-                    log!(
-                        self.state.logger.clone(),
-                        "You are trying to dereference a nil pointer."
-                    );
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     process::exit(0);
                 }
                 if symbol_name == "runtime.nilMapPanic" {
@@ -565,19 +572,18 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         Some(current_addr),
                         None,
                         None, // No panic addr for non-CBranch instructions
+                        None, // No NULL check for panic functions
                     )
                     .map_err(|e| e.to_string())?;
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-                    log!(
-                        self.state.logger.clone(),
-                        "Attempt to execute 'runtime.nilMapPanic' detected at address 0x{}.",
-                        current_addr_hex
+                    crate::state::evaluate_z3::report_vulnerability(
+                        &mut self.state.logger.clone(),
+                        "Go runtime.nilMapPanic — nil map access",
+                        current_addr,
+                        &[
+                            "Detection method: Exploring the not taken path and Reaching a Panic/Abort/Fatal call site",
+                            "You are trying to add an entry to a nil map.",
+                        ],
                     );
-                    log!(
-                        self.state.logger.clone(),
-                        "You are trying to add an entry to a nil map."
-                    );
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     process::exit(0);
                 }
                 if symbol_name == "runtime._panic" {
@@ -589,25 +595,30 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         Some(current_addr),
                         None,
                         None, // No panic addr for non-CBranch instructions
+                        None, // No NULL check for panic functions
                     )
                     .map_err(|e| e.to_string())?;
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-                    log!(
-                        self.state.logger.clone(),
-                        "Attempt to execute 'runtime._panic' detected at address 0x{}.",
-                        current_addr_hex
+                    crate::state::evaluate_z3::report_vulnerability(
+                        &mut self.state.logger.clone(),
+                        "Go runtime._panic — generic panic",
+                        current_addr,
+                        &[
+                            "Detection method: Exploring the not taken path and Reaching a Panic/Abort/Fatal call site",
+                            "The Go runtime triggered a generic panic.",
+                        ],
                     );
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     process::exit(0);
                 }
                 if symbol_name == "runtime.recordForPanic" {
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-                    log!(
-                        self.state.logger.clone(),
-                        "Encountered 'runtime.recordForPanic' at address 0x{} (may not be a real panic).",
-                        current_addr_hex
+                    crate::state::evaluate_z3::report_vulnerability(
+                        &mut self.state.logger.clone(),
+                        "Go runtime.recordForPanic (may not be a real panic)",
+                        current_addr,
+                        &[
+                            "Detection method: Exploring the not taken path and Reaching a Panic/Abort/Fatal call site",
+                            "Encountered runtime.recordForPanic — this may be benign.",
+                        ],
                     );
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     // process::exit(0);
                 }
                 if symbol_name == "runtime.slicePanic" {
@@ -619,15 +630,18 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         Some(current_addr),
                         None,
                         None, // No panic addr for non-CBranch instructions
+                        None, // No NULL check for panic functions
                     )
                     .map_err(|e| e.to_string())?;
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-                    log!(
-                        self.state.logger.clone(),
-                        "Attempt to execute 'runtime.slicePanic' detected at address 0x{}.",
-                        current_addr_hex
+                    crate::state::evaluate_z3::report_vulnerability(
+                        &mut self.state.logger.clone(),
+                        "Go runtime.slicePanic — slice bounds out of range",
+                        current_addr,
+                        &[
+                            "Detection method: Exploring the not taken path and Reaching a Panic/Abort/Fatal call site",
+                            "Slice index is out of bounds.",
+                        ],
                     );
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     process::exit(0);
                 }
                 if symbol_name == "runtime.lookupPanic" {
@@ -639,19 +653,18 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         Some(current_addr),
                         None,
                         None, // No panic addr for non-CBranch instructions
+                        None, // No NULL check for panic functions
                     )
                     .map_err(|e| e.to_string())?;
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-                    log!(
-                        self.state.logger.clone(),
-                        "Attempt to execute 'runtime.lookupPanic' detected at address 0x{}.",
-                        current_addr_hex
+                    crate::state::evaluate_z3::report_vulnerability(
+                        &mut self.state.logger.clone(),
+                        "Go runtime.lookupPanic — index out of bounds",
+                        current_addr,
+                        &[
+                            "Detection method: Exploring the not taken path and Reaching a Panic/Abort/Fatal call site",
+                            "You are trying to access an array or slice out of bounds.",
+                        ],
                     );
-                    log!(
-                        self.state.logger.clone(),
-                        "You are trying to access an array or slice out of bounds."
-                    );
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     process::exit(0);
                 }
                 if symbol_name == "runtime.runtimePanic" {
@@ -663,15 +676,18 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         Some(current_addr),
                         None,
                         None, // No panic addr for non-CBranch instructions
+                        None, // No NULL check for panic functions
                     )
                     .map_err(|e| e.to_string())?;
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-                    log!(
-                        self.state.logger.clone(),
-                        "Attempt to execute 'runtime.runtimePanic' detected at address 0x{}.",
-                        current_addr_hex
+                    crate::state::evaluate_z3::report_vulnerability(
+                        &mut self.state.logger.clone(),
+                        "Go runtime.runtimePanic — generic runtime panic",
+                        current_addr,
+                        &[
+                            "Detection method: Exploring the not taken path and Reaching a Panic/Abort/Fatal call site",
+                            "The Go runtime triggered a generic runtime panic.",
+                        ],
                     );
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     process::exit(0);
                 }
                 if symbol_name == "runtime.chanMakePanic" {
@@ -683,19 +699,18 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         Some(current_addr),
                         None,
                         None, // No panic addr for non-CBranch instructions
+                        None, // No NULL check for panic functions
                     )
                     .map_err(|e| e.to_string())?;
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-                    log!(
-                        self.state.logger.clone(),
-                        "Attempt to execute 'runtime.chanMakePanic' detected at address 0x{}.",
-                        current_addr_hex
+                    crate::state::evaluate_z3::report_vulnerability(
+                        &mut self.state.logger.clone(),
+                        "Go runtime.chanMakePanic — channel creation error",
+                        current_addr,
+                        &[
+                            "Detection method: Exploring the not taken path and Reaching a Panic/Abort/Fatal call site",
+                            "You are trying to create a new channel that is too big.",
+                        ],
                     );
-                    log!(
-                        self.state.logger.clone(),
-                        "You are trying to create a new channel that is too big."
-                    );
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     process::exit(0);
                 }
                 if symbol_name == "runtime.negativeShiftPanic" {
@@ -707,16 +722,18 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                         Some(current_addr),
                         None,
                         None, // No panic addr for non-CBranch instructions
+                        None, // No NULL check for panic functions
                     )
                     .map_err(|e| e.to_string())?;
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-                    log!(
-                        self.state.logger.clone(),
-                        "Attempt to execute 'runtime.negativeShiftPanic' detected at address 0x{}.",
-                        current_addr_hex
+                    crate::state::evaluate_z3::report_vulnerability(
+                        &mut self.state.logger.clone(),
+                        "Go runtime.negativeShiftPanic — negative shift",
+                        current_addr,
+                        &[
+                            "Detection method: Exploring the not taken path and Reaching a Panic/Abort/Fatal call site",
+                            "The shift value is negative.",
+                        ],
                     );
-                    log!(self.state.logger.clone(), "The shift value is negative.");
-                    log!(self.state.logger.clone(), "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
                     process::exit(0);
                 }
             }
@@ -1143,12 +1160,19 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 };
                 let extracted_value = (*value >> bit_offset) & mask;
 
-                // Symbolic extraction
+                // Symbolic extraction — only simplify if the source is non-trivial.
+                // For a numeral BV, extract() already produces a numeral and
+                // simplify() is a wasted O(tree_size) walk.
                 let symbolic_bv = original_register.symbolic.to_bv(self.context);
                 let high_bit = (bit_offset + u64::from(bit_size) - 1) as u32;
                 let low_bit = bit_offset as u32;
 
-                let extracted_symbolic = symbolic_bv.extract(high_bit, low_bit).simplify();
+                let raw_extract = symbolic_bv.extract(high_bit, low_bit);
+                let extracted_symbolic = if raw_extract.as_u64().is_some() {
+                    raw_extract
+                } else {
+                    raw_extract.simplify()
+                };
 
                 if extracted_symbolic.get_z3_ast().is_null() {
                     return Err("Symbolic extraction resulted in an invalid state".to_string());
@@ -1169,13 +1193,17 @@ impl<'ctx> ConcolicExecutor<'ctx> {
 
                 // Extract the symbolic value
                 if let SymbolicVar::LargeInt(ref bvs) = original_register.symbolic {
-                    let extracted_symbolic = CpuState::extract_symbolic_bits_from_large_int(
+                    let raw_sym = CpuState::extract_symbolic_bits_from_large_int(
                         self.context,
                         bvs,
                         start_bit,
                         end_bit,
-                    )
-                    .simplify();
+                    );
+                    // Only simplify non-trivial symbolic expressions
+                    let extracted_symbolic = match &raw_sym {
+                        SymbolicVar::Int(bv) if bv.as_u64().is_some() => raw_sym,
+                        _ => raw_sym.simplify(),
+                    };
 
                     Ok(ConcolicEnum::CpuConcolicValue(CpuConcolicValue {
                         concrete: extracted_concrete,
@@ -1283,12 +1311,17 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 };
                 let extracted_value = (*value >> bit_offset) & mask;
 
-                // Symbolic extraction explicitly simplified
+                // Symbolic extraction — skip simplify for numeral BVs
                 let symbolic_bv = original_register.symbolic.to_bv(&cpu_state_guard.ctx);
                 let high_bit = (bit_offset + u64::from(bit_size) - 1) as u32;
                 let low_bit = bit_offset as u32;
 
-                let extracted_symbolic = symbolic_bv.extract(high_bit, low_bit).simplify();
+                let raw_extract = symbolic_bv.extract(high_bit, low_bit);
+                let extracted_symbolic = if raw_extract.as_u64().is_some() {
+                    raw_extract
+                } else {
+                    raw_extract.simplify()
+                };
 
                 if extracted_symbolic.get_z3_ast().is_null() {
                     return Err("Symbolic extraction resulted in an invalid state".to_string());
@@ -1309,13 +1342,17 @@ impl<'ctx> ConcolicExecutor<'ctx> {
 
                 // Use extract_symbolic_bits_from_large_int to extract the symbolic value
                 if let SymbolicVar::LargeInt(ref bvs) = original_register.symbolic {
-                    let extracted_symbolic = CpuState::extract_symbolic_bits_from_large_int(
+                    let raw_sym = CpuState::extract_symbolic_bits_from_large_int(
                         &cpu_state_guard.ctx,
                         bvs,
                         start_bit,
                         end_bit,
-                    )
-                    .simplify();
+                    );
+                    // Only simplify non-trivial symbolic expressions
+                    let extracted_symbolic = match &raw_sym {
+                        SymbolicVar::Int(bv) if bv.as_u64().is_some() => raw_sym,
+                        _ => raw_sym.simplify(),
+                    };
 
                     Ok(ConcolicEnum::CpuConcolicValue(CpuConcolicValue {
                         concrete: extracted_concrete,
@@ -1862,12 +1899,25 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         Ok(())
     }
 
-    // Helper function to check if any tracked symbolic variable is present in the symbolic expression
+    // Helper function to check if any tracked symbolic variable is present in a Bool expression
+    // NOTE: Avoid simplify() - it can hang on complex expressions!
     fn contains_tracked_symbolic_variable(&self, symbolic_expr: &Bool<'ctx>) -> bool {
-        let expr_string = format!("{:?}", symbolic_expr.simplify());
+        // Quick check: if no symbolic arguments tracked, return false immediately
+        if self.function_symbolic_arguments.is_empty() {
+            return false;
+        }
 
-        for (arg_name, _) in self.function_symbolic_arguments.iter() {
-            if expr_string.contains(arg_name) {
+        // Format without simplify to avoid hanging
+        let expr_string = format!("{:?}", symbolic_expr);
+
+        // Match on the formatted Z3 BV name (e.g. "b_ptr!141"), not the
+        // HashMap key (e.g. "b.header"), to avoid spurious substring hits.
+        for (arg_name, sym_var) in self.function_symbolic_arguments.iter() {
+            let z3_name = match sym_var {
+                SymbolicVar::Int(bv) => format!("{:?}", bv),
+                _ => arg_name.clone(),
+            };
+            if expr_string.contains(&z3_name) {
                 log!(
                     self.state.logger.clone(),
                     "Found tracked symbolic variable '{}' in expression",
@@ -1877,6 +1927,138 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             }
         }
         false
+    }
+
+    // Check if a symbolic pointer address could be NULL using the Z3 solver.
+    // Active on both the concrete path and during overlay execution.
+    //
+    // DESIGN: We check the BASE tracked variable for NULL, not the derived
+    // expression.  If b_ptr can be nil, then any address derived from it
+    // (b_ptr + offset, b_ptr[index], etc.) is also an invalid memory access.
+    // This avoids false positives (solver finding exotic non-nil values that
+    // make a complex expression zero) and avoids calling simplify() entirely.
+    //
+    // The only Z3 operation is format!("{:?}") once to find which tracked
+    // variable appears in the expression.  No simplify() is ever called.
+    //
+    // Per-variable caching ensures the solver is invoked at most once per
+    // tracked variable per constraint level.  For Go struct-pointer arguments
+    // (method receivers) the cache is pre-seeded with UNSAT at initialization,
+    // so the solver is never invoked at all.
+    fn check_symbolic_null_dereference(
+        &mut self,
+        pointer_concolic: &ConcolicEnum<'ctx>,
+        pointer_concrete: u64,
+        operation: &str,
+        current_inst: &Inst,
+    ) -> bool {
+        if self.function_symbolic_arguments.is_empty() {
+            return false;
+        }
+
+        let pointer_bv = pointer_concolic.get_symbolic_value_bv(self.context);
+
+        // Fast path: if the BV is a Z3 numeral constant, no tracked variable
+        // is involved — skip without formatting the expression tree.
+        if pointer_bv.as_u64().is_some() {
+            return false;
+        }
+
+        // Format the expression ONCE to find which tracked variable appears.
+        // We intentionally NEVER call simplify() — it can be very expensive
+        // for large expression trees and is unnecessary: we check the BASE
+        // tracked variable for NULL, not the derived expression.
+        let expr_string = format!("{:?}", pointer_bv);
+
+        // Find the tracked symbolic variable whose Z3 name appears in the
+        // expression.  We match on the *formatted BV* (e.g. "b_ptr!141"),
+        // NOT on the HashMap key (e.g. "b.header"), because:
+        //   • Keys may contain dots while Z3 names use underscores
+        //   • Short keys ("b") could spuriously match inside longer
+        //     Z3 names ("b_ptr!141")
+        // Using the full Z3 name eliminates both problems.
+        let mut base_var_name: Option<String> = None;
+        let mut base_bv: Option<BV<'ctx>> = None;
+
+        for (arg_name, sym_var) in self.function_symbolic_arguments.iter() {
+            if let SymbolicVar::Int(bv) = sym_var {
+                let bv_z3_name = format!("{:?}", bv);
+                if expr_string.contains(&bv_z3_name) {
+                    base_var_name = Some(arg_name.clone());
+                    base_bv = Some(bv.clone());
+                    break;
+                }
+            }
+        }
+
+        let (base_var_name, base_bv) = match (base_var_name, base_bv) {
+            (Some(name), Some(bv)) => (name, bv),
+            _ => return false, // No tracked variable — purely concrete or untracked expression
+        };
+
+        // Use the base variable name as cache key — all derived expressions
+        // from the same base share one NULL check result.
+        let current_constraint_len = self.constraint_vector.len();
+        if let Some(&(sat, cached_len)) = self.null_check_cache.get(&base_var_name) {
+            if sat {
+                // Already confirmed as nullable — vulnerability already reported
+                return false;
+            }
+            if cached_len == current_constraint_len {
+                // Already checked UNSAT at this constraint level — skip
+                return false;
+            }
+        }
+
+        log!(
+            self.state.logger.clone(),
+            "[NULL-CHECK] Checking if '{}' can be NULL ({} at 0x{:x}, concrete ptr: 0x{:x}, constraints: {})",
+            base_var_name,
+            operation,
+            self.current_address.unwrap_or(0),
+            pointer_concrete,
+            current_constraint_len
+        );
+
+        let addr_hex = self.current_address.unwrap_or(0);
+
+        match crate::state::evaluate_z3::evaluate_args_z3(
+            self,
+            current_inst,
+            None,           // no conditional flag for NULL checks
+            Some(addr_hex), // instruction address
+            None,           // no branch target
+            Some(addr_hex), // use current address as "panic address" for SAT file
+            Some(&base_bv), // check if the base variable can be NULL
+        ) {
+            Ok(true) => {
+                // SAT — vulnerability found and already reported by evaluate_args_z3
+                self.null_check_cache
+                    .insert(base_var_name, (true, current_constraint_len));
+                return true;
+            }
+            Ok(false) => {
+                // UNSAT or Unknown — base variable cannot be NULL
+                let var_name_for_log = base_var_name.clone();
+                self.null_check_cache
+                    .insert(base_var_name, (false, current_constraint_len));
+                log!(
+                    self.state.logger.clone(),
+                    "[NULL-CHECK] '{}' cannot be NULL (UNSAT)",
+                    var_name_for_log
+                );
+                return false;
+            }
+            Err(e) => {
+                log!(
+                    self.state.logger.clone(),
+                    "[NULL-CHECK] Error checking '{}': {}",
+                    base_var_name.clone(),
+                    e
+                );
+                return false;
+            }
+        }
     }
 
     // Handle conditional branch operation
@@ -1955,7 +2137,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         };
 
         // Check if condition involves tracked symbolic variables and add to constraint vector
-        if self.contains_tracked_symbolic_variable(&condition_symbolic.simplify()) {
+        // NOTE: Avoid calling simplify() - it can hang on complex expressions!
+        if self.contains_tracked_symbolic_variable(&condition_symbolic) {
             log!(
                 self.state.logger.clone(),
                 "Branch condition involves tracked symbolic variables, adding to constraint vector"
@@ -1969,17 +2152,15 @@ impl<'ctx> ConcolicExecutor<'ctx> {
 
             log!(
                 self.state.logger.clone(),
-                "Adding constraint to vector ({}): {:?}",
-                path_description,
-                condition_symbolic.simplify()
+                "Adding constraint to vector ({})",
+                path_description
             );
 
             self.constraint_vector.push(condition_symbolic);
         } else {
             log!(
                 self.state.logger.clone(),
-                "Branch condition does not involve tracked symbolic variables, skipping : {}",
-                condition_symbolic.simplify()
+                "Branch condition does not involve tracked symbolic variables, skipping"
             );
         }
 
@@ -2335,55 +2516,51 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             pointer_offset_concrete
         );
 
-        // Check if the pointer offset is NULL
+        // Check if the pointer offset is concretely NULL
         if pointer_offset_concrete == 0 {
-            log!(
-                self.state.logger.clone(),
-                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+            crate::state::evaluate_z3::report_vulnerability(
+                &mut self.state.logger.clone(),
+                "Concrete NULL pointer dereference (LOAD)",
+                self.current_address.unwrap_or(0),
+                &[
+                    "Opcode: LOAD",
+                    "Detection method: Exploring the current path with a symbolic check on the pointer",
+                    "The pointer is concretely zero — execution halted.",
+                ],
             );
-            log!(
-                self.state.logger.clone(),
-                "VULN: Zorya caught the dereferencing of a NULL pointer, execution stopped!"
-            );
-            log!(
-                self.state.logger.clone(),
-                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
-            );
-            println!("/!\\ Dereferencing NULL pointer detected, execution halted!\n");
             process::exit(1);
         }
+
+        // Symbolic NULL check: if the address is symbolic, ask the solver if it could be zero.
+        // This detects cases where the concrete path is non-null but an alternative input
+        // could make the pointer NULL (e.g. Go nil interface/map dereferences).
+        // For Go struct pointers with a non-null constraint this is a no-op (cache hit).
+        self.check_symbolic_null_dereference(
+            &pointer_offset_concolic,
+            pointer_offset_concrete,
+            "LOAD",
+            &instruction,
+        );
 
         // Check for dangling pointer access (freed stack frame)
         if let Some((func_addr, frame_rsp)) =
             self.check_dangling_pointer_access(pointer_offset_concrete)
         {
-            log!(
-                self.state.logger.clone(),
-                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+            crate::state::evaluate_z3::report_vulnerability(
+                &mut self.state.logger.clone(),
+                "Dangling pointer access — Use-After-Free (LOAD)",
+                self.current_address.unwrap_or(0),
+                &[
+                    "Opcode: LOAD",
+                    "Detection method: Exploring the current path with a symbolic check on the pointer",
+                    &format!("Accessed address: 0x{:x}", pointer_offset_concrete),
+                    &format!(
+                        "Memory belongs to freed stack frame from function 0x{:x} (frame RSP: 0x{:x})",
+                        func_addr, frame_rsp
+                    ),
+                    "This is a Use-After-Free vulnerability (stack memory reuse).",
+                ],
             );
-            log!(
-                self.state.logger.clone(),
-                "VULN: Zorya detected DANGLING POINTER access at address 0x{:x}",
-                pointer_offset_concrete
-            );
-            log!(
-                self.state.logger.clone(),
-                "      Memory belongs to freed stack frame from function 0x{:x} (frame RSP: 0x{:x})",
-                func_addr, frame_rsp
-            );
-            log!(
-                self.state.logger.clone(),
-                "      This is a Use-After-Free vulnerability (stack memory reuse)"
-            );
-            log!(
-                self.state.logger.clone(),
-                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
-            );
-            println!(
-                "\n/!\\ DANGLING POINTER (Use-After-Free) detected at 0x{:x}, execution halted!",
-                pointer_offset_concrete
-            );
-            println!("    Freed stack frame from function 0x{:x}\n", func_addr);
         }
 
         // Cases covered : 'void a(void) { b(); c(); }', do the 'reinitialization'' of variables used by b() when b() finishes.
@@ -2787,62 +2964,57 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         );
 
         // Mark the memory address as initialized
-        self.initialiazed_var.insert(
-            format!("{:x}", pointer_offset_concrete),
-            self.current_address.unwrap_or(0),
-        );
+        self.initialiazed_var
+            .insert(pointer_offset_concrete, self.current_address.unwrap_or(0));
         log!(
             self.state.logger.clone(),
             "Marked address 0x{:x} as initialized",
             pointer_offset_concrete
         );
 
-        // Validate pointer to prevent null dereference
+        // Validate pointer to prevent null dereference (concrete check)
         if pointer_offset_concrete == 0 {
-            log!(
-                self.state.logger.clone(),
-                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+            crate::state::evaluate_z3::report_vulnerability(
+                &mut self.state.logger.clone(),
+                "Concrete NULL pointer dereference (STORE)",
+                self.current_address.unwrap_or(0),
+                &[
+                    "Opcode: STORE",
+                    "Detection method: Exploring the current path with a symbolic check on the pointer",
+                    "The pointer is concretely zero — execution halted.",
+                ],
             );
-            log!(
-                self.state.logger.clone(),
-                "VULN: Null pointer dereference attempt detected, execution halted!"
-            );
-            log!(
-                self.state.logger.clone(),
-                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
-            );
-            println!("/!\\ Dereferencing NULL pointer detected, execution halted!\n");
             process::exit(1);
         }
+
+        // Symbolic NULL check: detect if the store address could be NULL on an alternative path.
+        // For Go struct pointers with a non-null constraint this is a no-op (cache hit).
+        self.check_symbolic_null_dereference(
+            &pointer_offset_var,
+            pointer_offset_concrete,
+            "STORE",
+            &instruction,
+        );
 
         // Check for dangling pointer access (freed stack frame)
         if let Some((func_addr, frame_rsp)) =
             self.check_dangling_pointer_access(pointer_offset_concrete)
         {
-            log!(
-                self.state.logger.clone(),
-                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+            crate::state::evaluate_z3::report_vulnerability(
+                &mut self.state.logger.clone(),
+                "Dangling pointer write — Use-After-Free (STORE)",
+                self.current_address.unwrap_or(0),
+                &[
+                    "Opcode: STORE",
+                    "Detection method: Exploring the current path with a symbolic check on the pointer",
+                    &format!("Written address: 0x{:x}", pointer_offset_concrete),
+                    &format!(
+                        "Memory belongs to freed stack frame from function 0x{:x} (frame RSP: 0x{:x})",
+                        func_addr, frame_rsp
+                    ),
+                    "This is a Use-After-Free vulnerability (stack memory reuse).",
+                ],
             );
-            log!(
-                self.state.logger.clone(),
-                "VULN: Zorya detected DANGLING POINTER WRITE at address 0x{:x}",
-                pointer_offset_concrete
-            );
-            log!(
-                self.state.logger.clone(),
-                "      Memory belongs to freed stack frame from function 0x{:x} (frame RSP: 0x{:x})",
-                func_addr, frame_rsp
-            );
-            log!(
-                self.state.logger.clone(),
-                "      This is a Use-After-Free vulnerability (stack memory reuse)"
-            );
-            log!(
-                self.state.logger.clone(),
-                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
-            );
-            println!("\n/!\\ DANGLING POINTER WRITE (Use-After-Free) detected at 0x{:x}, execution halted!", pointer_offset_concrete);
-            println!("    Freed stack frame from function 0x{:x}\n", func_addr);
         }
 
         // Fetch the data to be stored
@@ -2957,10 +3129,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     }
 
                     // Mark each chunk address as initialized
-                    self.initialiazed_var.insert(
-                        format!("{:x}", chunk_addr),
-                        self.current_address.unwrap_or(0),
-                    );
+                    self.initialiazed_var
+                        .insert(chunk_addr, self.current_address.unwrap_or(0));
                 }
 
                 // Log the complete operation
@@ -2981,9 +3151,24 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     *value
                 };
 
+                // Only call Z3 simplify() on truly symbolic expressions.
+                // For concrete-only BVs (the common case: no tracked variable
+                // involved) simplify() is a no-op but still walks the AST.
+                // Skipping it for numerals avoids an O(tree_size) traversal on
+                // every store — the single biggest per-store cost.
+                let store_symbolic = if data_to_store_symbolic.as_u64().is_some() {
+                    // Leaf BV (numeral) — already canonical, skip simplify.
+                    data_to_store_symbolic.clone()
+                } else {
+                    // Complex symbolic expression — simplify to prevent
+                    // unbounded tree growth through store→load→extract→concat
+                    // cycles.
+                    data_to_store_symbolic.simplify()
+                };
+
                 let mem_value = MemoryValue {
                     concrete: truncated_value,
-                    symbolic: data_to_store_symbolic.simplify().clone(),
+                    symbolic: store_symbolic,
                     size: data_size_bits,
 						  volos: self.new_volos()
                 };
@@ -2992,7 +3177,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     self.state.logger.clone(),
                     "Creating single MemoryValue: concrete=0x{:x}, symbolic={:?}, size={}",
                     mem_value.concrete,
-                    mem_value.symbolic.simplify(),
+                    mem_value.symbolic,
                     mem_value.size
                 );
 
@@ -3028,11 +3213,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             }
         }
 
-        // Verification: Read back the stored value(s) to verify correctness
-        // Verification: Read back the stored value(s) to verify correctness
+        // Verification: Read back the stored value(s) to verify correctness.
+        // Only compiled in debug builds — in release this block is a no-op.
+        // Previously this ran unconditionally on every store, doubling memory I/O
+        // (one write + one full read + one Z3 BV construction per store).
+        #[cfg(debug_assertions)]
         match &full_concrete_value {
             ConcreteVar::LargeInt(chunks) => {
-                // Verify each chunk was stored correctly
                 for (i, &expected_chunk) in chunks.iter().enumerate() {
                     let chunk_addr = pointer_offset_concrete + (i as u64 * 8);
                     let read_result = if self.is_overlay_mode() {
@@ -3045,19 +3232,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                     };
                     match read_result {
                         Ok(stored_value) => {
-                            // Convert ConcreteVar to u64 for comparison
                             let stored_concrete_value = match stored_value.concrete {
                                 ConcreteVar::Int(val) => val,
                                 ConcreteVar::LargeInt(ref values) => {
-                                    if values.is_empty() {
-                                        0
-                                    } else {
-                                        values[0]
-                                    }
+                                    values.first().copied().unwrap_or(0)
                                 }
                                 _ => 0,
                             };
-
                             log!(
                                 self.state.logger.clone(),
                                 "Verified chunk {} at 0x{:x}: stored=0x{:x}, expected=0x{:x}",
@@ -3066,7 +3247,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                                 stored_concrete_value,
                                 expected_chunk
                             );
-
                             if stored_concrete_value != expected_chunk {
                                 return Err(format!(
                                     "Chunk {} verification failed: expected 0x{:x}, got 0x{:x}",
@@ -3084,15 +3264,12 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 }
             }
             ConcreteVar::Int(expected_value) => {
-                // Truncate expected value to match the size (same as we did for storage)
                 let truncated_expected = if data_size_bits < 64 {
                     let mask = (1u64 << data_size_bits) - 1;
                     expected_value & mask
                 } else {
                     *expected_value
                 };
-
-                // Verify single value was stored correctly
                 let read_result = if self.is_overlay_mode() {
                     self.read_value_overlay_mode(pointer_offset_concrete, data_size_bits)
                         .map_err(|e| MemoryError::Other(e))
@@ -3105,19 +3282,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 };
                 match read_result {
                     Ok(stored_value) => {
-                        // Convert ConcreteVar to u64 for comparison
                         let stored_concrete_value = match stored_value.concrete {
                             ConcreteVar::Int(val) => val,
                             ConcreteVar::LargeInt(ref values) => {
-                                if values.is_empty() {
-                                    0
-                                } else {
-                                    values[0]
-                                }
+                                values.first().copied().unwrap_or(0)
                             }
                             _ => 0,
                         };
-
                         log!(
                             self.state.logger.clone(),
                             "Verified single value at 0x{:x}: stored=0x{:x}, expected=0x{:x}",
@@ -3125,7 +3296,6 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                             stored_concrete_value,
                             truncated_expected
                         );
-
                         if stored_concrete_value != truncated_expected {
                             return Err(format!(
                                 "Single value verification failed: expected 0x{:x}, got 0x{:x}",
@@ -3147,9 +3317,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         // Checks if the used variable has been initialized in the current scope (C code vulnerability)
         // TODO: handle more complex cases in C code by checking RSP register (that both CALL and RET use)
         // Mark the memory address as initialized
-        let address_str = format!("{:x}", pointer_offset_concrete);
         self.initialiazed_var
-            .insert(address_str.clone(), self.current_address.unwrap_or(0));
+            .insert(pointer_offset_concrete, self.current_address.unwrap_or(0));
         log!(
             self.state.logger.clone(),
             "Marked address 0x{:x} as initialized",
@@ -3907,10 +4076,11 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             // Remove variables associated with this function's scope from initialized variables
             for var_address in &finished_frame.local_variables {
                 self.initialiazed_var.remove(var_address);
-                self.state.concolic_vars.remove(var_address);
+                let var_hex = format!("{:x}", var_address);
+                self.state.concolic_vars.remove(&var_hex);
                 log!(
                     self.state.logger.clone(),
-                    "Cleaned up variable at address 0x{} ",
+                    "Cleaned up variable at address 0x{:x} ",
                     var_address
                 );
             }
@@ -4029,6 +4199,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
                 // Sync primitives
                 "sync.",
                 "sync/atomic.",
+                "internal/sync.",
                 // Reflection
                 "reflect.",
                 // Common stdlib packages that manage memory/goroutines internally
