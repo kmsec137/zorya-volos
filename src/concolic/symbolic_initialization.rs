@@ -162,6 +162,8 @@ pub fn clear_go_stack_preempt<'a>(executor: &mut ConcolicExecutor<'a>) -> bool {
         stackguard0_addr,
         64,
         &mut executor.state.logger.clone(),
+		 executor.new_volos(),
+		 true
     ) {
         Ok(val) => val.concrete.to_u64(),
         Err(e) => {
@@ -197,6 +199,8 @@ pub fn clear_go_stack_preempt<'a>(executor: &mut ConcolicExecutor<'a>) -> bool {
         stack_lo_addr,
         64,
         &mut executor.state.logger.clone(),
+			executor.new_volos(),
+			true
     ) {
         Ok(val) => val.concrete.to_u64(),
         Err(e) => {
@@ -223,7 +227,7 @@ pub fn clear_go_stack_preempt<'a>(executor: &mut ConcolicExecutor<'a>) -> bool {
     match executor
         .state
         .memory
-        .write_value(stackguard0_addr, &new_stackguard)
+        .write_value(stackguard0_addr, &new_stackguard, true)
     {
         Ok(()) => {
             log!(
@@ -1572,7 +1576,7 @@ fn initialize_slice_element_memory<'a>(
             match executor
                 .state
                 .memory
-                .read_value(ptr_addr, 64, &mut executor.state.logger.clone())
+                .read_value(ptr_addr, 64, &mut executor.state.logger.clone(), executor.new_volos(), true)
             {
                 Ok(val) => val.concrete.to_u64(),
                 Err(e) => {
@@ -1591,7 +1595,7 @@ fn initialize_slice_element_memory<'a>(
             match executor
                 .state
                 .memory
-                .read_value(len_addr, 64, &mut executor.state.logger.clone())
+                .read_value(len_addr, 64, &mut executor.state.logger.clone(), executor.new_volos(), true)
             {
                 Ok(val) => val.concrete.to_u64(),
                 Err(e) => {
@@ -1632,7 +1636,7 @@ fn initialize_slice_element_memory<'a>(
 
         // Write ptr symbolic value to memory
         let ptr_mem_value = MemoryValue::new(ptr_concrete, ptr_bv.clone(), 64);
-        if let Err(e) = executor.state.memory.write_value(ptr_addr, &ptr_mem_value) {
+        if let Err(e) = executor.state.memory.write_value(ptr_addr, &ptr_mem_value, true) {
             log!(
                 executor.state.logger,
                 "Failed to write string ptr symbolic: {}",
@@ -1642,7 +1646,7 @@ fn initialize_slice_element_memory<'a>(
 
         // Write len symbolic value to memory
         let len_mem_value = MemoryValue::new(len_concrete, len_bv.clone(), 64);
-        if let Err(e) = executor.state.memory.write_value(len_addr, &len_mem_value) {
+        if let Err(e) = executor.state.memory.write_value(len_addr, &len_mem_value, true) {
             log!(
                 executor.state.logger,
                 "Failed to write string len symbolic: {}",
@@ -2150,7 +2154,7 @@ fn symbolize_struct_field<'a>(
     match executor
         .state
         .memory
-        .read_value(field_addr, bit_size, &mut executor.state.logger.clone())
+        .read_value(field_addr, bit_size, &mut executor.state.logger.clone(), executor.new_volos(), true)
     {
         Ok(current_value) => {
             // Create symbolic variable
@@ -2180,7 +2184,7 @@ fn symbolize_struct_field<'a>(
             match executor
                 .state
                 .memory
-                .write_value(field_addr, &symbolic_mem_value)
+                .write_value(field_addr, &symbolic_mem_value, true)
             {
                 Ok(()) => {
                     log!(
@@ -2239,7 +2243,7 @@ fn symbolize_go_interface_field<'a>(
     match executor
         .state
         .memory
-        .read_value(field_addr, 64, &mut executor.state.logger.clone())
+        .read_value(field_addr, 64, &mut executor.state.logger.clone(), executor.new_volos(), true)
     {
         Ok(current_itab) => {
             executor
@@ -2247,7 +2251,7 @@ fn symbolize_go_interface_field<'a>(
                 .insert(itab_name.clone(), SymbolicVar::Int(itab_bv.clone()));
 
             let itab_mem = MemoryValue::new(current_itab.concrete.to_u64(), itab_bv.clone(), 64);
-            if let Err(e) = executor.state.memory.write_value(field_addr, &itab_mem) {
+            if let Err(e) = executor.state.memory.write_value(field_addr, &itab_mem, true) {
                 log!(
                     executor.state.logger,
                     "✗ Failed to write itab symbolic for '{}': {:?}",
@@ -2276,7 +2280,7 @@ fn symbolize_go_interface_field<'a>(
     match executor
         .state
         .memory
-        .read_value(data_addr, 64, &mut executor.state.logger.clone())
+        .read_value(data_addr, 64, &mut executor.state.logger.clone(), executor.new_volos(), true)
     {
         Ok(current_data) => {
             executor
@@ -2284,7 +2288,7 @@ fn symbolize_go_interface_field<'a>(
                 .insert(data_name.clone(), SymbolicVar::Int(data_bv.clone()));
 
             let data_mem = MemoryValue::new(current_data.concrete.to_u64(), data_bv.clone(), 64);
-            if let Err(e) = executor.state.memory.write_value(data_addr, &data_mem) {
+            if let Err(e) = executor.state.memory.write_value(data_addr, &data_mem, true) {
                 log!(
                     executor.state.logger,
                     "✗ Failed to write data symbolic for '{}': {:?}",
@@ -2381,7 +2385,7 @@ fn symbolize_fixed_array_field<'a>(
             break;
         }
 
-        match executor.state.memory.read_byte(byte_addr) {
+        match executor.state.memory.read_byte(byte_addr, executor.new_volos(), true) {
             Ok(current_byte) => {
                 let byte_bv = BV::fresh_const(executor.context, &byte_var_name, 8);
 
@@ -2391,7 +2395,7 @@ fn symbolize_fixed_array_field<'a>(
 
                 let symbolic_mem = MemoryValue::new(current_byte.concrete.to_u64(), byte_bv, 8);
 
-                if let Err(e) = executor.state.memory.write_value(byte_addr, &symbolic_mem) {
+                if let Err(e) = executor.state.memory.write_value(byte_addr, &symbolic_mem, true) {
                     log!(
                         executor.state.logger,
                         "WARNING: Failed to write byte {}: {}",
@@ -2449,7 +2453,7 @@ fn symbolize_slice_field<'a>(
     match executor
         .state
         .memory
-        .read_value(field_addr, 64, &mut executor.state.logger.clone())
+        .read_value(field_addr, 64, &mut executor.state.logger.clone(), executor.new_volos(), true)
     {
         Ok(current_ptr) => {
             executor
@@ -2457,7 +2461,7 @@ fn symbolize_slice_field<'a>(
                 .insert(ptr_name.clone(), SymbolicVar::Int(ptr_bv.clone()));
 
             let ptr_mem = MemoryValue::new(current_ptr.concrete.to_u64(), ptr_bv.clone(), 64);
-            if let Err(e) = executor.state.memory.write_value(field_addr, &ptr_mem) {
+            if let Err(e) = executor.state.memory.write_value(field_addr, &ptr_mem, true) {
                 log!(
                     executor.state.logger,
                     "✗ Failed to write ptr symbolic for '{}': {:?}",
@@ -2492,7 +2496,7 @@ fn symbolize_slice_field<'a>(
     match executor
         .state
         .memory
-        .read_value(len_addr, 64, &mut executor.state.logger.clone())
+        .read_value(len_addr, 64, &mut executor.state.logger.clone(), executor.new_volos(), true)
     {
         Ok(current_len) => {
             executor
@@ -2500,7 +2504,7 @@ fn symbolize_slice_field<'a>(
                 .insert(len_name.clone(), SymbolicVar::Int(len_bv.clone()));
 
             let len_mem = MemoryValue::new(current_len.concrete.to_u64(), len_bv.clone(), 64);
-            if let Err(e) = executor.state.memory.write_value(len_addr, &len_mem) {
+            if let Err(e) = executor.state.memory.write_value(len_addr, &len_mem, true) {
                 log!(
                     executor.state.logger,
                     "✗ Failed to write len symbolic for '{}': {:?}",
@@ -2535,7 +2539,7 @@ fn symbolize_slice_field<'a>(
     match executor
         .state
         .memory
-        .read_value(cap_addr, 64, &mut executor.state.logger.clone())
+        .read_value(cap_addr, 64, &mut executor.state.logger.clone(), executor.new_volos(), true)
     {
         Ok(current_cap) => {
             executor
@@ -2543,7 +2547,7 @@ fn symbolize_slice_field<'a>(
                 .insert(cap_name.clone(), SymbolicVar::Int(cap_bv.clone()));
 
             let cap_mem = MemoryValue::new(current_cap.concrete.to_u64(), cap_bv.clone(), 64);
-            if let Err(e) = executor.state.memory.write_value(cap_addr, &cap_mem) {
+            if let Err(e) = executor.state.memory.write_value(cap_addr, &cap_mem, true) {
                 log!(
                     executor.state.logger,
                     "✗ Failed to write cap symbolic for '{}': {:?}",
