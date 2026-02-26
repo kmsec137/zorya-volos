@@ -58,11 +58,9 @@ get_main_addr() {
 
 # Binary must be provided as the first argument
 if [[ -z "$1" || "$1" == -* ]]; then
-<<<<<<< HEAD
   echo "Usage: zorya <binary> [--lang go|c|c++] [--compiler tinygo|gc] \\"
   echo "                [--thread-scheduling all-threads|main-only] \\"
   echo "                [--mode start|main|function|custom <addr>] [--arg …]"
-=======
   echo -e "${CYAN}${BOLD}Zorya - Next Generation Concolic Analysis${RESET}"
   echo ""
   echo -e "${BOLD}Usage:${RESET}"
@@ -86,7 +84,6 @@ if [[ -z "$1" || "$1" == -* ]]; then
   echo -e "  zorya ./myprogram --lang go --compiler tinygo --mode main --arg \"input\""
   echo -e "  zorya /path/to/binary --lang c --mode function 0x401000"
   echo ""
->>>>>>> upstream/main
   exit 1
 fi
 
@@ -150,36 +147,7 @@ while [[ $# -gt 0 ]]; do
       done
       ;;
     --help|-h)
-<<<<<<< HEAD
       exec "$0" -h ;;
-=======
-      echo -e "${CYAN}${BOLD}Zorya - Next Generation Concolic Analysis${RESET}"
-      echo ""
-      echo -e "${BOLD}Usage:${RESET}"
-      echo -e "  zorya ${GREEN}<binary>${RESET} [options]"
-      echo ""
-      echo -e "${BOLD}Options:${RESET}"
-      echo -e "  ${GREEN}--lang${RESET} <go|c|c++>              Source language of the binary"
-      echo -e "  ${GREEN}--compiler${RESET} <tinygo|gc>         Go compiler used (required for Go binaries)"
-      echo -e "  ${GREEN}--mode${RESET} <start|main|function|custom> [addr]"
-      echo -e "                                  Analysis starting point"
-      echo -e "  ${GREEN}--thread-scheduling${RESET} <all-threads|main-only>"
-      echo -e "                                  Thread scheduling strategy (Go GC only)"
-      echo -e "  ${GREEN}--arg${RESET} <args...>               Binary arguments"
-      echo -e "  ${GREEN}--negate-path-exploration${RESET}     Enable path negation (default: yes)"
-      echo -e "  ${GREEN}--no-negate-path-exploration${RESET}  Disable path negation"
-      echo -e "  ${GREEN}--force-pty${RESET}                   Run GDB inside a PTY (makes the target"
-      echo -e "                                  process see a real terminal)"
-      echo -e "  ${GREEN}--help${RESET}, ${GREEN}-h${RESET}                    Show this help message"
-      echo ""
-      echo -e "${BOLD}Examples:${RESET}"
-      echo -e "  zorya ./myprogram --lang go --compiler tinygo --mode main --arg \"input\""
-      echo -e "  zorya /path/to/binary --lang c --mode function 0x401000"
-      echo -e "  zorya ../tests/crashme --lang go --compiler gc --mode main --arg \"test\" --negate"
-      echo ""
-      exit 0
-      ;;
->>>>>>> upstream/main
     *)
       echo "Unknown flag: $1"; exit 1 ;;
   esac
