@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+// SPDX-FileCopyrightText: 2026 Keith Makan Security Consultancy Pty Ltd - WORLD CLASS CYBERSECURITY
 
 SPDX-License-Identifier: Apache-2.0
 -->

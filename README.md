@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+// SPDX-FileCopyrightText: 2026 Keith Makan Security Consultancy Pty Ltd - WORLD CLASS CYBERSECURITY
 
 SPDX-License-Identifier: Apache-2.0
 -->
@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
   
 </p>
 
-ZORYA VOLOS IS A FORK OF ZORYA OWNED AND MAINTAINED BY KEITH MAKAN SECURITY CONSULTANCY (PTY) LTD
+ZORYA VOLOS IS A WIP FORK OF ZORYA OWNED AND MAINTAINED BY KEITH MAKAN SECURITY CONSULTANCY (PTY) LTD
 
 What KMSEC has added:
 - volos memory interaction tracking system
@@ -57,6 +57,7 @@ arg_values.joinAddress: 44f1c0, Symbol: runtime.writeErrData -> data=0x4bea46 (r
 [VOLOS] WRITE MEM @[0x7FFFFFFFD7F8] <= ['[1, 0, 0, 0]'] Volos { thread_id: 371056, access_type: Write, locks_held: [] }
 
 ```
+
 Zorya is a **concolic execution framework** designed to detect **logic-related bugs, language-specific vulnerabilities, and identify new patterns of security issues mainly in Go binaries**. The analysis begins by generating CPU register and memory dumps using ```gdb```. Zorya loads these dumps to initialize execution from a specified starting address, ensuring a realistic and accurate representation of the program state.
 
 The core methodology involves **translating binary code into Ghidra's raw P-Code**, a low-level intermediate representation, which is subsequently parsed for precise execution path analysis. Other programs like C programs can also be translated to P-Code.
@@ -275,15 +276,3 @@ Zorya has been developeped and tested for now on Linux Ubuntu as the execution e
   <img src="doc/roadmap-zorya_october-2025.png" alt="Roadmap" width="900"/>
 </div>
 
-## :memo: Academic work
-You can find the preprint of our first paper on ArXiv under the title : [Exposing Go's Hidden Bugs: A Novel Concolic Framework](https://arxiv.org/abs/2505.20183v1).
-
-```
-@article{gorna2025exposing,
-  title={Exposing Go's Hidden Bugs: A Novel Concolic Framework},
-  author={Gorna, Karolina and Iooss, Nicolas and Seurin, Yannick and Khatoun, Rida},
-  journal={arXiv preprint arXiv:2505.20183},
-  year={2025}
-  note={Accepted at the 23rd IEEE/ACIS International Conference on Software Engineering, Management and Applications (SERA 2025)}
-}
-```
