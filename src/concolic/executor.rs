@@ -827,6 +827,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     }
 
 	 pub fn new_volos(&self) ->  Volos {
+		  //let go_id = &self.get_current_goroutine_id();
 	     let tm = &self.state.thread_manager.lock().unwrap();
 	     let cur_tid = &tm.current_tid; 
 	     let cur_locks_held = &tm.threads.get(cur_tid).unwrap().locks_held;

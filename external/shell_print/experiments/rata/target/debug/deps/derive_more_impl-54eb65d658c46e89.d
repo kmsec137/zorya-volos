@@ -1,0 +1,9 @@
+/home/kh3m/Research/PhD/volos-repo/rebased/zorya-volos/external/shell_print/experiments/rata/target/debug/deps/derive_more_impl-54eb65d658c46e89.d: /home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/lib.rs /home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/utils.rs /home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/is_variant.rs /home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/../README.md /home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/../doc/is_variant.md
+
+/home/kh3m/Research/PhD/volos-repo/rebased/zorya-volos/external/shell_print/experiments/rata/target/debug/deps/libderive_more_impl-54eb65d658c46e89.so: /home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/lib.rs /home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/utils.rs /home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/is_variant.rs /home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/../README.md /home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/../doc/is_variant.md
+
+/home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/lib.rs:
+/home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/utils.rs:
+/home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/is_variant.rs:
+/home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/../README.md:
+/home/kh3m/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/derive_more-impl-2.1.1/src/../doc/is_variant.md:

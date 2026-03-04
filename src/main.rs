@@ -851,6 +851,7 @@ fn execute_instructions_from(
 
         let current_rip_hex = format!("{:x}", current_rip);
 
+        //println!("[VOLOS] [@0x{:x}] :=> {:?} ",current_rip,instructions.get(0)); 
         // This block is only to get data about the execution in results/execution_trace.txt
         if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) {
 				if symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2" {
@@ -863,7 +864,7 @@ fn execute_instructions_from(
 						        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
 						            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
 											print!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name, value.concrete);
-											console_log.shell_print(&format!(" got lock function call {:?} mutex=0x{:x}",symbol_name, value.concrete), ShellMode::NewLine);
+											//console_log.shell_print(&format!(" [@0x{:x} ]got lock function call {:?} mutex=0x{:x}",current_rip,symbol_name, value.concrete), ShellMode::NewLine);
 											let mut thread_manager = executor.state.thread_manager.lock().unwrap();
 										   let current_tid = thread_manager.current_tid;
 										   let mut current_thread: &mut OSThread<'_> = thread_manager.current_thread_mut().unwrap();
@@ -871,7 +872,7 @@ fn execute_instructions_from(
 											locks.push(value.concrete.to_u64());
 											let len = locks.len();
 											println!(" ... thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
-											console_log.shell_print(&format!(" thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1)),ShellMode::InPlace);
+											//console_log.shell_print(&format!(" thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1)),ShellMode::InPlace);
 											//&format!("Layer integrity: {}% | Status: {}", i * 2, status),
 						            }
 						        }

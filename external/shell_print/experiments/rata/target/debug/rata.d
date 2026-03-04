@@ -1,0 +1,1 @@
+/home/kh3m/Research/PhD/volos-repo/rebased/zorya-volos/external/shell_print/experiments/rata/target/debug/rata: /home/kh3m/Research/PhD/volos-repo/rebased/zorya-volos/external/shell_print/experiments/rata/src/main.rs
