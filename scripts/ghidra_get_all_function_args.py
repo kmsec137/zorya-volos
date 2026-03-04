@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-// SPDX-FileCopyrightText: 2026 Keith Makan Security Consultancy Pty Ltd - WORLD CLASS CYBERSECURITY
+# SPDX-FileCopyrightText: 2026 Keith Makan Security Consultancy Pty Ltd - WORLD CLASS CYBERSECURITY
 #
 # SPDX-License-Identifier: Apache-2.0
 
