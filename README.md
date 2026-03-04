@@ -17,6 +17,25 @@ SPDX-License-Identifier: Apache-2.0
   
 </p>
 
+<pre>
+:::::::::    ...    :::::::...-:.     ::-.:::.     
+'`````;;; .;;;;;;;. ;;;;``;;;;';;.   ;;;;';;`;;    
+    .n[[',[[     \[[,[[[,/[[['  '[[,[[[' ,[[ '[[,  
+  ,$$P"  $$$,     $$$$$$$$$c      c$$"  c$$$cc$$$c 
+,888bo,_ "888,_ _,88P888b "88bo,,8P"`    888   888,
+ `""*UMM   "YMMMMMP" MMMM   "W"mM"       YMM   ""` 
+:::      .::.  ...      :::         ...      .::::::. 
+';;,   ,;;;'.;;;;;;;.   ;;;      .;;;;;;;.  ;;;`    ` 
+ \[[  .[[/ ,[[     \[[, [[[     ,[[     \[[,'[==/[[[[,
+  Y$c.$$"  $$$,     $$$ $$'     $$$,     $$$  '''    $
+   Y88P    "888,_ _,88Po88oo,.__"888,_ _,88P 88b    dP
+    MP       "YMMMMMP" """"YUMMM  "YMMMMMP"   "YMmMY" 
+
+- KMSEC (PTY) LTD.
+
+</pre>
+
+
 ZORYA VOLOS IS A WIP FORK OF ZORYA OWNED AND MAINTAINED BY KEITH MAKAN SECURITY CONSULTANCY (PTY) LTD
 
 What KMSEC has added:
