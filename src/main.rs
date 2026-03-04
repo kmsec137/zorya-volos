@@ -853,22 +853,26 @@ fn execute_instructions_from(
 
         // This block is only to get data about the execution in results/execution_trace.txt
         if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) {
+				/*
 				if symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2" {
               //console_log.shell_print(&format!(" encountered {} operation",symbol_name),ShellMode::NewLine); 
+              println!(" encountered {} operation",symbol_name); 
+					/*
               if let Some((_, args)) = function_args_map.get(&current_rip) {
 						let cpu = executor.state.cpu_state.lock().unwrap();
 						for (arg_name, reg_names, _arg_type) in args {
 						    for reg_name in reg_names {
 						        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
 						            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-											//println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
-											console_log.shell_print(&format!(" got lock function call {:?} mutex=0x{:x}",symbol_name, value.concrete), ShellMode::NewLine);
+											print!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name, value.concrete);
+											//console_log.shell_print(&format!(" got lock function call {:?} mutex=0x{:x}",symbol_name, value.concrete), ShellMode::NewLine);
 											let mut thread_manager = executor.state.thread_manager.lock().unwrap();
 										   let current_tid = thread_manager.current_tid;
 										   let mut current_thread: &mut OSThread<'_> = thread_manager.current_thread_mut().unwrap();
 											let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
 											locks.push(value.concrete.to_u64());
 											let len = locks.len();
+											println!(" ... thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
 											console_log.shell_print(&format!(" thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1)),ShellMode::InPlace);
 											//&format!("Layer integrity: {}% | Status: {}", i * 2, status),
 						            }
@@ -878,15 +882,16 @@ fn execute_instructions_from(
 				
 
 					}
+					*/
 
 
             }
 
 
 
-
 			if symbol_name == "runtime.unlock2" {
               println!("[VOLOS] encountered {} operation",symbol_name); 
+					/*
               if let Some((_, args)) = function_args_map.get(&current_rip) {
 						let cpu = executor.state.cpu_state.lock().unwrap();
 						for (_arg_name, reg_names, _arg_type) in args {
@@ -911,12 +916,12 @@ fn execute_instructions_from(
 						}
 				
 
-					}
+					}*/
 						
 				}
 
 
-
+				*/
             if symbol_name == "strconv.Atoi" || symbol_name == "strconv.ParseInt" {
                 if let Some((_, args)) = function_args_map.get(&current_rip) {
                     // Find a string argument (two locations: ptr,len). Prefer exact type match.
@@ -1007,6 +1012,7 @@ fn execute_instructions_from(
                     }
                 }
             }
+
             if let Some((_, args)) = function_args_map.get(&current_rip) {
                 let mut arg_values = Vec::new();
                 let cpu = executor.state.cpu_state.lock().unwrap();
