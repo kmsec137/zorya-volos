@@ -58,10 +58,28 @@ use zorya::state::thread_manager::{CheckpointType, ThreadStatus};
 use zorya::target_info::GLOBAL_TARGET_INFO;
 use zorya::{teprintln, tprintln};
 
+use std::sync::{RwLock, OnceLock};
+
+fn tag_storage() -> &'static RwLock<String> {
+    static INSTANCE: OnceLock<RwLock<String>> = OnceLock::new();
+    INSTANCE.get_or_init(|| RwLock::new("INIT".to_string()))
+}
+
+pub fn update_tag(new_tag: &str) {
+    let mut tag = tag_storage().write().unwrap();
+    *tag = new_tag.to_string();
+}
+
+pub fn read_tag() -> String {
+    tag_storage().read().unwrap().clone()
+}
+
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
         if ($logger).is_enabled() {
-        writeln!($logger, $($arg)*).unwrap();
+        //writeln!($logger, $($arg)*).unwrap();
+        //writeln!($logger, $($arg)*).unwrap();
+			writeln!($logger, "[{}] {}", read_tag(), format_args!($($arg)*)).unwrap();
         }
     }};
 }
@@ -747,6 +765,7 @@ fn execute_instructions_from(
     binary_path: &str,
 ) {
     let mut current_rip = start_address;
+
     let mut local_line_number: i64 = 0; // Index of the current instruction within the block
 	 let console_log = ShellPrint::new("<blue>VOLOS </blue>");
     let end_address: u64 = 0x0; //no specific end address
@@ -826,7 +845,10 @@ fn execute_instructions_from(
     }
 
     while let Some(instructions) = instructions_map.get(&current_rip) {
+
+	 	  update_tag(&format_args!("ZORYA @<{}>", current_rip).to_string());
         if current_rip == end_address {
+	 	  	   update_tag(&format_args!("ZORYA @<{}>", current_rip).to_string());
             log!(
                 executor.state.logger,
                 "END ADDRESS 0x{:x} REACHED, STOP THE EXECUTION",
@@ -835,6 +857,7 @@ fn execute_instructions_from(
             break; // Stop execution if end address is reached
         }
 
+	 	  update_tag(&format_args!("ZORYA @<{}>", current_rip).to_string());
         log!(
             executor.state.logger,
             "*******************************************"
@@ -856,14 +879,16 @@ fn execute_instructions_from(
         if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) {
 				if symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2" {
               //console_log.shell_print(&format!(" encountered {} operation",symbol_name),ShellMode::NewLine); 
-              println!(" encountered {} operation",symbol_name); 
+	 	  	     update_tag(&format_args!("ZORYA @<{}>", current_rip).to_string());
+              log!(executor.state.logger," encountered {} operation",symbol_name); 
               if let Some((_, args)) = function_args_map.get(&current_rip) {
 						let cpu = executor.state.cpu_state.lock().unwrap();
 						for (arg_name, reg_names, _arg_type) in args {
 						    for reg_name in reg_names {
 						        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
 						            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-											print!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name, value.concrete);
+	 	  	   							update_tag(&format_args!("ZORYA @<{}>", current_rip).to_string());
+											log!(executor.state.logger,"[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name, value.concrete);
 											//console_log.shell_print(&format!(" [@0x{:x} ]got lock function call {:?} mutex=0x{:x}",current_rip,symbol_name, value.concrete), ShellMode::NewLine);
 											let mut thread_manager = executor.state.thread_manager.lock().unwrap();
 										   let current_tid = thread_manager.current_tid;
@@ -871,7 +896,8 @@ fn execute_instructions_from(
 											let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
 											locks.push(value.concrete.to_u64());
 											let len = locks.len();
-											println!(" ... thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
+	 	  	   							update_tag(&format_args!("ZORYA @<{}>", current_rip).to_string());
+											log!(executor.state.logger,"... thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
 											//console_log.shell_print(&format!(" thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1)),ShellMode::InPlace);
 											//&format!("Layer integrity: {}% | Status: {}", i * 2, status),
 						            }

@@ -1,118 +1,152 @@
-use std::io::{self, Write};
-use std::thread;
-use std::time::Duration;
-//use rand::Rng; 
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{
+    backend::{Backend, CrosstermBackend},
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Row, Table},
+    Frame, Terminal,
+};
+use std::{error::Error, io, time::{Duration, Instant}};
 
-mod console_carapace {
-    use std::io::{self, Write};
+// --- State Management ---
+struct App {
+    logs: Vec<String>,
+    // Memory map now stores (Total Hits, Last Interaction Type)
+    memory_map: Vec<(u64, InteractionType)>,
+    stats: Stats,
+}
 
-    pub struct ConsoleCarapace {
-        memory_stats: Vec<u64>,
-        chunks: usize,
+#[derive(Clone, Copy, PartialEq)]
+enum InteractionType { None, Read, Write }
+
+struct Stats {
+    block_count: u64,
+    stack_depth: u32,
+    run_time: Duration,
+    mem_writes: u64,
+    mem_reads: u64,
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let mut app = App {
+        logs: vec!["[SYS] Zorya-Volos Kernel Hook Active".into()],
+        memory_map: vec![(0, InteractionType::None); 30],
+        stats: Stats {
+            block_count: 0,
+            stack_depth: 0,
+            run_time: Duration::default(),
+            mem_writes: 0,
+            mem_reads: 0,
+        },
+    };
+
+    let start_time = Instant::now();
+    loop {
+        terminal.draw(|f| ui(f, &app))?;
+
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if let KeyCode::Char('q') = key.code { break; }
+            }
+        }
+
+        // Simulate logic
+        app.stats.run_time = start_time.elapsed();
+        update_simulation(&mut app);
     }
 
-    impl ConsoleCarapace{
-        pub fn new(lines: usize) -> Self {
-            Self {
-                memory_stats: vec![0; lines],
-                chunks: lines,
-            }
-        }
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    Ok(())
+}
 
-        pub fn record_interaction(&mut self, address: u32) {
-            // Use u64 to prevent overflow when calculating 4GB range
-            let total_range = (u32::MAX as u64) + 1;
-            let chunk_size = total_range / self.chunks as u64;
-            let index = (address as u64 / chunk_size) as usize;
-            
-            if index < self.chunks {
-                self.memory_stats[index] += 1;
-            }
-        }
+fn update_simulation(app: &mut App) {
+    let mut rng = rand::rng();
+    app.stats.block_count += 1;
+    
+    // Random interaction
+    let idx = (rand::random::<u32>() as usize) % app.memory_map.len();
+    let is_write = rand::random::<bool>();
+    
+    if is_write {
+        app.stats.mem_writes += 1;
+        app.memory_map[idx] = (app.memory_map[idx].0 + 1, InteractionType::Write);
+    } else {
+        app.stats.mem_reads += 1;
+        app.memory_map[idx] = (app.memory_map[idx].0 + 1, InteractionType::Read);
+    }
 
-        pub fn render(&self, hex_addr: u32, hex_data: &[u8], event: &str) {
-            // ANSI: \x1b[2J clears screen, \x1b[H moves cursor to top-left
-            print!("\x1b[2J\x1b[H");
-
-            println!("\x1b[1;36m ZORYA-VOLOS | 4GB PROCESS MEMORY MAP\x1b[0m");
-            println!("{}", "━".repeat(70));
-
-            for i in 0..self.chunks {
-                let total_range = (u32::MAX as u64) + 1;
-                let start_addr = i as u64 * (total_range / self.chunks as u64);
-                
-                let hits = self.memory_stats[i];
-                let (glyph, color) = match hits {
-                    0 => ("░", "\x1b[2m"),       // Dim
-                    1..=5 => ("▒", "\x1b[34m"),   // Blue
-                    6..=15 => ("▓", "\x1b[33m"),  // Yellow
-                    _ => ("█", "\x1b[31m"),       // Red
-                };
-
-                let mut line = format!("0x{:08X} [{}{}{}\x1b[0m]", start_addr, color, glyph, color);
-
-                // UI Logic for the Right Pane
-                match i {
-                    2 => line.push_str("   \x1b[1;33m[ LIVE DATA FEED ]\x1b[0m"),
-                    3 => {
-                        let hex_row: String = hex_data.iter().map(|b| format!("{:02X} ", b)).collect();
-                        line.push_str(&format!("   0x{:08X}: {}", hex_addr, hex_row));
-                    },
-                    4 => {
-                        // is_ascii_graphic() checks if a byte is a printable character
-                        let ascii: String = hex_data.iter()
-                            .map(|&b| if b.is_ascii_graphic() { b as char } else { '.' })
-                            .collect();
-                        line.push_str(&format!("                | {} |", ascii));
-                    },
-                    7 => line.push_str(&format!("   \x1b[1mLAST EVENT:\x1b[0m \x1b[32m{}\x1b[0m", event)),
-                    8 if hits > 15 => line.push_str("   \x1b[5;31m!! HIGH LOAD DETECTED !!\x1b[0m"),
-                    _ => {}
-                }
-
-                println!("{}", line);
-            }
-            let _ = io::stdout().flush();
-        }
+    if app.stats.block_count % 50 == 0 {
+        app.logs.push(format!("[TRACE] Syscall at 0x{:08X}", rand::random::<u32>()));
     }
 }
-fn main() {
-    let mut monitor = console_carapace::ConsoleCarapace::new(25);
-    let mut iteration: u32 = 0;
 
-    // Hide cursor
-    print!("\x1b[?25l"); 
-    let _ = io::stdout().flush();
+fn ui(f: &mut Frame, app: &App) {
+    // 1. Split Screen into Top Half and Bottom Half (50/50)
+    let main_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(f.size());
 
-    loop {
-        let hot_zone: u32 = 0x40000000; 
+    // 2. Split Top Half (2/3 Stats, 1/3 Memory Map)
+    let top_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(66), Constraint::Percentage(34)])
+        .split(main_layout[0]);
+
+    // --- PANE 1: Stats (Top Left) ---
+	 let blocks = &app.stats.block_count.to_string();
+	 let stack_depth = &app.stats.stack_depth.to_string();
+	 let mem_reads = &app.stats.mem_reads.to_string();
+	 let mem_writes = &app.stats.mem_writes.to_string();
+    let stats_rows = vec![
+        //Row::new(vec!["Runtime:", format!("{:?}", app.stats.run_time.to_string())]),
+        Row::new(vec!["Blocks Executed:", blocks]),
+        Row::new(vec!["Stack Depth:", stack_depth]),
+        Row::new(vec!["Mem Reads:", mem_reads]),
+        Row::new(vec!["Mem Writes:", mem_writes]),
+    ];
+    let stats_table = Table::new(stats_rows, [Constraint::Length(20), Constraint::Min(10)])
+        .block(Block::default().title(" EXECUTION METRICS ").borders(Borders::ALL))
+        .style(Style::default().fg(Color::Cyan));
+    f.render_widget(stats_table, top_layout[0]);
+
+    // --- PANE 2: Memory Heatmap (Top Right) ---
+    let mem_items: Vec<ListItem> = app.memory_map.iter().enumerate().map(|(i, (hits, kind))| {
+        let addr = i as u64 * (0xFFFFFFFF / app.memory_map.len() as u64);
+        let type_tag = match kind {
+            InteractionType::Read => " (R)",
+            InteractionType::Write => " (W)",
+            _ => "    ",
+        };
+        let color = if *hits > 20 { Color::Red } else if *hits > 0 { Color::Yellow } else { Color::DarkGray };
         
-        for _ in 0..10 {
-            // FIX: Using the direct function instead of the method
-            // This avoids the 'gen' keyword conflict entirely
-            let addr: u32 = rand::random(); 
-            monitor.record_interaction(addr);
-        }
-        
-        // Bias some hits to the hot zone
-        monitor.record_interaction(hot_zone.wrapping_add(iteration % 0xFFFF));
+        ListItem::new(format!("0x{:08X} [{:03}]{}", addr, hits, type_tag))
+            .style(Style::default().fg(color))
+    }).collect();
+    
+    let mem_list = List::new(mem_items)
+        .block(Block::default().title(" MEM HEATMAP ").borders(Borders::ALL));
+    f.render_widget(mem_list, top_layout[1]);
 
-        // Generate fake hex data
-        let mut fake_hex = [0u8; 8];
-        // FIX: Using the direct fill function
-        rand::fill(&mut fake_hex);
-
-        let events = ["READ", "WRITE", "EXEC", "SYSCALL"];
-        let current_event = events[(iteration as usize) % events.len()];
-
-        monitor.render(0xDEADC0DE_u32.wrapping_add(iteration), &fake_hex, current_event);
-
-        iteration = iteration.wrapping_add(1);
-        thread::sleep(Duration::from_millis(150));
-
-        if iteration > 500 { break; } 
-    }
-
-    print!("\x1b[?25h"); // Show cursor again
-    println!("\nMonitor session ended.");
+    // --- PANE 3: Log Scroller (Bottom Half) ---
+    let log_height = main_layout[1].height as usize;
+    // Get last N logs, and reverse to show "scrolling up"
+    let logs: Vec<ListItem> = app.logs.iter().rev().take(log_height - 3)
+        .map(|msg| ListItem::new(msg.as_str())).collect();
+    
+    let log_block = List::new(logs)
+        .block(Block::default().title(" TRACE LOG ").borders(Borders::ALL))
+        .style(Style::default().fg(Color::White));
+    f.render_widget(log_block, main_layout[1]);
 }
