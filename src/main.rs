@@ -846,9 +846,9 @@ fn execute_instructions_from(
 
     while let Some(instructions) = instructions_map.get(&current_rip) {
 
-	 	  update_tag(&format_args!("ZORYA @<{}>", current_rip).to_string());
+	 	  update_tag(&format_args!("ZORYA @<0x{:x}>", current_rip).to_string());
         if current_rip == end_address {
-	 	  	   update_tag(&format_args!("ZORYA @<{}>", current_rip).to_string());
+	 	  		update_tag(&format_args!("ZORYA @<0x{:x}>", current_rip).to_string());
             log!(
                 executor.state.logger,
                 "END ADDRESS 0x{:x} REACHED, STOP THE EXECUTION",
@@ -857,7 +857,6 @@ fn execute_instructions_from(
             break; // Stop execution if end address is reached
         }
 
-	 	  update_tag(&format_args!("ZORYA @<{}>", current_rip).to_string());
         log!(
             executor.state.logger,
             "*******************************************"
@@ -879,7 +878,7 @@ fn execute_instructions_from(
         if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) {
 				if symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2" {
               //console_log.shell_print(&format!(" encountered {} operation",symbol_name),ShellMode::NewLine); 
-	 	  	     update_tag(&format_args!("ZORYA @<{}>", current_rip).to_string());
+	 	  	     update_tag(&format_args!("ZORYA @<0x{:x}>", current_rip).to_string());
               log!(executor.state.logger," encountered {} operation",symbol_name); 
               if let Some((_, args)) = function_args_map.get(&current_rip) {
 						let cpu = executor.state.cpu_state.lock().unwrap();
@@ -887,7 +886,7 @@ fn execute_instructions_from(
 						    for reg_name in reg_names {
 						        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
 						            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-	 	  	   							update_tag(&format_args!("ZORYA @<{}>", current_rip).to_string());
+	 	  	     							update_tag(&format_args!("ZORYA @<0x{:x}>", current_rip).to_string());
 											log!(executor.state.logger,"[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name, value.concrete);
 											//console_log.shell_print(&format!(" [@0x{:x} ]got lock function call {:?} mutex=0x{:x}",current_rip,symbol_name, value.concrete), ShellMode::NewLine);
 											let mut thread_manager = executor.state.thread_manager.lock().unwrap();
@@ -896,7 +895,7 @@ fn execute_instructions_from(
 											let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
 											locks.push(value.concrete.to_u64());
 											let len = locks.len();
-	 	  	   							update_tag(&format_args!("ZORYA @<{}>", current_rip).to_string());
+	 	  	     							update_tag(&format_args!("ZORYA @<0x{:x}>", current_rip).to_string());
 											log!(executor.state.logger,"... thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
 											//console_log.shell_print(&format!(" thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1)),ShellMode::InPlace);
 											//&format!("Layer integrity: {}% | Status: {}", i * 2, status),

@@ -54,3 +54,30 @@ impl ShellPrint {
     }
 }
 
+fn print_table(rows: Vec<Vec<String>>) {
+    if rows.is_empty() { return; }
+
+    // 1. Determine the maximum number of columns across all rows
+    let col_count = rows.iter().map(|row| row.len()).max().unwrap_or(0);
+    
+    // 2. Calculate the maximum width for each column index
+    let mut col_widths = vec![0; col_count];
+    for row in &rows {
+        for (i, cell) in row.iter().enumerate() {
+            if cell.len() > col_widths[i] {
+                col_widths[i] = cell.len();
+            }
+        }
+    }
+
+    // 3. Print the rows with dynamic padding per column
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            // We use the pre-calculated width for this specific column index
+            // Adding a small constant (like 3) creates a gutter between columns
+            let width = col_widths[i] + 3;
+            print!("{:<width$}", cell, width = width);
+        }
+        println!(); // Move to the next line after finishing a row
+    }
+}

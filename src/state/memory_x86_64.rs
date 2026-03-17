@@ -174,6 +174,10 @@ impl VolosState {
    	 // Gather unique thread IDs and check for any writes
    	 let unique_threads: std::collections::HashSet<u64> = 
    	     history.iter().map(|v| v.thread_id).collect();
+
+
+
+		 println!("[VOLOS] unique threads in race [{}]{:?}",unique_threads.len(),unique_threads) ;
    	 let has_write = history.iter().any(|v| v.access_type == AccessType::Write);
    	 let num_threads = unique_threads.len();
 
@@ -188,7 +192,7 @@ impl VolosState {
    	             access.locks_held.iter().cloned().collect();
 
    	         // If a write happens with zero locks, it's immediately Raceable
-   	         if access.access_type == AccessType::Write && current_locks.is_empty() {
+   	         if access.access_type == AccessType::Write && current_locks.is_empty() && num_threads > 1{
    	             race_condition = true;
    	             break;
    	         }
@@ -201,14 +205,16 @@ impl VolosState {
    	             Some(ref mut intersection) => {
    	                 intersection.retain(|lock| current_locks.contains(lock));
    	                 if intersection.is_empty() {
-   	                     race_condition = true;
-   	                     break;
+									if num_threads > 1{
+   	                     	race_condition = true;
+   	                     	break;
+									}
    	                 }
    	             }
    	         }
    	     }
 
-   	     if race_condition {
+   	     if race_condition == true {
    	         return VolosState::Raceable;
    	     }
    	 }
@@ -779,7 +785,12 @@ impl<'ctx> MemoryX86_64<'ctx> {
 					//   }
         			//}
 
-		  			 println!("[VOLOS] READ MEM @[0x{:X}] <= {:?} #{:?}", address, concrete, new_volos);
+		  			 //println!("[VOLOS] READ  MEM @[0x{:X}]{:<width$}<= {:?} #{:?}", address,concrete, new_volos, width=20);
+					let concrete_str = concrete.iter()
+									    .map(|b| format!("{:02x} ", b))
+									    .collect::<String>();
+
+		  			 println!("[VOLOS] READ  MEM @[0x{:<width$}] <= {:<width$} #{:?}", address,concrete_str, new_volos, width=20);
                 return Ok((concrete, symbolic));
             }
 
@@ -1128,8 +1139,12 @@ impl<'ctx> MemoryX86_64<'ctx> {
 												volos.locks_held);
 
 			//println!("[VOLOS] WRITE MEM --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
-		  
-		  println!("[VOLOS] WRITE MEM @[0x{:X}] <= ['{:?}'] {:?}", address, concrete,  new_volos);
+		  let concrete_str = concrete.iter()
+									    .map(|b| format!("{:02x} ", b))
+									    .collect::<String>();
+
+		  println!("[VOLOS] WRITE MEM @[0x{:<width$}] <= {:<width$} #{:?}", address,concrete_str, new_volos, width=20);
+
         let mut regions = self.regions.write().unwrap();
         // Check if the address falls within an existing memory region
         for region in regions.iter_mut() {
