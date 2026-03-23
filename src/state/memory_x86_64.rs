@@ -437,7 +437,12 @@ impl Volos {
     /// * `thread_id` - The ID of the thread.
     /// * `access_type` - The type of access (Read or Write).
     /// * `locks_held` - A list of IDs representing the locks held.
-    pub fn new(thread_id: u64, access_type: AccessType, locks_held: Vec<u64>) -> Self {
+    pub fn new(thread_id: u64, access_type: AccessType, locks_held: Vec<u64>, vector_clock: std::option::Option<VolosVC>) -> Self {
+			let mut m_vector_clock = VolosVC::new(&thread_id.to_string());
+			match vector_clock {
+				Some(ref vc) => { m_vector_clock = vector_clock.expect("problem sourcing vector clock for new volos"); },
+				None => {()}
+			}
 			Volos {
             thread_id: thread_id,
             access_type: access_type,
@@ -446,7 +451,7 @@ impl Volos {
 				addr: Some(0),
 				size: Some(0),
 				go_id: Some(0),
-				vector_clock: VolosVC::new(&thread_id.to_string())
+				vector_clock: m_vector_clock
         }
 
     }
@@ -549,7 +554,7 @@ pub struct MemoryValue<'ctx> {
 
 impl<'ctx> MemoryValue<'ctx> {
     pub fn new(concrete: u64, symbolic: BV<'ctx>, size: u32) -> Self {
-        let volos = Volos::new(0, AccessType::New ,Vec::<u64>::new());
+        let volos = Volos::new(0, AccessType::New ,Vec::<u64>::new(), None);
 
         MemoryValue {
             concrete,
@@ -589,7 +594,7 @@ impl<'ctx> MemoryRegion<'ctx> {
 
     /// Initialize a new `MemoryRegion` with the given size and protection flags.
     pub fn new(start_address: u64, size: usize, prot: i32) -> Self {
-	let mut volos = Volos::new(0, AccessType::New, Vec::<u64>::new());
+	let mut volos = Volos::new(0, AccessType::New, Vec::<u64>::new(), None);
 	let mut volos_region = RefCell::new(VolosRegion::new(start_address,size.try_into().unwrap(),volos));
         Self {
             start_address,
@@ -762,7 +767,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
     ) -> Result<(Vec<u8>, Vec<Option<Arc<BV<'ctx>>>>), MemoryError> {
 		 
         let mut regions = self.regions.write().unwrap(); //KEITH changed this to get around RwLock stuff
-		  let new_volos = Volos::new(volos.thread_id,AccessType::Read,volos.locks_held);
+		  let new_volos = Volos::new(volos.thread_id,AccessType::Read,volos.locks_held, Some(volos.vector_clock));
 
 		  //println!("[VOLOS] READ MEM @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{:#?} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
         for region in regions.iter_mut() {
@@ -1148,7 +1153,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
         }
 			let new_volos = Volos::new(volos.thread_id,
 												AccessType::Write,
-												volos.locks_held);
+												volos.locks_held, Some(volos.vector_clock));
 
 			//println!("[VOLOS] WRITE MEM --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
 		  let concrete_str = concrete.iter()
@@ -1297,7 +1302,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
         }
 
         drop(regions); // Drop the lock after modifying the regions
-		  let mut new_volos = Volos::new(0, AccessType::New, Vec::<u64>::new());
+		  let mut new_volos = Volos::new(0, AccessType::New, Vec::<u64>::new(), None);
         // Now write the values to memory
         for (i, &concrete_value) in values.iter().enumerate() {
             let address = start_address + (i as u64) * 4; // Calculate address for each variable

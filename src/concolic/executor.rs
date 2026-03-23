@@ -840,9 +840,10 @@ impl<'ctx> ConcolicExecutor<'ctx> {
 	     let cur_tid = &tm.current_tid; 
 	     let cur_locks_held = &tm.threads.get(cur_tid).unwrap().locks_held;
 	     let new_access_type = AccessType::default(); //default
+		  let vec_clock = &self.main_vecclock;
 	     let new_volos = Volos::new(*cur_tid, 
 	                                 new_access_type,
-	                                 cur_locks_held.clone());
+	                                 cur_locks_held.clone(), Some(vec_clock.clone()));
 	 
 	      return new_volos;
 	 }

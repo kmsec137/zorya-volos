@@ -875,8 +875,29 @@ fn execute_instructions_from(
 
         //println!("[VOLOS] [@0x{:x}] :=> {:?} ",current_rip,instructions.get(0)); 
         // This block is only to get data about the execution in results/execution_trace.txt
-        if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) {
+		  //let m_executor = executor.borrow_mut(); 
+		  let mut is_concurrent: bool = false;
 
+        if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) { 
+
+		  		is_concurrent = symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2" 
+						|| symbol_name == "runtime.unlock" || symbol_name == "runtime.unlock2" 
+						|| symbol_name == "runtime.chansend" || symbol_name == "runtime.chansend2" 
+						|| symbol_name == "runtime.newproc" || symbol_name == "runtime.newproc2";
+			    if is_concurrent {
+					println!("[VOLOS] encountered a concurrent function call --> {}", symbol_name);
+				 }
+			}
+			if is_concurrent == true {
+					let thread_manager = executor.state.thread_manager.lock().unwrap();
+		   	   let current_tid = thread_manager.current_tid;
+					drop(thread_manager);
+					let m_executor = executor.borrow_mut();
+					m_executor.tick_vc(&current_tid.to_string());	
+					println!("[VOLOS] ticked the vc clock for thread:{} --> vc:{}",&current_tid.to_string(),m_executor.main_vecclock);
+			}
+
+        if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) {
 
 
 		    if symbol_name == "runtime.makechan" || symbol_name == "runtime.makechan2" {
@@ -947,7 +968,7 @@ fn execute_instructions_from(
 
 
 
-
+	
 		    if symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2" {
 		      if let Some((_, args)) = function_args_map.get(&current_rip) {
 		          let cpu = executor.state.cpu_state.lock().unwrap();
@@ -960,6 +981,7 @@ fn execute_instructions_from(
             						 println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, value.concrete); 
 		                         let mut thread_manager = executor.state.thread_manager.lock().unwrap();
 		                         let current_tid = thread_manager.current_tid;
+
 		                         let mut current_thread: &mut OSThread<'_> = thread_manager.current_thread_mut().unwrap();
 		                         let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
 		                         locks.push(value.concrete.to_u64());
