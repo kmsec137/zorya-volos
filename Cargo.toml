@@ -38,3 +38,4 @@ gimli = "0.31.1"
 object = "0.36.7"
 chrono = "0.4.41"
 shell_print = { version = "0.1.0", path = "external/shell_print" }
+volosvc = { version = "0.1.0", path = "external/volosvc" }

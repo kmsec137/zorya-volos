@@ -3,12 +3,12 @@ use std::cmp::Ordering;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct VectorClock {
+pub struct VolosVC {
     pub node_id: String,
     pub clocks: HashMap<String, u64>,
 }
 
-impl VectorClock {
+impl VolosVC {
     /// Create a new clock for a specific node
     pub fn new(node_id: &str) -> Self {
         let mut clocks = HashMap::new();
@@ -30,7 +30,7 @@ impl VectorClock {
     }
 
     /// Merge another clock into this one (used on receive)
-    pub fn merge(&mut self, other: &VectorClock) {
+    pub fn merge(&mut self, other: &VolosVC) {
         for (node, &timestamp) in &other.clocks {
             let local_timestamp = self.clocks.entry(node.clone()).or_insert(0);
             *local_timestamp = (*local_timestamp).max(timestamp);
@@ -39,7 +39,7 @@ impl VectorClock {
     }
 
     /// Compare two clocks to determine causality
-    pub fn partial_cmp(&self, other: &VectorClock) -> Option<Ordering> {
+    pub fn partial_cmp(&self, other: &VolosVC) -> Option<Ordering> {
         let mut greater = false;
         let mut less = false;
 
@@ -66,7 +66,7 @@ impl VectorClock {
 }
 
 
-impl fmt::Display for VectorClock {
+impl fmt::Display for VolosVC {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Collect and sort keys so the output is always in the same order
         let mut entries: Vec<_> = self.clocks.iter().collect();
@@ -81,7 +81,7 @@ impl fmt::Display for VectorClock {
         // Write the final string to the formatter
         write!(
             f,
-            "VectorClock {{ node_id: \"{}\", clocks:[ {} ] }}",
+            "VolosVC {{ node_id: \"{}\", clocks:[ {} ] }}",
             self.node_id,
             clock_strings.join(", ")
         )

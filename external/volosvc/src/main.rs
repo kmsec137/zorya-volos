@@ -1,8 +1,8 @@
-use volosvc::{VectorClock};
+use volosvc::{VolosVC};
 
 fn main() {
-    let mut node_a = VectorClock::new("A");
-    let mut node_b = VectorClock::new("B");
+    let mut node_a = VolosVC::new("A");
+    let mut node_b = VolosVC::new("B");
 
     node_a.tick(); // A: {A:1}
     node_b.tick(); // B: {B:1}

@@ -20,6 +20,7 @@ use super::VirtualFileSystem;
 use crate::concolic::{ConcolicVar, ConcreteVar, Logger, SymbolicVar};
 use crate::target_info::GLOBAL_TARGET_INFO;
 use std::cell::RefCell;
+use volosvc::VolosVC;
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
@@ -80,7 +81,11 @@ pub struct Volos {
 	pub go_id: Option<u64>,
 
 	/// unix epoch timestamp of when this volos was created, potenitally indicated when the addr access was detected
-	pub timestamp: Option<u64>
+	pub timestamp: Option<u64>,
+
+	/// VolosVC Vector Clock implementation
+	pub vector_clock: VolosVC
+
     //TODO: pub path_cnd: Vec<??> we need to add a vector of path conditions that summerise how we reach these reads/writes - implement later
 }
 
@@ -94,7 +99,9 @@ impl PartialEq for Volos {
         // (ii) hold the same locks
         // Note: This assumes order doesn't matter or is consistent. 
         // If order varies, you'd need to sort them or use a HashSet.
-        self.locks_held == other.locks_held
+        self.locks_held == other.locks_held 
+
+			//TODO: REMEMBER TO ADD VOLOSVC COMPARISON HERE
     }
 }
 
@@ -109,6 +116,8 @@ impl Ord for Volos {
         // This turns our Max-Heap into a Min-Heap for lock counts.
         other.locks_held.len().cmp(&self.locks_held.len())
 		  //need to implement (i) thread affinity compare, (ii) uniqueness 
+
+			//TODO: REMEMBER TO ADD VOLOSVC COMPARISON HERE
     }
 }
 
@@ -436,7 +445,8 @@ impl Volos {
 				timestamp: Some(0),
 				addr: Some(0),
 				size: Some(0),
-				go_id: Some(0)
+				go_id: Some(0),
+				vector_clock: VolosVC::new(&thread_id.to_string())
         }
 
     }
@@ -450,7 +460,8 @@ impl fmt::Display for Volos {
 		 for lock in self.locks_held.iter(){
 				write!(f, "0x{:X} ",lock);
 		}
-		write!(f,")")
+		write!(f,") ");
+		write!(f," {:?}", self.vector_clock)
     }
 }
 
@@ -463,7 +474,8 @@ impl Default for Volos {
 				timestamp: Some(0),
 				addr: Some(0),
 				size: Some(0),
-				go_id: Some(0)
+				go_id: Some(0),
+			   vector_clock: VolosVC::new("0")
         }
     }
 }
