@@ -177,7 +177,7 @@ impl VolosState {
 
 
 
-		 println!("[VOLOS] unique threads in race [{}]{:?}",unique_threads.len(),unique_threads) ;
+		 //println!("[VOLOS] unique threads in race [{}]{:?}",unique_threads.len(),unique_threads) ;
    	 let has_write = history.iter().any(|v| v.access_type == AccessType::Write);
    	 let num_threads = unique_threads.len();
 
@@ -790,7 +790,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 									    .map(|b| format!("{:02x} ", b))
 									    .collect::<String>();
 
-		  			 println!("[VOLOS] READ  MEM @[0x{:<width$}] <= {:<width$} #{:?}", address,concrete_str, new_volos, width=20);
+		  			 println!("[VOLOS] READ  MEM @[0x{:<width$}] <= {:<width$} #{:?}", address,concrete_str, new_volos, width=14);
                 return Ok((concrete, symbolic));
             }
 
@@ -1143,7 +1143,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 									    .map(|b| format!("{:02x} ", b))
 									    .collect::<String>();
 
-		  println!("[VOLOS] WRITE MEM @[0x{:<width$}] <= {:<width$} #{:?}", address,concrete_str, new_volos, width=20);
+		  println!("[VOLOS] WRITE MEM @[0x{:<width$}] <= {:<width$} #{:?}", address,concrete_str, new_volos, width=14);
 
         let mut regions = self.regions.write().unwrap();
         // Check if the address falls within an existing memory region
@@ -1171,7 +1171,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
 					for region in regions.iter(){
 					   if region.volos_region.borrow().memory.len() != 0{
-			   			println!("[VOLOS] VolosRegion {}", region.volos_region.borrow()); 
+			   			//println!("[VOLOS] VolosRegion {}", region.volos_region.borrow()); 
 					   }
         			}
 

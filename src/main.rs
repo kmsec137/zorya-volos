@@ -76,11 +76,11 @@ pub fn read_tag() -> String {
 
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
-        if ($logger).is_enabled() {
+        //if ($logger).is_enabled() {
         //writeln!($logger, $($arg)*).unwrap();
         //writeln!($logger, $($arg)*).unwrap();
 			writeln!($logger, "[{}] {}", read_tag(), format_args!($($arg)*)).unwrap();
-        }
+        //}
     }};
 }
 
@@ -876,18 +876,20 @@ fn execute_instructions_from(
         //println!("[VOLOS] [@0x{:x}] :=> {:?} ",current_rip,instructions.get(0)); 
         // This block is only to get data about the execution in results/execution_trace.txt
         if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) {
-				if symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2" {
+				if symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2"{
               //console_log.shell_print(&format!(" encountered {} operation",symbol_name),ShellMode::NewLine); 
-	 	  	     update_tag(&format_args!("ZORYA @<0x{:x}>", current_rip).to_string());
-              log!(executor.state.logger," encountered {} operation",symbol_name); 
+	 	  	     //update_tag(&format_args!("ZORYA @<0x{:x}>", current_rip).to_string());
+              println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, function_args_map.get(&current_rip)); 
               if let Some((_, args)) = function_args_map.get(&current_rip) {
 						let cpu = executor.state.cpu_state.lock().unwrap();
+              		println!("[ZORYA @<0x{:x}>] encountered {} operation",current_rip, symbol_name); 
 						for (arg_name, reg_names, _arg_type) in args {
 						    for reg_name in reg_names {
 						        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
 						            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-	 	  	     							update_tag(&format_args!("ZORYA @<0x{:x}>", current_rip).to_string());
-											log!(executor.state.logger,"[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name, value.concrete);
+	 	  	     							//update_tag(&format_args!("ZORYA @<0x{:x}>", current_rip).to_string());
+											//log!(executor.state.logger,"[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name, value.concrete);
+              							println!("[ZORYA @<0x{:x}>] {} op args -> [0x{:x}]",current_rip, symbol_name, value.concrete.to_u64()); 
 											//console_log.shell_print(&format!(" [@0x{:x} ]got lock function call {:?} mutex=0x{:x}",current_rip,symbol_name, value.concrete), ShellMode::NewLine);
 											let mut thread_manager = executor.state.thread_manager.lock().unwrap();
 										   let current_tid = thread_manager.current_tid;
@@ -896,7 +898,8 @@ fn execute_instructions_from(
 											locks.push(value.concrete.to_u64());
 											let len = locks.len();
 	 	  	     							update_tag(&format_args!("ZORYA @<0x{:x}>", current_rip).to_string());
-											log!(executor.state.logger,"... thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
+											//log!(executor.state.logger,"... thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
+              							//println!("[ZORYA @<0x{:x}>] encountered {} operation",current_rip, symbol_name); 
 											//console_log.shell_print(&format!(" thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1)),ShellMode::InPlace);
 											//&format!("Layer integrity: {}% | Status: {}", i * 2, status),
 						            }
@@ -914,7 +917,6 @@ fn execute_instructions_from(
 
 			if symbol_name == "runtime.unlock2" {
               println!("[VOLOS] encountered {} operation",symbol_name); 
-					/*
               if let Some((_, args)) = function_args_map.get(&current_rip) {
 						let cpu = executor.state.cpu_state.lock().unwrap();
 						for (_arg_name, reg_names, _arg_type) in args {
@@ -939,7 +941,7 @@ fn execute_instructions_from(
 						}
 				
 
-					}*/
+					}
 						
 				}
 
