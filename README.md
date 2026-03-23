@@ -294,4 +294,3 @@ Zorya has been developeped and tested for now on Linux Ubuntu as the execution e
 <div align="left">
   <img src="doc/roadmap-zorya_october-2025.png" alt="Roadmap" width="900"/>
 </div>
-
