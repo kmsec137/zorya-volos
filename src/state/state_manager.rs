@@ -729,6 +729,11 @@ pub struct Logger {
     /// formatting, BV `.{:?}` serialisation) from running at all when the log
     /// destination is `/dev/null` (i.e. `LOG_MODE=trace_only`).
     enabled: bool,
+    /// Line buffer shared across clones (Arc so clone() shares the same buffer).
+    /// `write()` accumulates bytes here and only calls `display_message` once a
+    /// complete `\n`-terminated line is ready, preventing split-line artefacts
+    /// caused by `writeln!` issuing one `write()` call per format segment.
+    line_buf: Arc<Mutex<String>>,
 }
 
 // The bool is used to determine if the logger should also print to the terminal
@@ -745,6 +750,7 @@ impl Logger {
             file: Arc::new(Mutex::new(file)),
             terminal,
             enabled: file_path != "/dev/null",
+            line_buf: Arc::new(Mutex::new(String::new())),
         })
     }
 
@@ -765,6 +771,7 @@ impl Logger {
             file: Arc::new(Mutex::new(file)),
             terminal,
             enabled: true,
+            line_buf: Arc::new(Mutex::new(String::new())),
         })
     }
 
@@ -778,6 +785,7 @@ impl Logger {
             file: Arc::new(Mutex::new(file)),
             terminal: Some(Arc::new(Mutex::new(io::stdout()))),
             enabled: true,
+            line_buf: Arc::new(Mutex::new(String::new())),
         })
     }
 
@@ -793,22 +801,33 @@ impl Logger {
 
 impl Write for Logger {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut file = self.file.lock().unwrap();
-        file.write_all(buf)?;
+        // Always write to the backing file.
+        self.file.lock().unwrap().write_all(buf)?;
 
-        if let Some(ref terminal) = self.terminal {
-            terminal.lock().unwrap().write_all(buf)?;
+        // For terminal output, accumulate bytes in the line buffer and only
+        // call display_message() once a complete \n-terminated line is ready.
+        // This prevents the split-line artefact that occurs because writeln!()
+        // calls write() once per format-string segment rather than once per line.
+        if self.terminal.is_some() {
+            if let Ok(text) = std::str::from_utf8(buf) {
+                let mut lb = self.line_buf.lock().unwrap();
+                lb.push_str(text);
+                while let Some(pos) = lb.find('\n') {
+                    let line = lb[..pos].to_string();
+                    lb.drain(..=pos);
+                    drop(lb); // release before calling display_message
+                    if !line.is_empty() {
+                        crate::display_message(&line);
+                    }
+                    lb = self.line_buf.lock().unwrap();
+                }
+            }
         }
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        let mut file = self.file.lock().unwrap();
-        file.flush()?;
-
-        if let Some(ref terminal) = self.terminal {
-            terminal.lock().unwrap().flush()?;
-        }
-        Ok(())
+        self.file.lock().unwrap().flush()
+        // tty_write already flushes /dev/tty after every display_message call.
     }
 }
