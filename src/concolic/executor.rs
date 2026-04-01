@@ -66,8 +66,8 @@ pub struct ConcolicExecutor<'ctx> {
     pub overlay_state: Option<OverlayState<'ctx>>, // Overlay state for exploring untaken paths without modifying base state
     pub null_check_cache: std::collections::HashMap<String, (bool, usize)>, // Per-variable cache: maps symbolic variable name → (was_sat, constraint_len). If was_sat=true the variable is permanently skipped (vulnerability already reported). If was_sat=false it is re-checked only when constraint_len changes. For Go struct pointers this is pre-seeded with (false, 0) at initialization so the solver is never invoked.
     pub start_time: Instant, // Execution start time for elapsed time tracking
-	 pub main_vecclock: VolosVC
-    pub visited_blocks: BTreeSet<u64>, // Tracks which basic-block addresses have been entered during execution (for block-level coverage metrics)
+	 pub main_vecclock: VolosVC,
+    pub visited_blocks: BTreeSet<u64> // Tracks which basic-block addresses have been entered during execution (for block-level coverage metrics)
 }
 
 impl<'ctx> ConcolicExecutor<'ctx> {
@@ -95,8 +95,8 @@ impl<'ctx> ConcolicExecutor<'ctx> {
             overlay_state: None, // No overlay by default
             null_check_cache: std::collections::HashMap::new(),
             start_time: Instant::now(),
-				main_vecclock: VolosVC::new("0")	
-            visited_blocks: BTreeSet::new(),
+				main_vecclock: VolosVC::new("0"),
+            visited_blocks: BTreeSet::new()
         })
     }
 

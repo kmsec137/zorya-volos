@@ -806,8 +806,10 @@ impl<'ctx> MemoryX86_64<'ctx> {
 					let concrete_str = concrete.iter()
 									    .map(|b| format!("{:02x} ", b))
 									    .collect::<String>();
+					let addr_str = format!("{:02x} ", address).to_string();
 
-		  			 println!("[VOLOS] READ  MEM @[0x{:<width$}] <= {:<width$} #{:?}", address,concrete_str, new_volos, width=14);
+
+		  			 println!("[VOLOS] READ  MEM @[0x{:<width$}] <= {:<width$} #{:?}", addr_str,concrete_str, new_volos, width=14);
                 return Ok((concrete, symbolic));
             }
 
@@ -1159,8 +1161,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
 		  let concrete_str = concrete.iter()
 									    .map(|b| format!("{:02x} ", b))
 									    .collect::<String>();
+		  let addr_str = format!("{:02x} ", address).to_string();
 
-		  println!("[VOLOS] WRITE MEM @[0x{:<width$}] <= {:<width$} #{:?}", address,concrete_str, new_volos, width=14);
+		  println!("[VOLOS] WRITE MEM @[0x{:<width$}] <= {:<width$} #{:?}", addr_str,concrete_str, new_volos, width=14);
 
         let mut regions = self.regions.write().unwrap();
         // Check if the address falls within an existing memory region
