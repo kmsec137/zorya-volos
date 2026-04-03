@@ -2,13 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    collections::HashMap,
-    fs,
-    io::Write,
-    path::Path,
-    sync::{Arc, OnceLock},
-};
+use std::{collections::HashMap, fs, io::Write, path::Path, rc::Rc, sync::OnceLock};
 
 use crate::{
     concolic::{ConcolicExecutor, ConcolicVar, ConcreteVar, SymbolicVar},
@@ -1285,8 +1279,9 @@ pub fn initialize_slice_memory_contents<'a>(
         );
 
         // Get the slice's symbolic variables
-        if let Some(slice_sym_var) = executor.function_symbolic_arguments.get(arg_name) {
-            if let SymbolicVar::Slice(_slice) = slice_sym_var {
+        if let Some(SymbolicVar::Slice(_slice)) = executor.function_symbolic_arguments.get(arg_name)
+        {
+            {
                 // Get concrete values from registers to determine memory layout
                 let (ptr_concrete, len_concrete, _cap_concrete) =
                     extract_slice_concrete_values(executor, reg_name);
@@ -1400,7 +1395,7 @@ fn extract_slice_concrete_values<'a>(
         regs
     );
 
-    let ptr_concrete = if regs.len() >= 1 {
+    let ptr_concrete = if !regs.is_empty() {
         let val = get_concrete_value_from_location(executor, regs[0]);
         log!(
             executor.state.logger.clone(),
@@ -1847,12 +1842,12 @@ fn initialize_slice_element_memory<'a>(
 
                 // Write symbolic bytes back to memory using write_bytes
                 // Create symbolic bytes - each byte gets a portion of the symbolic variable
-                let symbolic_bytes: Vec<Option<Arc<BV>>> = (0..element_size)
+                let symbolic_bytes: Vec<Option<Rc<BV>>> = (0..element_size)
                     .map(|i| {
                         let byte_start = (i * 8) as u32;
                         let byte_end = std::cmp::min(byte_start + 7, bit_size - 1);
                         let byte_bv = element_bv.extract(byte_end, byte_start);
-                        Some(Arc::new(byte_bv))
+                        Some(Rc::new(byte_bv))
                     })
                     .collect();
 

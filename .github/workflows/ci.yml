@@ -1,0 +1,104 @@
+# SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ── 1. Formatting ──────────────────────────────────────────────────────────
+  fmt:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+
+      - name: Check rustfmt
+        run: cargo fmt --package zorya -- --check
+
+  # ── 2. Linting ────────────────────────────────────────────────────────────
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends libz3-dev binutils-dev
+
+      - name: Run clippy
+        run: |
+          cargo clippy --package zorya --all-targets -- -D warnings
+
+  # ── 3. Build ──────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends libz3-dev binutils-dev
+
+      - name: Build (dev)
+        run: cargo build --package zorya --all-targets
+
+      - name: Build (release)
+        run: cargo build --package zorya --release
+
+  # ── 4. Python scripts (lint + format) ────────────────────────────────────
+  python:
+    name: Python (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
+        with:
+          enable-cache: false
+
+      - name: Lint
+        run: uvx ruff check scripts/
+
+      - name: Format check
+        run: uvx ruff format --check scripts/
+
+  # ── 6. Tests ──────────────────────────────────────────────────────────────
+  test:
+    name: Tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends libz3-dev binutils-dev
+
+      - name: Run tests
+        run: cargo test --package zorya

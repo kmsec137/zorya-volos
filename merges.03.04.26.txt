@@ -1,0 +1,63 @@
+>$ git merge upstream/main
+Auto-merging Cargo.lock
+Auto-merging Cargo.toml
+CONFLICT (content): Merge conflict in Cargo.toml
+Auto-merging README.md
+CONFLICT (content): Merge conflict in README.md
+warning: Cannot merge binary files: doc/zorya_logo.png (HEAD vs. upstream/main)
+Auto-merging doc/zorya_logo.png
+CONFLICT (content): Merge conflict in doc/zorya_logo.png
+Auto-merging scripts/dwarf_get_all_function_args.py
+Auto-merging scripts/explore_ast_panic.py
+Auto-merging scripts/find_os_args.py
+Auto-merging scripts/find_panic_xrefs.py
+Auto-merging scripts/get_jump_tables.py
+Auto-merging scripts/ghidra_get_all_function_args.py
+Auto-merging scripts/llvm_extract_function_signatures.py
+Auto-merging scripts/precompute_panic_reach.py
+CONFLICT (content): Merge conflict in scripts/precompute_panic_reach.py
+Auto-merging scripts/scripts_dump_registers_memory/dump_threads.py
+Auto-merging scripts/scripts_dump_registers_memory/execute_commands.py
+Auto-merging scripts/scripts_dump_registers_memory/parse_and_generate.py
+CONFLICT (content): Merge conflict in scripts/scripts_dump_registers_memory/parse_and_generate.py
+Auto-merging src/concolic/concolic_enum.rs
+Auto-merging src/concolic/concrete_var.rs
+Auto-merging src/concolic/executor.rs
+Auto-merging src/concolic/executor_bool.rs
+Auto-merging src/concolic/executor_callother.rs
+CONFLICT (content): Merge conflict in src/concolic/executor_callother.rs
+Auto-merging src/concolic/executor_callother_syscalls.rs
+Auto-merging src/concolic/executor_float.rs
+Auto-merging src/concolic/executor_int.rs
+Auto-merging src/concolic/symbolic_initialization.rs
+Auto-merging src/concolic/symbolic_var.rs
+Auto-merging src/fuzzer/config.rs
+Auto-merging src/main.rs
+CONFLICT (content): Merge conflict in src/main.rs
+Auto-merging src/state/cpu_state.rs
+Auto-merging src/state/evaluate_z3.rs
+Auto-merging src/state/function_signatures.rs
+Auto-merging src/state/futex_manager.rs
+Auto-merging src/state/memory_x86_64.rs
+CONFLICT (content): Merge conflict in src/state/memory_x86_64.rs
+Auto-merging src/state/overlay_path_analysis.rs
+Auto-merging src/state/overlay_state.rs
+Auto-merging src/state/panic_reach.rs
+Auto-merging src/state/simplify_z3.rs
+Auto-merging src/state/state_manager.rs
+Auto-merging src/state/thread_manager.rs
+CONFLICT (content): Merge conflict in src/state/thread_manager.rs
+Auto-merging src/state/virtual_file_system.rs
+Auto-merging src/target_info.rs
+Auto-merging tests/tests_executor.rs
+CONFLICT (content): Merge conflict in tests/tests_executor.rs
+Auto-merging tests/tests_executor_bool.rs
+CONFLICT (content): Merge conflict in tests/tests_executor_bool.rs
+Auto-merging tests/tests_executor_callother_syscalls.rs
+CONFLICT (content): Merge conflict in tests/tests_executor_callother_syscalls.rs
+Auto-merging tests/tests_executor_float.rs
+CONFLICT (content): Merge conflict in tests/tests_executor_float.rs
+Auto-merging tests/tests_executor_int.rs
+CONFLICT (content): Merge conflict in tests/tests_executor_int.rs
+Automatic merge failed; fix conflicts and then commit the result.
+

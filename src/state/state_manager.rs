@@ -26,6 +26,7 @@ use std::{
     fs::{self, File},
     io::{self, Read, Write},
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{Arc, Mutex, RwLock},
 };
 use z3::Context;
@@ -74,11 +75,11 @@ pub struct State<'a> {
     pub ctx: &'a Context,
     pub memory: MemoryX86_64<'a>,
     pub cpu_state: SharedCpuState<'a>,
-    pub vfs: Arc<RwLock<VirtualFileSystem>>, // Virtual file system
-    pub fd_paths: BTreeMap<u64, PathBuf>,    // Maps syscall file descriptors to file paths.
-    pub fd_counter: u64,                     // Counter to generate unique file descriptor IDs.
-    pub logger: Logger,                      // Logger for debugging
-    pub signal_mask: u64,                    // store the signal mask
+    pub vfs: Rc<RwLock<VirtualFileSystem>>, // Virtual file system
+    pub fd_paths: BTreeMap<u64, PathBuf>,   // Maps syscall file descriptors to file paths.
+    pub fd_counter: u64,                    // Counter to generate unique file descriptor IDs.
+    pub logger: Logger,                     // Logger for debugging
+    pub signal_mask: u64,                   // store the signal mask
     pub futex_manager: FutexManager,
     pub altstack: StackT, // structure used by the sigaltstack system call to define an alternate signal stack
     pub is_terminated: bool, // Indicates if the process is terminated
@@ -87,7 +88,7 @@ pub struct State<'a> {
     pub call_stack: Vec<FunctionFrame>, // Stack of function frames to track local variables
     pub freed_stack_frames: VecDeque<FunctionFrame>, // Recently freed frames for dangling pointer detection
     pub jump_tables: BTreeMap<u64, JumpTable>,       // Maps base addresses to jump table metadata
-    pub thread_manager: Arc<Mutex<ThreadManager<'a>>>, // Manages OS threads for Go runtime
+    pub thread_manager: Rc<Mutex<ThreadManager<'a>>>, // Manages OS threads for Go runtime
 }
 
 impl<'a> State<'a> {
@@ -102,7 +103,7 @@ impl<'a> State<'a> {
         // Initialize CPU state in a shared and thread-safe manner
         log!(logger.clone(), "Initializing mock CPU state...\n");
         tprintln!("Initializing mock CPU state...\n");
-        let cpu_state = Arc::new(Mutex::new(CpuState::new(ctx)));
+        let cpu_state = Rc::new(Mutex::new(CpuState::new(ctx)));
 
         log!(logger.clone(), "Uploading dumps to CPU registers...\n");
         tprintln!("Uploading dumps to CPU registers...\n");
@@ -114,11 +115,11 @@ impl<'a> State<'a> {
 
         log!(logger.clone(), "Initializing virtual file system...\n");
         tprintln!("Initializing virtual file system...\n");
-        let vfs = Arc::new(RwLock::new(VirtualFileSystem::new()));
+        let vfs = Rc::new(RwLock::new(VirtualFileSystem::new()));
 
         log!(logger.clone(), "Initializing memory...\n");
         tprintln!("Initializing memory...\n");
-        let memory = MemoryX86_64::new(&ctx, vfs.clone())?;
+        let memory = MemoryX86_64::new(ctx, vfs.clone())?;
         memory
             .load_all_dumps()
             .map_err(|e| format!("Failed to load memory dumps: {}", e))?;
@@ -133,7 +134,7 @@ impl<'a> State<'a> {
         tprintln!("Initializing the State...\n");
         // Initialize ThreadManager with the main thread (TID=1)
         let initial_cpu_for_thread = cpu_state.lock().unwrap().clone();
-        let thread_manager = Arc::new(Mutex::new(ThreadManager::new(
+        let thread_manager = Rc::new(Mutex::new(ThreadManager::new(
             1,
             initial_cpu_for_thread.clone(),
             ctx,
@@ -239,9 +240,9 @@ impl<'a> State<'a> {
         logger: Logger,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Initialize CPU state in a shared and thread-safe manner
-        let cpu_state = Arc::new(Mutex::new(CpuState::new(ctx)));
-        let vfs = Arc::new(RwLock::new(VirtualFileSystem::new()));
-        let memory = MemoryX86_64::new(&ctx, vfs.clone())?;
+        let cpu_state = Rc::new(Mutex::new(CpuState::new(ctx)));
+        let vfs = Rc::new(RwLock::new(VirtualFileSystem::new()));
+        let memory = MemoryX86_64::new(ctx, vfs.clone())?;
         Ok(State {
             concolic_vars: BTreeMap::new(),
             ctx,
@@ -260,7 +261,7 @@ impl<'a> State<'a> {
             call_stack: Vec::new(),
             freed_stack_frames: VecDeque::new(),
             jump_tables: BTreeMap::new(),
-            thread_manager: Arc::new(Mutex::new(ThreadManager::new(1, CpuState::new(ctx), ctx))),
+            thread_manager: Rc::new(Mutex::new(ThreadManager::new(1, CpuState::new(ctx), ctx))),
         })
     }
 

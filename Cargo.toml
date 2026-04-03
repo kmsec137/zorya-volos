@@ -26,7 +26,6 @@ serde_json = "1.0"
 log = "0.4.21"
 z3-sys = "0.8.1"
 nix = "0.29.0"
-memmap2 = "0.9.5"
 libc = "0.2.159"
 byteorder = "1.5.0"
 faerie = "0.16.0"
@@ -34,8 +33,12 @@ target-lexicon = "=0.11.2"
 shell-words = "1.1.0"
 num-bigint = "0.4.6"
 num-traits = "0.2.19"
+<<<<<<< HEAD
 gimli = "0.31.1"
 object = "0.36.7"
 chrono = "0.4.41"
 shell_print = { version = "0.1.0", path = "external/shell_print" }
 volosvc = { version = "0.1.0", path = "external/volosvc" }
+=======
+chrono = "0.4.44"
+>>>>>>> upstream/main

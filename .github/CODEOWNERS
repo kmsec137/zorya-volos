@@ -1,0 +1,10 @@
+# CODEOWNERS — Zorya Concolic Executor
+
+# ── Fallback: everything not matched by a more specific rule ─────────────────
+*                          @Ledger-Donjon @kajaaz 
+
+# ── GitHub / CI configuration ────────────────────────────────────────────────
+/.github/                  @Ledger-Donjon @kajaaz
+
+# ── Rust core (concolic engine, state, fuzzer) ───────────────────────────────
+/src/                      @Ledger-Donjon @kajaaz @niooss-ledger
