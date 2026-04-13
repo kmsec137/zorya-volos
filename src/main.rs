@@ -1244,6 +1244,37 @@ fn execute_instructions_from(
 		  //let m_executor = executor.borrow_mut(); 
 		  let mut is_concurrent: bool = false;
 
+
+			let symbol_name_owned: Option<String> = executor.symbol_table.get(&current_rip_hex).cloned();
+			
+			let is_concurrent = if let Some(ref name) = symbol_name_owned {
+			    name == "sym.runtime.lock" || name == "runtime.lock2"
+			        || name == "runtime.unlock" || name == "runtime.unlock2"
+			        || name == "runtime.chansend"
+			        || name == "runtime.newproc1"
+			} else {
+			    false
+			};
+			
+			if is_concurrent {
+			    let current_tid = {
+			        let thread_manager = executor.state.thread_manager.lock().unwrap();
+			        thread_manager.current_tid
+			    };
+			    
+			    // safe to mutate because symbol_name_owned is an owned String, not a reference
+			    executor.tick_vc(&current_tid.to_string());
+			    println!(
+			        "[VOLOS] ticked the vc clock for thread:{} --> vc:{}",
+			        current_tid, 
+			        executor.main_vecclock
+			    );
+			}
+
+
+/*
+
+
         let (name, is_concurrent) = { 
             if let Some(_name) = executor.symbol_table.get(&current_rip_hex) {
                 if _name == "sym.runtime.lock" || _name == "runtime.lock2" 
@@ -1254,7 +1285,7 @@ fn execute_instructions_from(
 							
                	  (Some(_name.clone()),true)
 						}else{
-            		(None,false) }
+            		(Some(_name.clone()),false) }
                 
             } else { 
             (None,false) }
@@ -1268,8 +1299,9 @@ fn execute_instructions_from(
 							println!("[VOLOS] ticked the vc clock for thread:{} --> vc:{}",&current_tid.to_string(),executor.main_vecclock);
 				}
 
-
-        if let symbol_name = name.unwrap() {
+			
+*/
+        if let Some(symbol_name) = symbol_name_owned {
         		
             if symbol_name == "runtime.unlock2" {
               if let Some((_, args)) = function_args_map.get(&current_rip) {
