@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Keith Makan Security Consultancy Pty Ltd - WORLD CLASS CYBERSECURITY
+// SPDX-FileCopyrightText: 2025 Ledger https://www.ledger.com - INSTITUT MINES TELECOM
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,19 +7,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::error::Error;
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::io::{self, BufRead, Write};
+use std::path::Path;
 use std::process::Command;
-use std::sync::Arc;
-use shell_print::{ShellPrint, ShellMode};
-
-use std::borrow::BorrowMut;
-use std::cell::RefMut;
-use zorya::state::OSThread;
-
-use zorya::state::overlay_path_analysis::analyze_untaken_path_with_overlay;
-use zorya::state::overlay_path_analysis::OverlayPathAnalysisResult;
 use std::rc::Rc;
+use zorya::state::OSThread;
+use std::borrow::BorrowMut;
+
 
 use parser::parser::{Inst, Opcode, Var};
 use z3::{
@@ -44,44 +38,23 @@ use zorya::state::function_signatures::{
     GoFunctionArg,
 };
 use zorya::state::gating_stats::{
-    get_allowed_by_xref_fallback, get_gated_by_reach, inc_allowed_by_xref_fallback,
-    inc_gated_by_reach,
-};
-use zorya::state::lightweight_path_analysis::{
-    lightweight_analyze_path, LightweightAnalysisResult,
+    get_allowed_by_xref_fallback, get_gated_by_reach, inc_gated_by_reach,
 };
 use zorya::state::memory_x86_64::MemoryValue;
-use zorya::state::panic_reach::{
-    is_panic_reachable_addr, precompute_panic_reach, PanicReachRanges, PanicReachSet,
+use zorya::state::overlay_path_analysis::{
+    analyze_untaken_path_with_overlay, OverlayPathAnalysisResult,
 };
+use zorya::state::panic_reach::precompute_panic_reach;
 use zorya::state::simplify_z3::extract_underlying_condition_from_flag_ast;
 use zorya::state::thread_manager::{CheckpointType, ThreadStatus};
 use zorya::target_info::GLOBAL_TARGET_INFO;
 use zorya::{teprintln, tprintln};
 
-use std::sync::{RwLock, OnceLock};
-
-fn tag_storage() -> &'static RwLock<String> {
-    static INSTANCE: OnceLock<RwLock<String>> = OnceLock::new();
-    INSTANCE.get_or_init(|| RwLock::new("INIT".to_string()))
-}
-
-pub fn update_tag(new_tag: &str) {
-    let mut tag = tag_storage().write().unwrap();
-    *tag = new_tag.to_string();
-}
-
-pub fn read_tag() -> String {
-    tag_storage().read().unwrap().clone()
-}
-
 macro_rules! log {
     ($logger:expr, $($arg:tt)*) => {{
-        //if ($logger).is_enabled() {
-        //writeln!($logger, $($arg)*).unwrap();
-        //writeln!($logger, $($arg)*).unwrap();
-			writeln!($logger, "[{}] {}", read_tag(), format_args!($($arg)*)).unwrap();
-        //}
+        if ($logger).is_enabled() {
+        writeln!($logger, $($arg)*).unwrap();
+        }
     }};
 }
 
@@ -506,8 +479,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             );
             log!(
                 executor.state.logger,
-                "Found {} arguments for function at 0x{:x}",
+                "Found {} arguments for function '{}' at 0x{:x}",
                 args.len(),
+                func_name,
                 start_address
             );
 
@@ -906,8 +880,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Precompute reverse panic reachability set (O(V+E)), then O(1) queries
-    let (panic_reach_set, panic_reach_ranges, _panic_reach_statss) =
-        precompute_panic_reach(&binary_path)?;
+    let _ = precompute_panic_reach(&binary_path)?;
 
     // *****************************
     // CORE COMMAND
@@ -1053,9 +1026,7 @@ fn execute_instructions_from(
     binary_path: &str,
 ) {
     let mut current_rip = start_address;
-
     let mut local_line_number: i64 = 0; // Index of the current instruction within the block
-	 let console_log = ShellPrint::new("<blue>VOLOS </blue>");
     let end_address: u64 = 0x0; //no specific end address
 
     // For debugging
@@ -1133,10 +1104,7 @@ fn execute_instructions_from(
     }
 
     while let Some(instructions) = instructions_map.get(&current_rip) {
-
-	 	  update_tag(&format_args!("ZORYA @<0x{:x}>", current_rip).to_string());
         if current_rip == end_address {
-	 	  		update_tag(&format_args!("ZORYA @<0x{:x}>", current_rip).to_string());
             log!(
                 executor.state.logger,
                 "END ADDRESS 0x{:x} REACHED, STOP THE EXECUTION",
@@ -1173,30 +1141,191 @@ fn execute_instructions_from(
             );
         }
 
+        if current_rip == end_address {
+            log!(
+                executor.state.logger,
+                "END ADDRESS 0x{:x} REACHED, STOP THE EXECUTION",
+                end_address
+            );
+            break; // Stop execution if end address is reached
+            }
+
+        log!(
+            executor.state.logger,
+            "*******************************************"
+        );
+        log!(
+            executor.state.logger,
+            "EXECUTING INSTRUCTIONS AT ADDRESS: 0x{:x}",
+            current_rip
+        );
+        log!(
+            executor.state.logger,
+            "*******************************************"
+        );
+
+        let current_rip_hex = format!("{:x}", current_rip);
+
+        // Block-level coverage: update the sticky bar at the bottom of the terminal
+        // whenever a genuinely new block is entered.
+        if executor.visited_blocks.insert(current_rip) {
+            print_coverage_bar(
+                executor.visited_blocks.len(),
+                instructions_map.len(),
+                executor.start_time.elapsed().as_secs_f64(),
+                zorya::Z3_CUMULATIVE_MS.load(std::sync::atomic::Ordering::Relaxed),
+                executor.constraint_vector.len(),
+            );
+        }
+
         // This block is only to get data about the execution in results/execution_trace.txt
 		  //let m_executor = executor.borrow_mut(); 
 		  let mut is_concurrent: bool = false;
 
-        if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) { 
+			/**
+        let (name, is_concurrent) = { 
+            if let Some(_name) = executor.symbol_table.get(&current_rip_hex) { 
+                let  is_concurrent = _name == "sym.runtime.lock" || _name == "runtime.lock2" 
+						|| _name == "runtime.unlock" || _name == "runtime.unlock2" 
+						|| _name == "runtime.chansend"
+						|| _name == "runtime.newproc1";
+                
+                if is_concurrent{  
+							println!("[VOLOS] encountered a concurrent function call --> {}", _name);
+							let thread_manager = executor.state.thread_manager.lock().unwrap();
+		   	     		let current_tid = thread_manager.current_tid;
+							//drop(thread_manager);
+							executor.tick_vc(&current_tid.to_string());	
+							println!("[VOLOS] ticked the vc clock for thread:{} --> vc:{}",&current_tid.to_string(),executor.main_vecclock);
+                  	(Some(_name),is_concurrent)
+                } else { (None, false)}
+            } else{
+            (None,false) }
+        };  **/
+        
+        if current_rip == end_address {
+            log!(
+                executor.state.logger,
+                "END ADDRESS 0x{:x} REACHED, STOP THE EXECUTION",
+                end_address
+            );
+            break; // Stop execution if end address is reached
+            }
 
-		  		is_concurrent = symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2" 
-						|| symbol_name == "runtime.unlock" || symbol_name == "runtime.unlock2" 
-						|| symbol_name == "runtime.chansend" || symbol_name == "runtime.chansend2" 
-						|| symbol_name == "runtime.newproc" || symbol_name == "runtime.newproc2";
-			    if is_concurrent {
-					println!("[VOLOS] encountered a concurrent function call --> {}", symbol_name);
-				 }
-			}
-			if is_concurrent == true {
-					let thread_manager = executor.state.thread_manager.lock().unwrap();
-		   	   let current_tid = thread_manager.current_tid;
-					drop(thread_manager);
-					let m_executor = executor.borrow_mut();
-					m_executor.tick_vc(&current_tid.to_string());	
-					println!("[VOLOS] ticked the vc clock for thread:{} --> vc:{}",&current_tid.to_string(),m_executor.main_vecclock);
-			}
+        log!(
+            executor.state.logger,
+            "*******************************************"
+        );
+        log!(
+            executor.state.logger,
+            "EXECUTING INSTRUCTIONS AT ADDRESS: 0x{:x}",
+            current_rip
+        );
+        log!(
+            executor.state.logger,
+            "*******************************************"
+        );
 
-        if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) {
+        let current_rip_hex = format!("{:x}", current_rip);
+
+        // Block-level coverage: update the sticky bar at the bottom of the terminal
+        // whenever a genuinely new block is entered.
+        if executor.visited_blocks.insert(current_rip) {
+            print_coverage_bar(
+                executor.visited_blocks.len(),
+                instructions_map.len(),
+                executor.start_time.elapsed().as_secs_f64(),
+                zorya::Z3_CUMULATIVE_MS.load(std::sync::atomic::Ordering::Relaxed),
+                executor.constraint_vector.len(),
+            );
+        }
+
+        // This block is only to get data about the execution in results/execution_trace.txt
+		  //let m_executor = executor.borrow_mut(); 
+		  let mut is_concurrent: bool = false;
+
+        let (name, is_concurrent) = { 
+            if let Some(_name) = executor.symbol_table.get(&current_rip_hex) {
+                if _name == "sym.runtime.lock" || _name == "runtime.lock2" 
+						|| _name == "runtime.unlock" || _name == "runtime.unlock2" 
+						|| _name == "runtime.chansend"
+						|| _name == "runtime.newproc1"{
+
+							
+               	  (Some(_name.clone()),true)
+						}else{
+            		(None,false) }
+                
+            } else { 
+            (None,false) }
+        };
+
+				if is_concurrent {	
+							let thread_manager = executor.state.thread_manager.lock().unwrap();
+		   	   		let current_tid = thread_manager.current_tid;
+							drop(thread_manager);
+							executor.tick_vc(&current_tid.to_string());	
+							println!("[VOLOS] ticked the vc clock for thread:{} --> vc:{}",&current_tid.to_string(),executor.main_vecclock);
+				}
+
+
+        if let symbol_name = name.unwrap() {
+        		
+            if symbol_name == "runtime.unlock2" {
+              if let Some((_, args)) = function_args_map.get(&current_rip) {
+						let cpu = executor.state.cpu_state.lock().unwrap();
+						for (_arg_name, reg_names, _arg_type) in args {
+						    for reg_name in reg_names {
+						        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
+						            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
+											//println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
+											//println!("[VOLOS::main.rs] got unlock function call {:?} mutex=0x{:x}",symbol_name, value.concrete);
+            						    println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, value.concrete); 
+
+											let mut thread_manager = executor.state.thread_manager.lock().unwrap();
+										   let current_tid = thread_manager.current_tid;
+										   let mut current_thread: &mut OSThread<'_> = thread_manager.current_thread_mut().unwrap();
+											let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
+
+											locks.retain(|&x| x != value.concrete.to_u64());
+											let len = locks.len();
+
+											//println!("[VOLOS::main.rs] thread[{}].locks_held -> {:#?}",current_tid, locks);
+						            }
+						        }
+						    }
+						}
+				
+
+				}
+						
+		    }
+      
+            if symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2" {
+		        if let Some((_, args)) = function_args_map.get(&current_rip) {
+		            let cpu = executor.state.cpu_state.lock().unwrap();
+		            for (arg_name, reg_names, _arg_type) in args {
+		         	    for reg_name in reg_names {
+		         	        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
+		         	            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
+		         	            //println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
+		         	            //println!("[VOLOS::main.rs] got lock function call {:?} mutex=0x{:x}",symbol_name, value.concrete);
+            					    println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, value.concrete); 
+		         	                let mut thread_manager = executor.state.thread_manager.lock().unwrap();
+		         	                let current_tid = thread_manager.current_tid;
+
+		         	                let mut current_thread: &mut OSThread<'_> = thread_manager.current_thread_mut().unwrap();
+		         	                let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
+		         	                locks.push(value.concrete.to_u64());
+                                }
+		         	            //let len = locks.len();
+		         	            //println!("[VOLOS::main.rs] thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
+											 	
+		         	        }
+		         	    }
+		         	}
+		        }
+            }
 
 
 		    if symbol_name == "runtime.makechan" || symbol_name == "runtime.makechan2" {
@@ -1218,118 +1347,50 @@ fn execute_instructions_from(
 		
 		    }
 
-
+                    
 		    if symbol_name == "runtime.chanrecv" || symbol_name == "runtime.chanrecv2" {
-		      if let Some((_, args)) = function_args_map.get(&current_rip) {
-		          let cpu = executor.state.cpu_state.lock().unwrap();
-		          for (arg_name, reg_names, _arg_type) in args {
-		              for reg_name in reg_names {
-		                  if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-		                      if let Some(value) = cpu.get_register_by_offset(offset, 64) {
+		        if let Some((_, args)) = function_args_map.get(&current_rip) {
+		            let cpu = executor.state.cpu_state.lock().unwrap();
+		            for (arg_name, reg_names, _arg_type) in args {
+		                for reg_name in reg_names {
+		                    if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
+		                        if let Some(value) = cpu.get_register_by_offset(offset, 64) {
             						 println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, value.concrete); 
 										 	
-		                      }
-		                  }
-		              }
-		          }
+		                        }
+		                    }
+		                }
+		            }
 		    
 		
-		       }
+		        }
 		
-		    }
+	    	} 
 
-
-
-
-			
-		    if symbol_name == "runtime.chansend" || symbol_name == "runtime.chansend2" {
-		      if let Some((_, args)) = function_args_map.get(&current_rip) {
+            if symbol_name == "runtime.chansend" || symbol_name == "runtime.chansend2" {
+		        if let Some((_, args)) = function_args_map.get(&current_rip) {
 		          let cpu = executor.state.cpu_state.lock().unwrap();
-		          for (arg_name, reg_names, _arg_type) in args {
+		            for (arg_name, reg_names, _arg_type) in args {
 		              for reg_name in reg_names {
-		                  if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-		                      if let Some(value) = cpu.get_register_by_offset(offset, 64) {
+		                    if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
+		                        if let Some(value) = cpu.get_register_by_offset(offset, 64) {
             						 println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, value.concrete); 
 										 	
-		                      }
-		                  }
-		              }
-		          }
+		                        }
+		                    }
+		                }
+		            }
 		    
-		
-		       }
-		
-		    }
-
-
-
-
-
-
-
 	
-		    if symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2" {
-		      if let Some((_, args)) = function_args_map.get(&current_rip) {
-		          let cpu = executor.state.cpu_state.lock().unwrap();
-		          for (arg_name, reg_names, _arg_type) in args {
-		              for reg_name in reg_names {
-		                  if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-		                      if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-		                         //println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
-		                         //println!("[VOLOS::main.rs] got lock function call {:?} mutex=0x{:x}",symbol_name, value.concrete);
-            						 println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, value.concrete); 
-		                         let mut thread_manager = executor.state.thread_manager.lock().unwrap();
-		                         let current_tid = thread_manager.current_tid;
-
-		                         let mut current_thread: &mut OSThread<'_> = thread_manager.current_thread_mut().unwrap();
-		                         let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
-		                         locks.push(value.concrete.to_u64());
-		                         //let len = locks.len();
-		                         //println!("[VOLOS::main.rs] thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
-										 	
-		                      }
-		                  }
-		              }
-		          }
-		    
-		
-		       }
-		
+		        }
+            
 		    }
-
-		
-
-			if symbol_name == "runtime.unlock2" {
-              if let Some((_, args)) = function_args_map.get(&current_rip) {
-						let cpu = executor.state.cpu_state.lock().unwrap();
-						for (_arg_name, reg_names, _arg_type) in args {
-						    for reg_name in reg_names {
-						        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-						            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-											//println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
-											//println!("[VOLOS::main.rs] got unlock function call {:?} mutex=0x{:x}",symbol_name, value.concrete);
-            						   println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, value.concrete); 
-
-											let mut thread_manager = executor.state.thread_manager.lock().unwrap();
-										   let current_tid = thread_manager.current_tid;
-										   let mut current_thread: &mut OSThread<'_> = thread_manager.current_thread_mut().unwrap();
-											let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
-
-											locks.retain(|&x| x != value.concrete.to_u64());
-											let len = locks.len();
-
-											//println!("[VOLOS::main.rs] thread[{}].locks_held -> {:#?}",current_tid, locks);
-						            }
-						        }
-						    }
-						}
-				
-
-					}
-						
-				}
-
-
+	
+		}
+            
+        // This block is only to get data about the execution in results/execution_trace.txt
+        if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) {
+            // If entering strconv numeric parsing, proactively constrain argument bytes to digits
             if symbol_name == "strconv.Atoi" || symbol_name == "strconv.ParseInt" {
                 if let Some((_, args)) = function_args_map.get(&current_rip) {
                     // Find a string argument (two locations: ptr,len). Prefer exact type match.
@@ -1420,7 +1481,6 @@ fn execute_instructions_from(
                     }
                 }
             }
-
             if let Some((_, args)) = function_args_map.get(&current_rip) {
                 let mut arg_values = Vec::new();
                 let cpu = executor.state.cpu_state.lock().unwrap();
@@ -2459,19 +2519,19 @@ pub fn initialize_symbolic_part_args(
 ) -> Result<(), Box<dyn Error>> {
     // Read os.Args slice header (Pointer, Len, Cap)
     let mem = &executor.state.memory;
-	 let volos = &executor.new_volos();
     let slice_ptr = mem
-        .read_u64(args_addr, &mut executor.state.logger.clone(), volos.clone(), true)?
+        .read_u64(args_addr, &mut executor.state.logger.clone(), executor.new_volos(), true)?
         .concrete
         .to_u64(); // Pointer to backing array
     let slice_len = mem
-        .read_u64(args_addr + 8, &mut executor.state.logger.clone(), volos.clone(), true)?
+        .read_u64(args_addr + 8, &mut executor.state.logger.clone(), executor.new_volos(), true)?
         .concrete
         .to_u64(); // Length (number of arguments)
     let _slice_cap = mem
-        .read_u64(args_addr + 16, &mut executor.state.logger.clone(), volos.clone(), true)?
+        .read_u64(args_addr + 16, &mut executor.state.logger.clone(), executor.new_volos(), true)?
         .concrete
         .to_u64(); // Capacity (not used)
+
     log!(
         executor.state.logger,
         "os.Args -> ptr=0x{:?}, len={}, cap={}",
@@ -2482,14 +2542,13 @@ pub fn initialize_symbolic_part_args(
 
     // Iterate through each argument
     for i in 0..slice_len {
-	 	  let new_volos = executor.new_volos();
         let string_struct_addr = slice_ptr + i * 16; // Each Go string struct is 16 bytes
         let str_data_ptr = mem
-            .read_u64(string_struct_addr, &mut executor.state.logger.clone(), new_volos.clone(), true)?
+            .read_u64(string_struct_addr, &mut executor.state.logger.clone(), executor.new_volos(), true)?
             .concrete
             .to_u64(); // Pointer to actual string data
         let str_data_len = mem
-            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone(), new_volos.clone(), true)?
+            .read_u64(string_struct_addr + 8, &mut executor.state.logger.clone(), executor.new_volos(), true)?
             .concrete
             .to_u64(); // Length of the string
 
@@ -2507,7 +2566,7 @@ pub fn initialize_symbolic_part_args(
         }
 
         // Read the actual string bytes
-        let concrete_str_bytes = mem.read_bytes(str_data_ptr, str_data_len as usize, new_volos.clone(), true)?;
+        let concrete_str_bytes = mem.read_bytes(str_data_ptr, str_data_len as usize, executor.new_volos(), true)?;
 
         // Create fresh symbolic variables for each byte of this argument
         let mut fresh_symbolic = Vec::with_capacity(str_data_len as usize);
@@ -2522,7 +2581,7 @@ pub fn initialize_symbolic_part_args(
         }
 
         // Write those symbolic values back into memory
-        mem.write_memory(str_data_ptr, &concrete_str_bytes, &fresh_symbolic, new_volos.clone(), true)?;
+        mem.write_memory(str_data_ptr, &concrete_str_bytes, &fresh_symbolic,executor.new_volos(), true)?;
 
         log!(
             executor.state.logger,
@@ -2568,7 +2627,7 @@ fn get_cross_references(binary_path: &str) -> Result<(), Box<dyn Error>> {
 
     // Ensure the file was created
     if !Path::new("results/xref_addresses.txt").exists() {
-        panic!("xref_addresses.txt not found after running the Python script");
+        panic!("[ERROR]: xref_addresses.txt not found after running the Python script\n");
     }
 
     Ok(())
@@ -2645,7 +2704,7 @@ fn merge_vdso_pcode(
     if !vdso_pcode_path.exists() {
         log!(
             executor.state.logger,
-            "VDSO p-code file not found, skipping VDSO merge: {:?}",
+            "[WARNING]: VDSO p-code file not found, skipping VDSO merge: {:?}\n",
             vdso_pcode_path
         );
         return;
@@ -2653,7 +2712,7 @@ fn merge_vdso_pcode(
 
     log!(
         executor.state.logger,
-        "Merging VDSO p-code from: {:?}",
+        "Merging VDSO p-code from: {:?}\n",
         vdso_pcode_path
     );
 
@@ -2670,7 +2729,7 @@ fn merge_vdso_pcode(
             }
             log!(
                 executor.state.logger,
-                "Successfully merged {} VDSO instruction blocks",
+                "Successfully merged {} VDSO instruction blocks\n",
                 vdso_instr_count
             );
             tprintln!(
@@ -2679,7 +2738,6 @@ fn merge_vdso_pcode(
             );
         }
         Err(e) => {
-
             log!(
                 executor.state.logger,
                 "Failed to parse VDSO p-code: {}\n",
@@ -2691,53 +2749,6 @@ fn merge_vdso_pcode(
 }
 
 // Function to read the panic addresses from the file
-fn read_panic_addresses(executor: &mut ConcolicExecutor, filename: &str) -> io::Result<Vec<u64>> {
-    // Get the base path from the environment variable
-    let zorya_path_buf =
-        PathBuf::from(env::var("ZORYA_DIR").expect("ZORYA_DIR environment variable is not set"));
-    let zorya_path = zorya_path_buf.to_str().unwrap();
-
-    // Construct the full path to the results directory
-    let results_dir = Path::new(zorya_path).join("results");
-    let full_path = results_dir.join(filename);
-
-    // Ensure the file exists before trying to read it
-    if !full_path.exists() {
-        log!(
-            executor.state.logger,
-            "Error: File {:?} does not exist.",
-            full_path
-        );
-        return Err(io::Error::new(io::ErrorKind::NotFound, "File not found"));
-    }
-
-    let file = File::open(&full_path)?;
-    let reader = BufReader::new(file);
-    let mut addresses = Vec::new();
-
-    for line in reader.lines() {
-        let line = line?;
-        let line = line.trim();
-        if line.starts_with("0x") {
-            match u64::from_str_radix(&line[2..], 16) {
-                Ok(addr) => {
-                    // log!(executor.state.logger, "Read panic address: 0x{:x}", addr);
-                    addresses.push(addr);
-                }
-                Err(e) => {
-                    log!(
-                        executor.state.logger,
-                        "Failed to parse address {}: {}",
-                        line,
-                        e
-                    );
-                }
-            }
-        }
-    }
-    Ok(addresses)
-}
-
 // Function to add the arguments of the target binary from the user's command
 fn update_argc_argv(
     executor: &mut ConcolicExecutor,
@@ -2764,7 +2775,8 @@ fn update_argc_argv(
     // Write argc (concrete)
     executor.state.memory.write_value(
         rsp,
-        &MemoryValue::new(argc, BV::from_u64(&executor.context, argc, 64), 64), true)?;
+        &MemoryValue::new(argc, BV::from_u64(executor.context, argc, 64), 64), true
+    )?;
 
     let argv_ptr_base = rsp + 8;
     let mut current_string_address = argv_ptr_base + (argc + 1) * 8;
@@ -2776,8 +2788,8 @@ fn update_argc_argv(
             &MemoryValue::new(
                 current_string_address,
                 BV::from_u64(executor.context, current_string_address, 64),
-                64,
-            ), true
+                64
+            ),true
         )?;
 
         log!(
@@ -2808,7 +2820,7 @@ fn update_argc_argv(
         // NULL terminator
         executor.state.memory.write_value(
             current_string_address + arg_bytes.len() as u64,
-            &MemoryValue::new(0, BV::from_u64(&executor.context, 0, 8), 8), true
+            &MemoryValue::new(0, BV::from_u64(executor.context, 0, 8), 8), true
         )?;
 
         current_string_address += ((arg_bytes.len() + 8) as u64) & !7; // align to 8 bytes
@@ -2817,7 +2829,7 @@ fn update_argc_argv(
     // Write argv NULL terminator pointer
     executor.state.memory.write_value(
         argv_ptr_base + argc * 8,
-        &MemoryValue::new(0, BV::from_u64(executor.context, 0, 64), 64), true
+        &MemoryValue::new(0, BV::from_u64(executor.context, 0, 64), 64),true
     )?;
 
     Ok(())

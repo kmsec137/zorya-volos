@@ -208,7 +208,6 @@ pub fn handle_cpuid(executor: &mut ConcolicExecutor, instruction: Inst) -> Resul
         .size
         .to_bitvector_size() as u32;
 	 let mut new_volos = executor.new_volos();
-        .to_bitvector_size();
 
     // Memory address to temporarly store EAX, EBX, ECX, EDX
     let base_address = 0x300000;

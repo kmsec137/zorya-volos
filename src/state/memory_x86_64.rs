@@ -22,6 +22,7 @@ use crate::concolic::{ConcolicVar, ConcreteVar, Logger, SymbolicVar};
 use crate::target_info::GLOBAL_TARGET_INFO;
 use std::cell::RefCell;
 use volosvc::VolosVC;
+use std::sync::Arc;
 
 pub type MemoryReadResult<'ctx> = (Vec<u8>, Vec<Option<Rc<BV<'ctx>>>>);
 
@@ -767,7 +768,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
         size: usize,
 		  volos: Volos,
 		  internal: bool
-    ) -> Result<(Vec<u8>, Vec<Option<Arc<BV<'ctx>>>>), MemoryError> {
+    ) -> Result<(Vec<u8>, Vec<Option<Rc<BV<'ctx>>>>), MemoryError> {
 		 
         let mut regions = self.regions.write().unwrap(); //KEITH changed this to get around RwLock stuff
 		  let new_volos = Volos::new(volos.thread_id,AccessType::Read,volos.locks_held, Some(volos.vector_clock));
@@ -1149,7 +1150,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
         &self,
         address: u64,
         concrete: &[u8],
-        symbolic: &[Option<Arc<BV<'ctx>>>],
+        symbolic: &[Option<Rc<BV<'ctx>>>],
 			volos: Volos,
 			internal: bool
     ) -> Result<(), MemoryError> {
@@ -1210,7 +1211,7 @@ impl<'ctx> MemoryX86_64<'ctx> {
     /// Writes a sequence of bytes to memory. **volos we need thread_id meta_data here
     pub fn write_bytes(&self, address: u64, bytes: &[u8], volos: Volos, internal: bool) -> Result<(), MemoryError> {
         // Create a vector of `None` for symbolic values as we're only dealing with concrete data
-        let symbolic: Vec<Option<Arc<BV<'ctx>>>> = vec![None; bytes.len()];
+        let symbolic: Vec<Option<Rc<BV<'ctx>>>> = vec![None; bytes.len()];
         self.write_memory(address, bytes, &symbolic, volos, internal)
     }
 

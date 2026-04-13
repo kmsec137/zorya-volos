@@ -74,6 +74,7 @@ pub struct CloneParams {
     pub clone_flags: u64,
     pub child_tid_ptr: Option<u64>,
     pub child_cleartid_ptr: Option<u64>,
+	 pub locks_held: Vec<u64>
 }
 
 impl<'ctx> OSThread<'ctx> {
@@ -143,7 +144,8 @@ impl<'ctx> OSThread<'ctx> {
         cpu_state
             .set_register_value_by_offset(rax_offset, rax_concolic, rax_size)
             .map_err(|e| anyhow!("Failed to set RAX: {}", e))?;
-        let clone_locks_held = locks_held.clone();
+        let clone_locks_held = params.locks_held.clone();
+
         Ok(OSThread {
             tid: params.tid,
             parent_tid: params.parent_tid,
@@ -153,9 +155,9 @@ impl<'ctx> OSThread<'ctx> {
             gs_base: 0,
             entry_point: params.entry_point,
             status: ThreadStatus::Ready,
+            locks_held: clone_locks_held,
 /*
 <<<<<<< HEAD
-            locks_held: clone_locks_held,
             clone_flags,
             child_tid_ptr,
             child_cleartid_ptr,
@@ -312,13 +314,14 @@ impl<'ctx> ThreadManager<'ctx> {
         let new_thread = OSThread::new_from_clone(
             &CloneParams {
                 tid: new_tid,
-                parent_tid,
-                stack_pointer,
-                entry_point,
-                tls_base,
-                clone_flags,
-                child_tid_ptr,
-                child_cleartid_ptr,
+                parent_tid: parent_tid,
+                stack_pointer: stack_pointer,
+                entry_point: entry_point,
+                tls_base: tls_base,
+                clone_flags: clone_flags,
+                child_tid_ptr: child_tid_ptr,
+                child_cleartid_ptr: child_cleartid_ptr,
+					 locks_held: parent_locks_held.clone()
             },
             parent_cpu,
 /*
