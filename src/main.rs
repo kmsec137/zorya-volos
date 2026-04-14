@@ -1323,233 +1323,80 @@ fn execute_instructions_from(
 		        executor.tick_vc(&tid.to_string());
 
 				 // TEST PASTE BEGIN
+			}
 
-								if name == "runtime.unlock2" {
-			   		 		println!(
-			   		 	    "[VOLOS] ticked the vc clock for thread:{:?} --> vc:{}",
-			   		 	    current_tid, 
-			   		 	    executor.main_vecclock
-			   		 		);
+						if name == "runtime.unlock2" {
+			   		 				println!(
+			   		 			    "[VOLOS] ticked the vc clock for thread:{:?} --> vc:{}",
+			   		 			    current_tid, 
+			   		 			    executor.main_vecclock
+			   		 				);
 
-            		 	 if let Some((_, args)) = function_args_map.get(&current_rip) {
-        				 			println!("[ZORYA @<0x{:x}>] runtime.lock2 check {:?}",current_rip, args); 
-						 	  	let cpu = executor.state.cpu_state.lock().unwrap();
-						 	  	for (_arg_name, reg_names, _arg_type) in args {
-						 	  	    for reg_name in reg_names {
-						 	  	        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-						 	  	            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-						 	  						//println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
-						 	  						//println!("[VOLOS::main.rs] got unlock function call {:?} mutex=0x{:x}",symbol_name, value.concrete);
-            		 	  					    println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, name, value.concrete); 
+            		 			 if let Some((_, args)) = function_args_map.get(&current_rip) {
+        				 					println!("[ZORYA @<0x{:x}>] runtime.unlock2 check {:?}",current_rip, args); 
+											let mutex_addr: Option<u64> = {
+						 			  			 let cpu = executor.state.cpu_state.lock().unwrap();
+											    let mut result = None;
+											    for (_arg_name, reg_names, _arg_type) in args {
+											        for reg_name in reg_names {
+											            if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
+											                if let Some(value) = cpu.get_register_by_offset(offset, 64) {
+											                    result = Some(value.concrete.to_u64());
+											                }
+											            }
+											        }
+											    }
+											    drop(cpu);
+											    result
+											};
+											
+											//then
+											
+											if let Some(addr) = mutex_addr {
+											    let mut tm = executor.state.thread_manager.lock().unwrap();
+											    let thread = tm.current_thread_mut().unwrap();
+											    thread.locks_held.retain(|&x| x != addr);
+											
+					      				 }
+            						}
+						 			  	
+										
+		    			}
+						if name == "sym.runtime.lock" || name == "runtime.lock2" {
+					      	 if let Some((_, args)) = function_args_map.get(&current_rip) {
+			        			 		println!("[ZORYA @<0x{:x}>] runtime.lock2 check {:?}",current_rip, args); 
+										let mutex_addr: Option<u64> = {
+					      	      	let cpu = executor.state.cpu_state.lock().unwrap();
+										    let mut result = None;
+										    for (_arg_name, reg_names, _arg_type) in args {
+										        for reg_name in reg_names {
+										            if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
+										                if let Some(value) = cpu.get_register_by_offset(offset, 64) {
+										                    result = Some(value.concrete.to_u64());
+										                }
+										            }
+										        }
+										    }
+											 drop(cpu);
+										    result
+										};
+										
+										//then
+										
+										if let Some(addr) = mutex_addr {
+										    let mut tm = executor.state.thread_manager.lock().unwrap();
+										    let thread = tm.current_thread_mut().unwrap();
+										    thread.locks_held.push(addr);
+										
+					      	 		 }
+            					}
 
-				 	  							   let mut _thread_manager = executor.state.thread_manager.lock().unwrap();
-						 	  					   let mut current_thread: &mut OSThread<'_> = _thread_manager.current_thread_mut().unwrap();
-						 	  						let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
-
-						 	  						locks.retain(|&x| x != value.concrete.to_u64());
-						 	  						let len = locks.len();
-
-						 	  						//println!("[VOLOS::main.rs] thread[{}].locks_held -> {:#?}",current_tid, locks);
-						 	  	            }
-						 	  	        }
-						 	  	    }
-						 	  	}
-						
-
-						 	  }
-								
-		    				}
-      
-
-
-
-
-							if name == "sym.runtime.lock" || name == "runtime.lock2" {
-					       if let Some((_, args)) = function_args_map.get(&current_rip) {
-			        		 		println!("[ZORYA @<0x{:x}>] runtime.lock2 check {:?}",current_rip, args); 
-					            let cpu = executor.state.cpu_state.lock().unwrap();
-					            for (arg_name, reg_names, _arg_type) in args {
-					         	    for reg_name in reg_names {
-					         	        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-					         	            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-					         	            //println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
-					         	            //println!("[VOLOS::main.rs] got lock function call {:?} mutex=0x{:x}",symbol_name, value.concrete);
-			            					    println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, name, value.concrete); 
-
-				 	  									 let mut _thread_manager = executor.state.thread_manager.lock().unwrap();
-					         	                let mut current_thread: &mut OSThread<'_> = _thread_manager.current_thread_mut().unwrap();
-					         	                let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
-					         	                locks.push(value.concrete.to_u64());
-			                                }
-					         	            //let len = locks.len();
-					         	            //println!("[VOLOS::main.rs] thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
-														 	
-					         	        }
-					         	    }
-					         	}
-					        }
-            }
-
-
+							}
 				// TEST PASTE END
 
-
-
-
-
-
-
-
-
-
-
-
 		    }
-		}
-
-		let symbol_name_extract = executor.symbol_table.get(&current_rip_hex).cloned();
-		if let Some(symbol_name) = symbol_name_extract {
-          	  if symbol_name == "runtime.unlock2" {
-        		 		//println!("[ZORYA @<0x{:x}>] runtime.unlock2 check ",current_rip); 
-				 	  					//drop(thread_manager);
-				 	  
-				 	 //executor.tick_vc(&current_tid.to_string());	
-		       	 //executor.tick_vc(&tid.expect("current tid unable to extract :(").to_string());
-			    		println!(
-			    	    "[VOLOS] ticked the vc clock for thread:{:?} --> vc:{}",
-			    	    current_tid, 
-			    	    executor.main_vecclock
-			    		);
-
-             	 if let Some((_, args)) = function_args_map.get(&current_rip) {
-        		 			println!("[ZORYA @<0x{:x}>] runtime.lock2 check {:?}",current_rip, args); 
-				 	  	let cpu = executor.state.cpu_state.lock().unwrap();
-				 	  	for (_arg_name, reg_names, _arg_type) in args {
-				 	  	    for reg_name in reg_names {
-				 	  	        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-				 	  	            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-				 	  						//println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
-				 	  						//println!("[VOLOS::main.rs] got unlock function call {:?} mutex=0x{:x}",symbol_name, value.concrete);
-             	  					    println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, value.concrete); 
-
-				 	  						let mut thread_manager = executor.state.thread_manager.lock().unwrap();
-				 	  					   let current_tid = thread_manager.current_tid;
-				 	  					   let mut current_thread: &mut OSThread<'_> = thread_manager.current_thread_mut().unwrap();
-				 	  						let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
-
-				 	  						locks.retain(|&x| x != value.concrete.to_u64());
-				 	  						let len = locks.len();
-
-				 	  						//println!("[VOLOS::main.rs] thread[{}].locks_held -> {:#?}",current_tid, locks);
-				 	  	            }
-				 	  	        }
-				 	  	    }
-				 	  	}
-				
-
-				 	  }
-						
-		    	}
-      
-            if symbol_name == "sym.runtime.lock" || symbol_name == "runtime.lock2" {
-						//let thread_manager = executor.state.thread_manager.lock().unwrap();
-		   		   //let current_tid = thread_manager.current_tid;
-						//drop(thread_manager);
-
-						//executor.tick_vc(&current_tid.to_string());	
-
-        		  //println!("[ZORYA @<0x{:x}>] runtime.lock2 check ",current_rip); 
-		        if let Some((_, args)) = function_args_map.get(&current_rip) {
-        		 		println!("[ZORYA @<0x{:x}>] runtime.lock2 check {:?}",current_rip, args); 
-		            let cpu = executor.state.cpu_state.lock().unwrap();
-		            for (arg_name, reg_names, _arg_type) in args {
-		         	    for reg_name in reg_names {
-		         	        if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-		         	            if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-		         	            //println!("[VOLOS::main.rs] got lock function call {:?} mutex={:?}",symbol_name,args,arg_name, value.concrete)
-		         	            //println!("[VOLOS::main.rs] got lock function call {:?} mutex=0x{:x}",symbol_name, value.concrete);
-            					    println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, value.concrete); 
-		         	                let mut thread_manager = executor.state.thread_manager.lock().unwrap();
-		         	                let current_tid = thread_manager.current_tid;
-
-		         	                let mut current_thread: &mut OSThread<'_> = thread_manager.current_thread_mut().unwrap();
-		         	                let mut locks: &mut Vec<u64> = current_thread.locks_held.borrow_mut();
-		         	                locks.push(value.concrete.to_u64());
-                                }
-		         	            //let len = locks.len();
-		         	            //println!("[VOLOS::main.rs] thread[{}].locks_held -> {:#?}",current_tid, locks.get(len - 1));
-											 	
-		         	        }
-		         	    }
-		         	}
-		        }
-            }
-
-
-		    if symbol_name == "runtime.makechan" || symbol_name == "runtime.makechan2" {
-				//executor.tick_vc(&current_tid.to_string());
-			   //println!(   "[VOLOS] ticked the vc clock for thread:{} --> vc:{}",current_tid, executor.main_vecclock);
-
-		      if let Some((_, args)) = function_args_map.get(&current_rip) {
-		          let cpu = executor.state.cpu_state.lock().unwrap();
-		          for (arg_name, reg_names, _arg_type) in args {
-		              for reg_name in reg_names {
-		                  if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-		                      if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-            						 println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, value.concrete); 
-										 	
-		                      }
-		                  }
-		              }
-		          }
-		    
 		
-		       }
-		
-		    }
 
-                    
-		    if symbol_name == "runtime.chanrecv" || symbol_name == "runtime.chanrecv2" {
-
-		        if let Some((_, args)) = function_args_map.get(&current_rip) {
-		            let cpu = executor.state.cpu_state.lock().unwrap();
-		            for (arg_name, reg_names, _arg_type) in args {
-		                for reg_name in reg_names {
-		                    if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-		                        if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-            						 println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, value.concrete); 
-										 	
-		                        }
-		                    }
-		                }
-		            }
-		    
-		
-		        }
-		
-	    	} 
-
-            if symbol_name == "runtime.chansend" || symbol_name == "runtime.chansend2" {
-		        if let Some((_, args)) = function_args_map.get(&current_rip) {
-		          let cpu = executor.state.cpu_state.lock().unwrap();
-		            for (arg_name, reg_names, _arg_type) in args {
-		              for reg_name in reg_names {
-		                    if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-		                        if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-            						 println!("[ZORYA @<0x{:x}>] encountered {} operation args -> {:?}",current_rip, symbol_name, value.concrete); 
-										 	
-		                        }
-		                    }
-		                }
-		            }
-		    
-	
-		        }
-            
-		    }
-	
-		}
-            
         // This block is only to get data about the execution in results/execution_trace.txt
         if let Some(symbol_name) = executor.symbol_table.get(&current_rip_hex) {
             // If entering strconv numeric parsing, proactively constrain argument bytes to digits
