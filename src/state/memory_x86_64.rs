@@ -18,6 +18,13 @@ use regex::Regex;
 use z3::{ast::BV, Context};
 
 use super::VirtualFileSystem;
+
+use std::sync::OnceLock;
+
+fn volos_verbose() -> bool {
+    static VERBOSE: OnceLock<bool> = OnceLock::new();
+    *VERBOSE.get_or_init(|| std::env::var("VOLOS_VERBOSE").map_or(false, |v| v == "1"))
+}
 use crate::concolic::{ConcolicVar, ConcreteVar, Logger, SymbolicVar};
 use crate::target_info::GLOBAL_TARGET_INFO;
 use std::cell::RefCell;
@@ -61,7 +68,7 @@ impl Default for AccessType {
 /// Named after Veles, the Slavic god associated with hidden knowledge, the
 /// underworld, and the history of the ancestors, this struct captures the
 /// essential "history" of a thread's interaction with shared memory.
-#[derive(Debug,  Clone)]
+#[derive(Clone)]
 pub struct Volos {
     /// The unique identifier of the thread performing the access.
     pub thread_id: u64,
@@ -91,6 +98,27 @@ pub struct Volos {
 	pub vector_clock: VolosVC
 
     //TODO: pub path_cnd: Vec<??> we need to add a vector of path conditions that summerise how we reach these reads/writes - implement later
+}
+
+impl fmt::Debug for Volos {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn fmt_hex_opt(val: &Option<u64>) -> String {
+            match val {
+                Some(v) => format!("0x{:x}", v),
+                None => "None".to_string(),
+            }
+        }
+        write!(f, "Volos {{ thread_id: {}, access_type: {:?}, locks_held: [{}], addr: {}, size: {}, go_id: {}, timestamp: {}, vector_clock: {:?} }}",
+            self.thread_id,
+            self.access_type,
+            self.locks_held.iter().map(|l| format!("0x{:x}", l)).collect::<Vec<_>>().join(", "),
+            fmt_hex_opt(&self.addr),
+            fmt_hex_opt(&self.size),
+            fmt_hex_opt(&self.go_id),
+            fmt_hex_opt(&self.timestamp),
+            self.vector_clock,
+        )
+    }
 }
 
 // 1. Logic for Equality
@@ -457,7 +485,17 @@ impl Volos {
 				go_id: Some(0),
 				vector_clock: m_vector_clock
         }
+    }
 
+    pub fn with_addr_size(mut self, addr: u64, size: u64) -> Self {
+        self.addr = Some(addr);
+        self.size = Some(size);
+        self
+    }
+
+    pub fn with_go_id(mut self, go_id: u64) -> Self {
+        self.go_id = Some(go_id);
+        self
     }
 
 }
@@ -771,7 +809,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
     ) -> Result<(Vec<u8>, Vec<Option<Rc<BV<'ctx>>>>), MemoryError> {
 		 
         let mut regions = self.regions.write().unwrap(); //KEITH changed this to get around RwLock stuff
-		  let new_volos = Volos::new(volos.thread_id,AccessType::Read,volos.locks_held, Some(volos.vector_clock));
+		  let new_volos = Volos::new(volos.thread_id,AccessType::Read,volos.locks_held, Some(volos.vector_clock))
+		      .with_addr_size(address, size as u64);
 
 		  //println!("[VOLOS] READ MEM @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{:#?} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
         for region in regions.iter_mut() {
@@ -813,7 +852,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
 					let addr_str = format!("{:02x} ", address).to_string();
 
 
-		  			 println!("[VOLOS] READ  MEM @[0x{:<width$}] <= {:<width$} #{:?}", addr_str,concrete_str, new_volos, width=14);
+		  			 if volos_verbose() {
+		  			     println!("[VOLOS] READ  MEM @[0x{:<width$}] <= {:<width$} #{:?}", addr_str,concrete_str, new_volos, width=14);
+		  			 }
                 return Ok((concrete, symbolic));
             }
 
@@ -1159,7 +1200,8 @@ impl<'ctx> MemoryX86_64<'ctx> {
         }
 			let new_volos = Volos::new(volos.thread_id,
 												AccessType::Write,
-												volos.locks_held, Some(volos.vector_clock));
+												volos.locks_held, Some(volos.vector_clock))
+								.with_addr_size(address, concrete.len() as u64);
 
 			//println!("[VOLOS] WRITE MEM --> @[0x{:X}] <Volos( thread_id:{:?} access_type:{:?} locks_held:{} )>", address, new_volos.thread_id, new_volos.access_type, new_volos.locks_held.len());
 		  let concrete_str = concrete.iter()
@@ -1167,7 +1209,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
 									    .collect::<String>();
 		  let addr_str = format!("{:02x} ", address).to_string();
 
-		  println!("[VOLOS] WRITE MEM @[0x{:<width$}] <= {:<width$} #{:?}", addr_str,concrete_str, new_volos, width=14);
+		  if volos_verbose() {
+		      println!("[VOLOS] WRITE MEM @[0x{:<width$}] <= {:<width$} #{:?}", addr_str,concrete_str, new_volos, width=14);
+		  }
 
         let mut regions = self.regions.write().unwrap();
         // Check if the address falls within an existing memory region
