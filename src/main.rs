@@ -1363,6 +1363,7 @@ fn execute_instructions_from(
 										
 		    			}
 						if name == "sym.runtime.lock" || name == "runtime.lock2" {
+								println!("[DEBUG] looking up 0x{:x} in function_args_map, exists={}", current_rip, function_args_map.contains_key(&current_rip));
 					      	 if let Some((_, args)) = function_args_map.get(&current_rip) {
 			        			 		println!("[ZORYA @<0x{:x}>] runtime.lock2 check {:?}",current_rip, args); 
 										let mutex_addr: Option<u64> = {
