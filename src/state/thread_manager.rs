@@ -271,13 +271,11 @@ impl<'ctx> ThreadManager<'ctx> {
             .get(&self.current_tid)
             .ok_or_else(|| anyhow!("Current thread {} not found", self.current_tid))
     }
-    pub fn current_thread_takelock(&self,new_lock: u64) -> () {
-				//check if have taken this lock already
-			   //we need to check against other threads if they've taken it?
-			   //probably need some "quicklist" of last 3/4 taken locks to check against
-				let cur_tid = self.current_thread().unwrap();
-				let mut cur_locks = cur_tid.locks_held.clone(); 
-				cur_locks.push(new_lock);
+    pub fn current_thread_takelock(&mut self, new_lock: u64) -> () {
+        let thread = self.current_thread_mut().unwrap();
+        if !thread.locks_held.contains(&new_lock) {
+            thread.locks_held.push(new_lock);
+        }
     }
     /// Get the current running thread (mutable)
     pub fn current_thread_mut(&mut self) -> Result<&mut OSThread<'ctx>> {

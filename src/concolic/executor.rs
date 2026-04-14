@@ -192,12 +192,13 @@ impl<'ctx> ConcolicExecutor<'ctx> {
     /// The goid offset is loaded from results/runtime_g_offsets.json,
     /// which is generated during DWARF analysis.
     fn extract_gid_from_tls(&self) -> Result<u64, String> {
-        // Read FS base register (TLS base)
-        let cpu_state = self
-            .state
-            .cpu_state
-            .lock()
-            .map_err(|e| format!("Failed to lock CPU state: {}", e))?;
+        // Use try_lock to avoid deadlocking when cpu_state is already held
+        // (e.g., when called from new_volos() inside a syscall handler)
+        let cpu_state = match self.state.cpu_state.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(0),
+            Err(e) => return Err(format!("Failed to lock CPU state: {}", e)),
+        };
 
         let fs_base = cpu_state
             .get_register_by_offset(0x110, 64) // FS_OFFSET
@@ -218,7 +219,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         let g_ptr = self
             .state
             .memory
-            .read_value(g_ptr_addr, 64, &mut self.state.logger.clone(), self.new_volos(), true)
+            .read_value(g_ptr_addr, 64, &mut self.state.logger.clone(), self.new_volos_bare(), true)
             .map(|v| v.concrete.to_u64())
             .unwrap_or(0);
 
@@ -233,7 +234,7 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         let goid = self
             .state
             .memory
-            .read_value(g_ptr + goid_offset, 64, &mut self.state.logger.clone(), self.new_volos(), true)
+            .read_value(g_ptr + goid_offset, 64, &mut self.state.logger.clone(), self.new_volos_bare(), true)
             .map(|v| v.concrete.to_u64())
             .unwrap_or(0);
 
@@ -834,18 +835,25 @@ impl<'ctx> ConcolicExecutor<'ctx> {
         Ok(())
     }
 
-	 pub fn new_volos(&self) ->  Volos {
-		  //let go_id = &self.get_current_goroutine_id();
-	     let tm = &self.state.thread_manager.lock().unwrap();
-	     let cur_tid = &tm.current_tid; 
-	     let cur_locks_held = &tm.threads.get(cur_tid).unwrap().locks_held;
-	     let new_access_type = AccessType::default(); //default
-		  let vec_clock = &self.main_vecclock;
-	     let new_volos = Volos::new(*cur_tid, 
-	                                 new_access_type,
-	                                 cur_locks_held.clone(), Some(vec_clock.clone()));
-	 
-	      return new_volos;
+	 fn new_volos_bare(&self) -> Volos {
+	     let (tid, locks, vec_clock) = {
+	         let tm = self.state.thread_manager.lock().unwrap();
+	         let cur_tid = tm.current_tid;
+	         let cur_locks_held = tm.threads.get(&cur_tid).unwrap().locks_held.clone();
+	         let vc = self.main_vecclock.clone();
+	         (cur_tid, cur_locks_held, vc)
+	     };
+	     Volos::new(tid, AccessType::default(), locks, Some(vec_clock))
+	 }
+
+	 pub fn new_volos(&self) -> Volos {
+	     let mut volos = self.new_volos_bare();
+
+	     if let Ok(goid) = self.get_current_goroutine_id() {
+	         volos = volos.with_go_id(goid);
+	     }
+
+	     volos
 	 }
 
     // Transform the varnode.var into a concolic object in zorya

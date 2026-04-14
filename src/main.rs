@@ -58,6 +58,12 @@ macro_rules! log {
     }};
 }
 
+fn zorya_regdump() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("ZORYA_REG_DUMP").map_or(false, |v| v == "1"))
+}
+
 /// Functions we want to completely ignore / skip execution in the TinyGo runtime.
 const IGNORED_TINYGO_FUNCS: &[&str] = &[
     // "runtime.markRoots",
@@ -1141,104 +1147,7 @@ fn execute_instructions_from(
             );
         }
 
-        if current_rip == end_address {
-            log!(
-                executor.state.logger,
-                "END ADDRESS 0x{:x} REACHED, STOP THE EXECUTION",
-                end_address
-            );
-            break; // Stop execution if end address is reached
-            }
-
-        log!(
-            executor.state.logger,
-            "*******************************************"
-        );
-        log!(
-            executor.state.logger,
-            "EXECUTING INSTRUCTIONS AT ADDRESS: 0x{:x}",
-            current_rip
-        );
-        log!(
-            executor.state.logger,
-            "*******************************************"
-        );
-
         let current_rip_hex = format!("{:x}", current_rip);
-
-        // Block-level coverage: update the sticky bar at the bottom of the terminal
-        // whenever a genuinely new block is entered.
-        if executor.visited_blocks.insert(current_rip) {
-            print_coverage_bar(
-                executor.visited_blocks.len(),
-                instructions_map.len(),
-                executor.start_time.elapsed().as_secs_f64(),
-                zorya::Z3_CUMULATIVE_MS.load(std::sync::atomic::Ordering::Relaxed),
-                executor.constraint_vector.len(),
-            );
-        }
-
-        // This block is only to get data about the execution in results/execution_trace.txt
-		  //let m_executor = executor.borrow_mut(); 
-		  let mut is_concurrent: bool = false;
-
-			/**
-        let (name, is_concurrent) = { 
-            if let Some(_name) = executor.symbol_table.get(&current_rip_hex) { 
-                let  is_concurrent = _name == "sym.runtime.lock" || _name == "runtime.lock2" 
-						|| _name == "runtime.unlock" || _name == "runtime.unlock2" 
-						|| _name == "runtime.chansend"
-						|| _name == "runtime.newproc1";
-                
-                if is_concurrent{  
-							println!("[VOLOS] encountered a concurrent function call --> {}", _name);
-							let thread_manager = executor.state.thread_manager.lock().unwrap();
-		   	     		let current_tid = thread_manager.current_tid;
-							//drop(thread_manager);
-							executor.tick_vc(&current_tid.to_string());	
-							println!("[VOLOS] ticked the vc clock for thread:{} --> vc:{}",&current_tid.to_string(),executor.main_vecclock);
-                  	(Some(_name),is_concurrent)
-                } else { (None, false)}
-            } else{
-            (None,false) }
-        };  **/
-        
-        if current_rip == end_address {
-            log!(
-                executor.state.logger,
-                "END ADDRESS 0x{:x} REACHED, STOP THE EXECUTION",
-                end_address
-            );
-            break; // Stop execution if end address is reached
-            }
-
-        log!(
-            executor.state.logger,
-            "*******************************************"
-        );
-        log!(
-            executor.state.logger,
-            "EXECUTING INSTRUCTIONS AT ADDRESS: 0x{:x}",
-            current_rip
-        );
-        log!(
-            executor.state.logger,
-            "*******************************************"
-        );
-
-        let current_rip_hex = format!("{:x}", current_rip);
-
-        // Block-level coverage: update the sticky bar at the bottom of the terminal
-        // whenever a genuinely new block is entered.
-        if executor.visited_blocks.insert(current_rip) {
-            print_coverage_bar(
-                executor.visited_blocks.len(),
-                instructions_map.len(),
-                executor.start_time.elapsed().as_secs_f64(),
-                zorya::Z3_CUMULATIVE_MS.load(std::sync::atomic::Ordering::Relaxed),
-                executor.constraint_vector.len(),
-            );
-        }
 
         // This block is only to get data about the execution in results/execution_trace.txt
 		  //let m_executor = executor.borrow_mut(); 
@@ -1309,91 +1218,101 @@ fn execute_instructions_from(
 	//tick the clock
 
 		if let (Some(name), Some(tid)) = (symbol_name_extract, current_tid) {
-		    let is_concurrent = name == "sym.runtime.lock" || name == "runtime.lock2" 
-		        || name == "runtime.unlock" || name == "runtime.unlock2"
+		    let is_lock = name == "sym.runtime.lock" || name == "runtime.lock2"
+		        || name == "sync.(*Mutex).Lock"
+		        || name == "sync.(*Mutex).lockSlow"
+		        || name == "internal/sync.(*Mutex).Lock"
+		        || name == "internal/sync.(*Mutex).lockSlow";
+
+		    let is_unlock = name == "runtime.unlock" || name == "runtime.unlock2"
+		        || name == "sync.(*Mutex).Unlock"
+		        || name == "sync.(*Mutex).unlockSlow"
+		        || name == "internal/sync.(*Mutex).Unlock"
+		        || name == "internal/sync.(*Mutex).unlockSlow";
+
+		    let is_concurrent = is_lock || is_unlock
 		        || name == "runtime.chansend" || name == "runtime.newproc1";
-		
+
 		    if is_concurrent {
 		        println!("[VOLOS] Tick for {} (TID: {:?})", name, tid);
-		        
-		        // 3. MUTABLE CALL
-		        // This now works because 'symbol_table' is no longer borrowed 
-		        // and the 'thread_manager' lock was dropped above.
-		        //executor.tick_vc(&tid.expect("current tid unable to extract :(").to_string());
-		        executor.tick_vc(&tid.to_string());
+		        let _ = executor.tick_vc(&tid.to_string());
+		    }
 
-				 // TEST PASTE BEGIN
-			}
+		    if is_unlock {
+		        println!(
+		            "[VOLOS] ticked the vc clock for thread:{:?} --> vc:{}",
+		            current_tid,
+		            executor.main_vecclock
+		        );
 
-						if name == "runtime.unlock2" {
-			   		 				println!(
-			   		 			    "[VOLOS] ticked the vc clock for thread:{:?} --> vc:{}",
-			   		 			    current_tid, 
-			   		 			    executor.main_vecclock
-			   		 				);
+		        let mutex_addr: Option<u64> = if let Some((_, args)) = function_args_map.get(&current_rip) {
+		            println!("[ZORYA @<0x{:x}>] unlock check {:?}", current_rip, args);
+		            let cpu = executor.state.cpu_state.lock().unwrap();
+		            let mut result = None;
+		            for (_arg_name, reg_names, _arg_type) in args {
+		                for reg_name in reg_names {
+		                    if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
+		                        if let Some(value) = cpu.get_register_by_offset(offset, 64) {
+		                            result = Some(value.concrete.to_u64());
+		                        }
+		                    }
+		                }
+		            }
+		            drop(cpu);
+		            result
+		        } else {
+		            let cpu = executor.state.cpu_state.lock().unwrap();
+		            let result = cpu.resolve_offset_from_register_name("RAX")
+		                .and_then(|offset| cpu.get_register_by_offset(offset, 64))
+		                .map(|value| value.concrete.to_u64());
+		            drop(cpu);
+		            if result.is_some() {
+		                println!("[ZORYA @<0x{:x}>] unlock (RAX fallback) addr=0x{:x}", current_rip, result.unwrap());
+		            }
+		            result
+		        };
 
-            		 			 if let Some((_, args)) = function_args_map.get(&current_rip) {
-        				 					println!("[ZORYA @<0x{:x}>] runtime.unlock2 check {:?}",current_rip, args); 
-											let mutex_addr: Option<u64> = {
-						 			  			 let cpu = executor.state.cpu_state.lock().unwrap();
-											    let mut result = None;
-											    for (_arg_name, reg_names, _arg_type) in args {
-											        for reg_name in reg_names {
-											            if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-											                if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-											                    result = Some(value.concrete.to_u64());
-											                }
-											            }
-											        }
-											    }
-											    drop(cpu);
-											    result
-											};
-											
-											//then
-											
-											if let Some(addr) = mutex_addr {
-											    let mut tm = executor.state.thread_manager.lock().unwrap();
-											    let thread = tm.current_thread_mut().unwrap();
-											    thread.locks_held.retain(|&x| x != addr);
-											
-					      				 }
-            						}
-						 			  	
-										
-		    			}
-						if name == "sym.runtime.lock" || name == "runtime.lock2" {
-								println!("[DEBUG] looking up 0x{:x} in function_args_map, exists={}", current_rip, function_args_map.contains_key(&current_rip));
-					      	 if let Some((_, args)) = function_args_map.get(&current_rip) {
-			        			 		println!("[ZORYA @<0x{:x}>] runtime.lock2 check {:?}",current_rip, args); 
-										let mutex_addr: Option<u64> = {
-					      	      	let cpu = executor.state.cpu_state.lock().unwrap();
-										    let mut result = None;
-										    for (_arg_name, reg_names, _arg_type) in args {
-										        for reg_name in reg_names {
-										            if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
-										                if let Some(value) = cpu.get_register_by_offset(offset, 64) {
-										                    result = Some(value.concrete.to_u64());
-										                }
-										            }
-										        }
-										    }
-											 drop(cpu);
-										    result
-										};
-										
-										//then
-										
-										if let Some(addr) = mutex_addr {
-										    let mut tm = executor.state.thread_manager.lock().unwrap();
-										    let thread = tm.current_thread_mut().unwrap();
-										    thread.locks_held.push(addr);
-										
-					      	 		 }
-            					}
+		        if let Some(addr) = mutex_addr {
+		            let mut tm = executor.state.thread_manager.lock().unwrap();
+		            let thread = tm.current_thread_mut().unwrap();
+		            thread.locks_held.retain(|&x| x != addr);
+		        }
+		    }
 
-							}
-				// TEST PASTE END
+		    if is_lock {
+		        let mutex_addr: Option<u64> = if let Some((_, args)) = function_args_map.get(&current_rip) {
+		            println!("[ZORYA @<0x{:x}>] lock check {:?}", current_rip, args);
+		            let cpu = executor.state.cpu_state.lock().unwrap();
+		            let mut result = None;
+		            for (_arg_name, reg_names, _arg_type) in args {
+		                for reg_name in reg_names {
+		                    if let Some(offset) = cpu.resolve_offset_from_register_name(reg_name) {
+		                        if let Some(value) = cpu.get_register_by_offset(offset, 64) {
+		                            result = Some(value.concrete.to_u64());
+		                        }
+		                    }
+		                }
+		            }
+		            drop(cpu);
+		            result
+		        } else {
+		            let cpu = executor.state.cpu_state.lock().unwrap();
+		            let result = cpu.resolve_offset_from_register_name("RAX")
+		                .and_then(|offset| cpu.get_register_by_offset(offset, 64))
+		                .map(|value| value.concrete.to_u64());
+		            drop(cpu);
+		            if result.is_some() {
+		                println!("[ZORYA @<0x{:x}>] lock (RAX fallback) addr=0x{:x}", current_rip, result.unwrap());
+		            }
+		            result
+		        };
+
+		        if let Some(addr) = mutex_addr {
+		            let mut tm = executor.state.thread_manager.lock().unwrap();
+		            let thread = tm.current_thread_mut().unwrap();
+		            thread.locks_held.push(addr);
+		        }
+		    }
 
 		    }
 		
@@ -1884,6 +1803,7 @@ fn execute_instructions_from(
             // For debugging
             //log!(executor.state.logger, "Printing memory content around 0x{:x} with range 0x{:x}", address, range);
             //executor.state.print_memory_content(address, range);
+            if zorya_regdump() {
             let register0x0 = executor
                 .state
                 .cpu_state
@@ -2195,6 +2115,7 @@ fn execute_instructions_from(
                 "The value of register at offset 0x110 - FS_OFFSET is {:x}",
                 register0x110.concrete
             );
+            } // end register dump (gated by logger.is_enabled())
 
             // Check if there's a requested jump within the current block
             if executor.pcode_internal_lines_to_be_jumped != 0 {
@@ -2252,75 +2173,36 @@ fn execute_instructions_from(
                         possible_new_rip
                     );
                     if let Some(symbol_name_potential_new_rip) =
-                        executor.symbol_table.get(&possible_new_rip_hex)
+                        executor.symbol_table.get(&possible_new_rip_hex).cloned()
                     {
-                        // Found a symbol, check if it's blacklisted, etc.
-                        if IGNORED_TINYGO_FUNCS.contains(&symbol_name_potential_new_rip.as_str()) {
-                            log!(
-                                executor.state.logger,
-                                "Skipping function '{:?}' at 0x{:x} because it is blacklisted.",
-                                symbol_name_potential_new_rip,
-                                current_rip
-                            );
-
-                            // When skipping a function, we need to update the stack pointer i.e. add 8 to RSP
-                            let rsp_value_concrete = executor
-                                .state
-                                .cpu_state
-                                .lock()
-                                .unwrap()
-                                .get_register_by_offset(0x20, 64)
-                                .unwrap()
-                                .concrete
-                                .to_u64();
-                            let rsp_value_symbolic = executor
-                                .state
-                                .cpu_state
-                                .lock()
-                                .unwrap()
-                                .get_register_by_offset(0x20, 64)
-                                .unwrap()
-                                .symbolic
-                                .to_bv(executor.context)
-                                .clone();
-                            let next_rsp_value_concrete = rsp_value_concrete + 8;
-                            let next_rsp_value_symbolic =
-                                rsp_value_symbolic.bvadd(&BV::from_u64(executor.context, 8, 64));
-                            let next_rsp_value = ConcolicVar::new_concrete_and_symbolic_int(
-                                next_rsp_value_concrete,
-                                next_rsp_value_symbolic,
-                                executor.context,
-                            );
-                            executor
-                                .state
-                                .cpu_state
-                                .lock()
-                                .unwrap()
-                                .set_register_value_by_offset(0x20, next_rsp_value, 64)
-                                .expect("Failed to set register value by offset");
+                        if IGNORED_TINYGO_FUNCS.contains(&symbol_name_potential_new_rip.as_str())
+                        {
+                                log!(executor.state.logger, "Skipping function '{:?}' at 0x{:x} because it is blacklisted.", symbol_name_potential_new_rip, current_rip);
+                                // When skipping a function, we need to update the stack pointer i.e. add 8 to RSP
+                                let rsp_value_concrete = executor.state.cpu_state.lock().unwrap().get_register_by_offset(0x20, 64).unwrap().concrete.to_u64();
+                                let rsp_value_symbolic = executor.state.cpu_state.lock().unwrap().get_register_by_offset(0x20, 64).unwrap().symbolic.to_bv(executor.context).clone();
+                                let next_rsp_value = ConcolicVar::new_concrete_and_symbolic_int(rsp_value_concrete + 8, rsp_value_symbolic.bvadd(&BV::from_u64(executor.context, 8, 64)), executor.context);
+                                executor.state.cpu_state.lock().unwrap().set_register_value_by_offset(0x20, next_rsp_value, 64).expect("Failed to set register value by offset");
 
                             let (next_addr_in_map, _) =
                                 instructions_map.range((current_rip + 1)..).next().unwrap();
                             current_rip = *next_addr_in_map;
-                            local_line_number = 0; // Reset instruction index
-                            end_of_block = true; // Indicate end of current block execution
+                            local_line_number = 0;
+                            end_of_block = true;
                             log!(executor.state.logger, "Jumping to 0x{:x}", next_addr_in_map);
                         } else {
-                            // Manage the case where the RIP update points beyond the current block
                             current_rip = possible_new_rip;
-                            local_line_number = 0; // Reset instruction index for new RIP
-                            end_of_block = true; // Indicate end of current block execution
+                            local_line_number = 0;
+                            end_of_block = true;
                             log!(executor.state.logger, "Control flow change detected, switching execution to new address: 0x{:x}", current_rip);
                         }
                     } else {
-                        // Manage the case where the RIP update points beyond the current block
                         current_rip = possible_new_rip;
-                        local_line_number = 0; // Reset instruction index for new RIP
-                        end_of_block = true; // Indicate end of current block execution
+                        local_line_number = 0;
+                        end_of_block = true;
                         log!(executor.state.logger, "Control flow change detected, switching execution to new address: 0x{:x}", current_rip);
                     }
                 } else {
-                    // Regular progression to the next instruction
                     local_line_number += 1;
                 }
             } else if possible_new_rip != current_rip
@@ -2338,71 +2220,32 @@ fn execute_instructions_from(
                     possible_new_rip
                 );
                 if let Some(symbol_name_potential_new_rip) =
-                    executor.symbol_table.get(&possible_new_rip_hex)
+                    executor.symbol_table.get(&possible_new_rip_hex).cloned()
                 {
-                    // Found a symbol, check if it's blacklisted, etc.
-                    if IGNORED_TINYGO_FUNCS.contains(&symbol_name_potential_new_rip.as_str()) {
-                        log!(
-                            executor.state.logger,
-                            "Skipping function '{:?}' at 0x{:x} because it is blacklisted.",
-                            symbol_name_potential_new_rip,
-                            current_rip
-                        );
-
-                        // When skipping a function, we need to update the stack pointer i.e. add 8 to RSP
-                        let rsp_value_concrete = executor
-                            .state
-                            .cpu_state
-                            .lock()
-                            .unwrap()
-                            .get_register_by_offset(0x20, 64)
-                            .unwrap()
-                            .concrete
-                            .to_u64();
-                        let rsp_value_symbolic = executor
-                            .state
-                            .cpu_state
-                            .lock()
-                            .unwrap()
-                            .get_register_by_offset(0x20, 64)
-                            .unwrap()
-                            .symbolic
-                            .to_bv(executor.context)
-                            .clone();
-                        let next_rsp_value_concrete = rsp_value_concrete + 8;
-                        let next_rsp_value_symbolic =
-                            rsp_value_symbolic.bvadd(&BV::from_u64(executor.context, 8, 64));
-                        let next_rsp_value = ConcolicVar::new_concrete_and_symbolic_int(
-                            next_rsp_value_concrete,
-                            next_rsp_value_symbolic,
-                            executor.context,
-                        );
-                        executor
-                            .state
-                            .cpu_state
-                            .lock()
-                            .unwrap()
-                            .set_register_value_by_offset(0x20, next_rsp_value, 64)
-                            .expect("Failed to set register value by offset");
+                    if IGNORED_TINYGO_FUNCS.contains(&symbol_name_potential_new_rip.as_str())
+                    {
+                            log!(executor.state.logger, "Skipping function '{:?}' at 0x{:x} because it is blacklisted.", symbol_name_potential_new_rip, current_rip);
+                            let rsp_value_concrete = executor.state.cpu_state.lock().unwrap().get_register_by_offset(0x20, 64).unwrap().concrete.to_u64();
+                            let rsp_value_symbolic = executor.state.cpu_state.lock().unwrap().get_register_by_offset(0x20, 64).unwrap().symbolic.to_bv(executor.context).clone();
+                            let next_rsp_value = ConcolicVar::new_concrete_and_symbolic_int(rsp_value_concrete + 8, rsp_value_symbolic.bvadd(&BV::from_u64(executor.context, 8, 64)), executor.context);
+                            executor.state.cpu_state.lock().unwrap().set_register_value_by_offset(0x20, next_rsp_value, 64).expect("Failed to set register value by offset");
 
                         let (next_addr_in_map, _) =
                             instructions_map.range((current_rip + 1)..).next().unwrap();
                         current_rip = *next_addr_in_map;
-                        local_line_number = 0; // Reset instruction index
-                        end_of_block = true; // Indicate end of current block execution
+                        local_line_number = 0;
+                        end_of_block = true;
                         log!(executor.state.logger, "Jumping to 0x{:x}", next_addr_in_map);
                     } else {
-                        // Manage the case where the RIP update points beyond the current block
                         current_rip = possible_new_rip;
-                        local_line_number = 0; // Reset instruction index for new RIP
-                        end_of_block = true; // Indicate end of current block execution
+                        local_line_number = 0;
+                        end_of_block = true;
                         log!(executor.state.logger, "Control flow change detected, switching execution to new address: 0x{:x}", current_rip);
                     }
                 } else {
-                    // Manage the case where the RIP update points beyond the current block
                     current_rip = possible_new_rip;
-                    local_line_number = 0; // Reset instruction index for new RIP
-                    end_of_block = true; // Indicate end of current block execution
+                    local_line_number = 0;
+                    end_of_block = true;
                     log!(
                         executor.state.logger,
                         "Control flow change detected, switching execution to new address: 0x{:x}",
@@ -2419,56 +2262,19 @@ fn execute_instructions_from(
         if !end_of_block {
             if let Some((&next_rip, _)) = instructions_map.range((current_rip + 1)..).next() {
                 let next_rip_hex = format!("{:x}", next_rip);
-                if let Some(symbol_name_new_rip) = executor.symbol_table.get(&next_rip_hex) {
-                    // Found a symbol, check if it's blacklisted
-                    if IGNORED_TINYGO_FUNCS.contains(&symbol_name_new_rip.as_str()) {
-                        log!(
-                            executor.state.logger,
-                            "Skipping function '{:?}' at 0x{:x} because it is blacklisted.",
-                            symbol_name_new_rip,
-                            current_rip
-                        );
-
-                        // When skipping a function, we need to update the stack pointer i.e. add 8 to RSP
-                        let rsp_value_concrete = executor
-                            .state
-                            .cpu_state
-                            .lock()
-                            .unwrap()
-                            .get_register_by_offset(0x20, 64)
-                            .unwrap()
-                            .concrete
-                            .to_u64();
-                        let rsp_value_symbolic = executor
-                            .state
-                            .cpu_state
-                            .lock()
-                            .unwrap()
-                            .get_register_by_offset(0x20, 64)
-                            .unwrap()
-                            .symbolic
-                            .to_bv(executor.context)
-                            .clone();
-                        let next_rsp_value_concrete = rsp_value_concrete + 8;
-                        let next_rsp_value_symbolic =
-                            rsp_value_symbolic.bvadd(&BV::from_u64(executor.context, 8, 64));
-                        let next_rsp_value = ConcolicVar::new_concrete_and_symbolic_int(
-                            next_rsp_value_concrete,
-                            next_rsp_value_symbolic,
-                            executor.context,
-                        );
-                        executor
-                            .state
-                            .cpu_state
-                            .lock()
-                            .unwrap()
-                            .set_register_value_by_offset(0x20, next_rsp_value, 64)
-                            .expect("Failed to set register value by offset");
+                if let Some(symbol_name_new_rip) = executor.symbol_table.get(&next_rip_hex).cloned() {
+                    if IGNORED_TINYGO_FUNCS.contains(&symbol_name_new_rip.as_str())
+                    {
+                            log!(executor.state.logger, "Skipping function '{:?}' at 0x{:x} because it is blacklisted.", symbol_name_new_rip, current_rip);
+                            let rsp_value_concrete = executor.state.cpu_state.lock().unwrap().get_register_by_offset(0x20, 64).unwrap().concrete.to_u64();
+                            let rsp_value_symbolic = executor.state.cpu_state.lock().unwrap().get_register_by_offset(0x20, 64).unwrap().symbolic.to_bv(executor.context).clone();
+                            let next_rsp_value = ConcolicVar::new_concrete_and_symbolic_int(rsp_value_concrete + 8, rsp_value_symbolic.bvadd(&BV::from_u64(executor.context, 8, 64)), executor.context);
+                            executor.state.cpu_state.lock().unwrap().set_register_value_by_offset(0x20, next_rsp_value, 64).expect("Failed to set register value by offset");
 
                         let (next_addr_in_map, _) =
                             instructions_map.range((current_rip + 1)..).next().unwrap();
                         current_rip = *next_addr_in_map;
-                        local_line_number = 0; // Reset instruction index
+                        local_line_number = 0;
                         log!(executor.state.logger, "Jumping to 0x{:x}", next_addr_in_map);
                     }
                 } else {
