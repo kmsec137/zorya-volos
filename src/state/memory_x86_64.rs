@@ -13,6 +13,7 @@ use std::io::{self, BufRead, BufReader, Read, SeekFrom};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::RwLock;
+use std::time::Instant;
 
 use regex::Regex;
 use z3::{ast::BV, Context};
@@ -92,7 +93,7 @@ pub struct Volos {
 	pub go_id: Option<u64>,
 
 	/// unix epoch timestamp of when this volos was created, potenitally indicated when the addr access was detected
-	pub timestamp: Option<u64>,
+	pub timestamp: Option<Instant>,
 
 	/// VolosVC Vector Clock implementation
 	pub vector_clock: VolosVC
@@ -115,7 +116,7 @@ impl fmt::Debug for Volos {
             fmt_hex_opt(&self.addr),
             fmt_hex_opt(&self.size),
             fmt_hex_opt(&self.go_id),
-            fmt_hex_opt(&self.timestamp),
+            fmt_hex_opt(&Some(self.timestamp.unwrap().elapsed().as_secs())),
             self.vector_clock,
         )
     }
@@ -234,6 +235,7 @@ impl VolosState {
 
    	         // If a write happens with zero locks, it's immediately Raceable
    	         if access.access_type == AccessType::Write && current_locks.is_empty() && num_threads > 1{
+		 				println!("[VOLOS] no lock_race detected! ") ;
    	             race_condition = true;
    	             break;
    	         }
@@ -304,7 +306,7 @@ impl fmt::Display for VolosState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VolosRegion {
 	 ///start address of the memory region associated to tis volos region
     pub start_address: u64,
@@ -420,7 +422,7 @@ impl VolosRegion {
         };
 
         println!("{}:", label);
-        println!("  Goroutine ID: {}", v.thread_id);
+        println!("  Goroutine ID: {:?}", v.go_id.unwrap_or(0));
         println!("  Thread ID: {}", v.thread_id);
         println!("  Op Type:      {:?}", v.access_type);
         println!("  Locks Held:   {}", lock_str);
@@ -438,7 +440,9 @@ impl VolosRegion {
 					self.memory.entry(address+index).or_default().1.push(new_volos);
 					let region_entry = self.memory.entry(address+index).or_default();
 					region_entry.0 = VolosState::check_state(&region_entry.1);
+		 			//println!("[VOLOS] state transitioned to => {:?}", region_entry.0) ;
 				}
+				
 				//TODO: Implement the volos state transition here, we need to trigger state transition based on what the memory's volos entrys look like after the addition
 			}
 		}
@@ -479,7 +483,7 @@ impl Volos {
             thread_id: thread_id,
             access_type: access_type,
             locks_held: locks_held,
-				timestamp: Some(0),
+				timestamp: Some(Instant::now()),
 				addr: Some(0),
 				size: Some(0),
 				go_id: Some(0),
@@ -497,6 +501,10 @@ impl Volos {
         self.go_id = Some(go_id);
         self
     }
+	 pub fn with_timestamp(mut self, time: Instant) -> Self {
+			self.timestamp = Some(time);
+			self
+	}
 
 }
 impl fmt::Display for Volos {
@@ -508,6 +516,7 @@ impl fmt::Display for Volos {
 				write!(f, "0x{:X} ",lock);
 		}
 		write!(f,") ");
+		write!(f," | time: {}", self.timestamp.expect("timestamp problem").elapsed().as_secs());
 		write!(f," {:?}", self.vector_clock)
     }
 }
@@ -518,7 +527,7 @@ impl Default for Volos {
             thread_id: 0,
             access_type: AccessType::default(),
             locks_held: Vec::new(),
-				timestamp: Some(0),
+				timestamp: Some(Instant::now()),
 				addr: Some(0),
 				size: Some(0),
 				go_id: Some(0),
@@ -863,8 +872,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
 									VolosState::Reported => "[r!]"
 								};
 
-						  println!("[VOLOS] {} READ  MEM @[0x{:<width$}] <= {:<width$} #{:?}", _gmap_mark, addr_str,concrete_str, new_volos, width=14); 
-						  } else { println!("[VOLOS] READ  MEM @[0x{:<width$}] <= {:<width$} #{:?}", addr_str,concrete_str, new_volos, width=14); }
+						  //println!("[VOLOS] {} READ MEM @[0x{:<width$}] <= {:<width$} #{:?}", _gmap_mark, addr_str,concrete_str, new_volos, width=14); 
+						  println!("[VOLOS] {} READ MEM @[0x{:<width$}] <= {:<width$} {}", _gmap_mark, addr_str,concrete_str, new_volos, width=14); 
+						  } else { println!("[VOLOS] READ MEM @[0x{:<width$}] <= {:<width$} #{:?}", addr_str,concrete_str, new_volos, width=14); }
 		  			 }
                 return Ok((concrete, symbolic));
             }
@@ -1220,12 +1230,9 @@ impl<'ctx> MemoryX86_64<'ctx> {
 									    .collect::<String>();
 		  let addr_str = format!("{:02x} ", address).to_string();
 
-		  if volos_verbose() {
-		      println!("[VOLOS] WRITE MEM @[0x{:<width$}] <= {:<width$} #{:?}", addr_str,concrete_str, new_volos, width=14);
-		  }
-
         let mut regions = self.regions.write().unwrap();
         // Check if the address falls within an existing memory region
+
         for region in regions.iter_mut() {
             if region.contains(address, concrete.len()) {
                 let offset = region.offset(address);
@@ -1236,8 +1243,24 @@ impl<'ctx> MemoryX86_64<'ctx> {
 						  if internal == false {
 						  	region.volos_region.borrow_mut().add_volos((offset+i).try_into().unwrap(),concrete.len().try_into().unwrap(),new_volos.clone(),internal);
 							region.volos_region.borrow_mut().race_check();
-						  }
-                }
+
+									if volos_verbose() {
+ 										if let region_state = region.volos_region.borrow_mut().state {
+               			           let _gmap_mark = match(region_state) {
+               			              VolosState::Virgin => "[v]",
+               			              VolosState::Exclusive => "[e]",
+               			              VolosState::Shared => "[s]",
+               			              VolosState::SharedModified => "[s*]",
+               			              VolosState::Raceable => "[r]",
+               			              VolosState::Reported => "[r!]"
+               			           };
+  
+               			       //println!("[VOLOS] {} WRITE @[0x{:<width$}] <= {:<width$} #{:?}", _gmap_mark, addr_str,concrete_str, new_volos, width=14);
+               			       println!("[VOLOS] {} WRITE @[0x{:<width$}] <= {:<width$} {}", _gmap_mark, addr_str,concrete_str, new_volos, width=14);
+               			       } else { println!("[VOLOS] WRITE  MEM @[0x{:<width$}] <= {:<width$} #{:?}", addr_str,concrete_str, new_volos, width=14); }
+
+								  }
+               	}
 
                 // Write or remove symbolic data
                 for (i, symb) in symbolic.iter().enumerate() {
@@ -1248,15 +1271,13 @@ impl<'ctx> MemoryX86_64<'ctx> {
                     }
                 }
 
-					for region in regions.iter(){
-					   if region.volos_region.borrow().memory.len() != 0{
-			   			//println!("[VOLOS] VolosRegion {}", region.volos_region.borrow()); 
-					   }
-        			}
+		  		}
+
 
                 return Ok(());
             }
         }
+
         		 //VOLOS we need to run a check here to ensure that no region contains conflicting access
 
         // If we reach here, the address is out of bounds of all current regions

@@ -841,9 +841,11 @@ impl<'ctx> ConcolicExecutor<'ctx> {
 	         let cur_tid = tm.current_tid;
 	         let cur_locks_held = tm.threads.get(&cur_tid).unwrap().locks_held.clone();
 	         let vc = self.main_vecclock.clone();
+
 	         (cur_tid, cur_locks_held, vc)
 	     };
-	     Volos::new(tid, AccessType::default(), locks, Some(vec_clock))
+	     let volos = Volos::new(tid, AccessType::default(), locks, Some(vec_clock));
+		  	volos.with_timestamp(Instant::now())
 	 }
 
 	 pub fn new_volos(&self) -> Volos {
