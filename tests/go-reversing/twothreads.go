@@ -11,6 +11,7 @@ var (
 	mutex      sync.Mutex
 )
 
+//example race with fake futex interaction
 func main() {
 	// ThreadA
 	mutex.Lock()

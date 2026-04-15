@@ -853,7 +853,18 @@ impl<'ctx> MemoryX86_64<'ctx> {
 
 
 		  			 if volos_verbose() {
-		  			     println!("[VOLOS] READ  MEM @[0x{:<width$}] <= {:<width$} #{:?}", addr_str,concrete_str, new_volos, width=14);
+						  if let region_state = region.volos_region.borrow().state {
+								let _gmap_mark = match(region_state) {
+		  			     			VolosState::Virgin => "[v]", 
+									VolosState::Exclusive => "[e]",
+									VolosState::Shared => "[s]",
+									VolosState::SharedModified => "[s*]",
+									VolosState::Raceable => "[r]",
+									VolosState::Reported => "[r!]"
+								};
+
+						  println!("[VOLOS] {} READ  MEM @[0x{:<width$}] <= {:<width$} #{:?}", _gmap_mark, addr_str,concrete_str, new_volos, width=14); 
+						  } else { println!("[VOLOS] READ  MEM @[0x{:<width$}] <= {:<width$} #{:?}", addr_str,concrete_str, new_volos, width=14); }
 		  			 }
                 return Ok((concrete, symbolic));
             }
